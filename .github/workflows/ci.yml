@@ -34,3 +34,6 @@ jobs:
         with:
           node-version: '24'
       - run: node --check /tmp/leadora.js
+      - run: node --check app/static/service-worker.js
+      - name: Validate PWA manifest
+        run: python -c "import json; json.load(open('app/static/manifest.webmanifest', encoding='utf-8'))"
