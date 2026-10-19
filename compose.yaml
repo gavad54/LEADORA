@@ -1,0 +1,14 @@
+services:
+  leadora:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      LEADORA_ENV: production
+      LEADORA_SECRET: ${LEADORA_SECRET:?Set LEADORA_SECRET in the environment}
+      LEADORA_DB: /app/data/leadora.db
+    volumes:
+      - leadora_data:/app/data
+    restart: unless-stopped
+volumes:
+  leadora_data:
