@@ -19,3 +19,15 @@ def test_registration_and_product_isolation(tmp_path, monkeypatch):
     add=c.post("/api/products",headers=headers,json={"sku":"SKU-1","name":"Notebook","price":12,"stock":4})
     assert add.status_code==200, add.text
     assert c.get("/api/products",headers=headers).json()[0]["sku"]=="SKU-1"
+
+def test_pwa_assets_are_served():
+    c = TestClient(app)
+    manifest = c.get("/manifest.webmanifest")
+    worker = c.get("/service-worker.js")
+    icon = c.get("/icon.svg")
+    assert manifest.status_code == 200
+    assert manifest.json()["display"] == "standalone"
+    assert worker.status_code == 200
+    assert "serviceWorker" not in worker.text
+    assert icon.status_code == 200
+    assert "<svg" in icon.text
