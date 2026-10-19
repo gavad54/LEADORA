@@ -76,6 +76,18 @@ class CustomerIn(BaseModel):
 @app.get("/")
 def home(): return FileResponse(ROOT / "static" / "index.html")
 
+@app.get("/manifest.webmanifest")
+def pwa_manifest():
+    return FileResponse(ROOT / "static" / "manifest.webmanifest", media_type="application/manifest+json")
+
+@app.get("/service-worker.js")
+def pwa_service_worker():
+    return FileResponse(ROOT / "static" / "service-worker.js", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+@app.get("/icon.svg")
+def pwa_icon():
+    return FileResponse(ROOT / "static" / "icon.svg", media_type="image/svg+xml")
+
 @app.get("/api/health")
 def health():
     with db() as c: c.execute("SELECT 1")
