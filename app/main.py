@@ -467,9 +467,11 @@ def create_payment(body: PaymentIn, user=Depends(user_from_header)):
 @app.post("/api/expenses")
 def create_expense(body: ExpenseIn, user=Depends(user_from_header)):
     if not body.title.strip() or not _date_ok(body.due_date): raise HTTPException(422,"عنوان و تاریخ معتبر الزامی است.")
+    # Legacy API clients may send "planned"; the persistent SQLite schema stores it as pending.
+    stored_status = "pending" if body.status == "planned" else body.status
     with db() as c:
         cur=c.execute("INSERT INTO expenses(tenant_id,title,category,amount,due_date,status) VALUES(?,?,?,?,?,?)",
-          (user["tenant_id"],body.title.strip(),body.category.strip(),body.amount,body.due_date,body.status))
+          (user["tenant_id"],body.title.strip(),body.category.strip(),body.amount,body.due_date,stored_status))
         c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],"expense.created"))
     return {"id":cur.lastrowid,"message":"هزینه ثبت شد."}
 
