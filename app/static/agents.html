@@ -127,7 +127,7 @@ async function leadLoadBank(){
  }catch(e){msg('leadImportMsg',e.message)}
 }
 async function leadLoadStatus(){
- try{const d=await api('/api/prospecting/worker/status');$('leadWorkerStatus').textContent='وضعیت تنظیمات: '+(d.configured?'ثبت‌شده':'تنظیم نشده')+'\nفعال: '+(d.settings&&d.settings.enabled?'بله':'خیر')+'\nآخرین تلاش: '+(d.settings?.last_attempt_at||'—')+'\nآخرین موفقیت: '+(d.settings?.last_success_at||'—')+'\nخطای اخیر: '+(d.settings?.last_error||'—')+'\nتعداد خطاهای پی‌درپی: '+(d.settings?.consecutive_failures??0)+'\n\nتوجه: API وضعیت تنظیمات را گزارش می‌کند و به‌تنهایی زنده‌بودن فرایند worker را اثبات نمی‌کند. رویدادهای اخیر:\n'+(d.recent_events||[]).map(x=>x.created_at+' | '+x.event_type+' | '+x.message).join('\n');}
+ try{const d=await api('/api/prospecting/worker/status');$('leadWorkerStatus').textContent='وضعیت تنظیمات: '+(d.configured?'ثبت‌شده':'تنظیم نشده')+'\\nفعال: '+(d.settings&&d.settings.enabled?'بله':'خیر')+'\\nآخرین تلاش: '+(d.settings?.last_attempt_at||'—')+'\\nآخرین موفقیت: '+(d.settings?.last_success_at||'—')+'\\nخطای اخیر: '+(d.settings?.last_error||'—')+'\\nتعداد خطاهای پی‌درپی: '+(d.settings?.consecutive_failures??0)+'\\nوضعیت worker: '+(d.worker_process?.alive?'heartbeat اخیر دریافت شده':'heartbeat تازه وجود ندارد')+'\\nآخرین heartbeat: '+(d.worker_process?.last_heartbeat_epoch?new Date(d.worker_process.last_heartbeat_epoch*1000).toLocaleString():'—')+'\\n\\nرویدادهای اخیر:\\n'+(d.recent_events||[]).map(x=>x.created_at+' | '+x.event_type+' | '+x.message).join('\\n');}
  catch(e){$('leadWorkerStatus').textContent=e.message}
 }
 async function leadLoadSources(){
