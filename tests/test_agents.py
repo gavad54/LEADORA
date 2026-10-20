@@ -84,3 +84,28 @@ def test_csv_row_import_reports_invalid_rows():
     assert r.status_code == 200, r.text
     assert r.json()["imported"] == 1
     assert r.json()["rejected"] == 1
+
+
+def test_multisource_business_lead_import_deduplicates_and_is_tenant_scoped():
+    a, b = account("leads-a"), account("leads-b")
+    payload = {"source": "licensed-directory", "records": [
+        {"name": "Example Market", "phone": "+98 21 12345678", "city": "Tehran",
+         "category": "retail", "website": "https://example.test"},
+        {"name": "", "city": "Tehran"},
+    ]}
+    first = client.post("/api/prospecting/import", headers=a, json=payload)
+    assert first.status_code == 200, first.text
+    assert first.json()["imported"] == 1
+    assert first.json()["rejected"] == 1
+    second = client.post("/api/prospecting/import", headers=a, json=payload)
+    assert second.status_code == 200, second.text
+    assert second.json()["updated"] == 1
+    leads = client.get("/api/prospecting/business-leads", headers=a)
+    assert leads.status_code == 200, leads.text
+    assert leads.json()["total"] == 1
+    assert leads.json()["items"][0]["name"] == "Example Market"
+    assert client.get("/api/prospecting/business-leads", headers=b).json()["total"] == 0
+    runs = client.get("/api/prospecting/source-runs", headers=a)
+    assert len(runs.json()) >= 2
+    sources = client.get("/api/prospecting/sources", headers=a).json()["sources"]
+    assert {item["id"] for item in sources} >= {"openstreetmap", "balad", "neshan", "snapp"}
