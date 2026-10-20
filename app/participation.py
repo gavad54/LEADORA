@@ -385,7 +385,7 @@ def create_router(db_factory, user_dependency):
             month_end = date(month_start.year + (month_start.month == 12), 1 if month_start.month == 12 else month_start.month + 1, 1)
             if contract and contract["status"] == "active" and contract["goal_achieved"]:
                 in_contract = month_start.isoformat() >= contract["contract_start"] and (not contract["contract_end"] or month_start.isoformat() <= contract["contract_end"])
-                after_trial = month_end.isoformat() > contract["trial_end"]
+                after_trial = month_start.isoformat() > contract["trial_end"]
                 if in_contract and after_trial:
                     share_percent = money(contract["share_percent"])
                     owner_share = max(Decimal("0"), eligible) * share_percent / Decimal("100")
