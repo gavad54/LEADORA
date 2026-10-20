@@ -21,7 +21,7 @@ async def security_headers(request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
     return response
 
 def db():
@@ -849,3 +849,234 @@ def import_template(dataset: str, user=Depends(user_from_header)):
     stream=io.StringIO(newline=""); csv.writer(stream).writerow(templates[dataset])
     return StreamingResponse(iter(["\\ufeff"+stream.getvalue()]),media_type="text/csv; charset=utf-8",
       headers={"Content-Disposition":f'attachment; filename="leadora-{dataset}-template.csv"',"Cache-Control":"no-store"})
+
+
+# Location-aware customer discovery and durable storage/backup services.
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
+
+PROSPECTING_TABLES = """
+CREATE TABLE IF NOT EXISTS prospecting_runs(
+ id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+ latitude REAL NOT NULL, longitude REAL NOT NULL, radius_m INTEGER NOT NULL,
+ category TEXT NOT NULL DEFAULT 'all', result_count INTEGER NOT NULL DEFAULT 0,
+ status TEXT NOT NULL, error_message TEXT NOT NULL DEFAULT '',
+ created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS prospect_leads(
+ id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+ osm_type TEXT NOT NULL, osm_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
+ category TEXT NOT NULL DEFAULT 'other', subcategory TEXT NOT NULL DEFAULT '',
+ phone TEXT NOT NULL DEFAULT '', website TEXT NOT NULL DEFAULT '',
+ street TEXT NOT NULL DEFAULT '', neighbourhood TEXT NOT NULL DEFAULT '',
+ suburb TEXT NOT NULL DEFAULT '', city TEXT NOT NULL DEFAULT '',
+ region TEXT NOT NULL DEFAULT '', postcode TEXT NOT NULL DEFAULT '',
+ latitude REAL NOT NULL, longitude REAL NOT NULL, address TEXT NOT NULL DEFAULT '',
+ source TEXT NOT NULL DEFAULT 'OpenStreetMap', source_url TEXT NOT NULL DEFAULT '',
+ tags_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'new',
+ first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(tenant_id,osm_type,osm_id)
+);
+CREATE INDEX IF NOT EXISTS idx_prospect_leads_geo ON prospect_leads(tenant_id,city,neighbourhood,category);
+CREATE INDEX IF NOT EXISTS idx_prospect_leads_status ON prospect_leads(tenant_id,status);
+"""
+with db() as c:
+    c.executescript(PROSPECTING_TABLES)
+
+class ProspectSearchIn(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    radius_m: int = Field(default=1000, ge=100, le=25000)
+    category: str = Field(default="all", pattern="^(all|shop|office|food|health|service|tourism|craft)$")
+    limit: int = Field(default=100, ge=1, le=500)
+
+class ProspectStatusIn(BaseModel):
+    status: str = Field(pattern="^(new|contacted|qualified|not_a_fit|customer)$")
+
+def _prospect_category(tags):
+    if tags.get("shop"): return ("shop", tags["shop"])
+    if tags.get("office"): return ("office", tags["office"])
+    if tags.get("amenity") in ("restaurant","cafe","fast_food","bar","pub"): return ("food", tags["amenity"])
+    if tags.get("amenity") in ("doctors","clinic","dentist","pharmacy","hospital","veterinary"): return ("health", tags["amenity"])
+    if tags.get("tourism"): return ("tourism", tags["tourism"])
+    if tags.get("craft"): return ("craft", tags["craft"])
+    return ("service", tags.get("amenity") or tags.get("building") or tags.get("industrial") or "business")
+
+def _overpass_query(lat, lon, radius, category):
+    filters = {
+      "shop": '["shop"]', "office": '["office"]',
+      "food": '["amenity"~"restaurant|cafe|fast_food|bar|pub"]',
+      "health": '["amenity"~"doctors|clinic|dentist|pharmacy|hospital|veterinary"]',
+      "service": '["craft"]', "tourism": '["tourism"]', "craft": '["craft"]',
+      "all": '["name"]["(shop|office|amenity|craft|tourism)"]'
+    }
+    f=filters[category]
+    # Keep query bounded and only request public business/place features with coordinates and useful tags.
+    return f'[out:json][timeout:20];(node{f}(around:{radius},{lat},{lon});way{f}(around:{radius},{lat},{lon});relation{f}(around:{radius},{lat},{lon}););out center tags {int(500)};'
+
+def _tag_text(tags, *keys):
+    return next((str(tags.get(k,"")).strip() for k in keys if str(tags.get(k,"")).strip()), "")
+
+def _normalize_osm_element(element):
+    tags=element.get("tags") or {}
+    center=element.get("center") or {}
+    lat=element.get("lat",center.get("lat")); lon=element.get("lon",center.get("lon"))
+    if lat is None or lon is None: return None
+    name=_tag_text(tags,"name","brand","operator")
+    if not name: return None
+    category,subcat=_prospect_category(tags)
+    street=" ".join(x for x in (_tag_text(tags,"addr:street"),_tag_text(tags,"addr:housenumber")) if x)
+    parts=[street,_tag_text(tags,"addr:neighbourhood"),_tag_text(tags,"addr:suburb"),_tag_text(tags,"addr:city","addr:town","addr:village"),_tag_text(tags,"addr:state")]
+    address=", ".join(x for x in (street,_tag_text(tags,"addr:neighbourhood"),_tag_text(tags,"addr:suburb"),_tag_text(tags,"addr:city","addr:town","addr:village"),_tag_text(tags,"addr:state")) if x)
+    typ=str(element.get("type","")); oid=str(element.get("id",""))
+    return {"osm_type":typ,"osm_id":oid,"name":name[:180],"category":category,"subcategory":str(subcat)[:100],
+      "phone":_tag_text(tags,"contact:phone","phone","contact:mobile")[:100],
+      "website":_tag_text(tags,"contact:website","website")[:500],
+      "street":street[:180],"neighbourhood":_tag_text(tags,"addr:neighbourhood")[:180],
+      "suburb":_tag_text(tags,"addr:suburb","addr:district")[:180],
+      "city":_tag_text(tags,"addr:city","addr:town","addr:village","addr:municipality")[:180],
+      "region":_tag_text(tags,"addr:state","is_in:state")[:180],"postcode":_tag_text(tags,"addr:postcode")[:30],
+      "latitude":float(lat),"longitude":float(lon),"address":address[:500],
+      "source_url":f"https://www.openstreetmap.org/{typ}/{oid}" if typ and oid else "",
+      "tags_json":json.dumps(tags,ensure_ascii=False)[:8000]}
+
+@app.post("/api/prospecting/search")
+def prospecting_search(body: ProspectSearchIn, user=Depends(user_from_header)):
+    # This external search is explicit and location is obtained only after the browser asks the user for permission.
+    query=_overpass_query(body.latitude,body.longitude,body.radius_m,body.category)
+    req=urllib.request.Request("https://overpass-api.de/api/interpreter",data=query.encode("utf-8"),
+        headers={"Content-Type":"text/plain; charset=utf-8","User-Agent":"LEADORA/0.6 (location-based business discovery)"},method="POST")
+    try:
+        with urllib.request.urlopen(req,timeout=25) as response:
+            payload=json.loads(response.read(8_000_000).decode("utf-8"))
+        elements=payload.get("elements",[])[:body.limit]
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        with db() as conn:
+            conn.execute("INSERT INTO prospecting_runs(tenant_id,latitude,longitude,radius_m,category,status,error_message) VALUES(?,?,?,?,?,?,?)",
+              (user["tenant_id"],body.latitude,body.longitude,body.radius_m,body.category,"failed",str(exc)[:240]))
+        raise HTTPException(502,"منبع نقشه در دسترس نیست. اطلاعات قبلی حفظ شده؛ کمی بعد دوباره تلاش کنید.")
+    tid=user["tenant_id"]; saved=0; results=[]
+    with db() as conn:
+        for element in elements:
+            item=_normalize_osm_element(element)
+            if not item: continue
+            conn.execute("""INSERT INTO prospect_leads(tenant_id,osm_type,osm_id,name,category,subcategory,phone,website,street,neighbourhood,suburb,city,region,postcode,latitude,longitude,address,source,source_url,tags_json,status,last_seen_at)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'OpenStreetMap',?,?, 'new',CURRENT_TIMESTAMP)
+              ON CONFLICT(tenant_id,osm_type,osm_id) DO UPDATE SET name=excluded.name,category=excluded.category,subcategory=excluded.subcategory,
+              phone=CASE WHEN excluded.phone<>'' THEN excluded.phone ELSE prospect_leads.phone END,
+              website=CASE WHEN excluded.website<>'' THEN excluded.website ELSE prospect_leads.website END,
+              street=CASE WHEN excluded.street<>'' THEN excluded.street ELSE prospect_leads.street END,
+              neighbourhood=CASE WHEN excluded.neighbourhood<>'' THEN excluded.neighbourhood ELSE prospect_leads.neighbourhood END,
+              suburb=CASE WHEN excluded.suburb<>'' THEN excluded.suburb ELSE prospect_leads.suburb END,
+              city=CASE WHEN excluded.city<>'' THEN excluded.city ELSE prospect_leads.city END,
+              region=CASE WHEN excluded.region<>'' THEN excluded.region ELSE prospect_leads.region END,
+              postcode=CASE WHEN excluded.postcode<>'' THEN excluded.postcode ELSE prospect_leads.postcode END,
+              latitude=excluded.latitude,longitude=excluded.longitude,address=CASE WHEN excluded.address<>'' THEN excluded.address ELSE prospect_leads.address END,
+              tags_json=excluded.tags_json,last_seen_at=CURRENT_TIMESTAMP""",
+              (tid,item["osm_type"],item["osm_id"],item["name"],item["category"],item["subcategory"],item["phone"],item["website"],item["street"],item["neighbourhood"],item["suburb"],item["city"],item["region"],item["postcode"],item["latitude"],item["longitude"],item["address"],item["source_url"],item["tags_json"]))
+            saved+=1
+            results.append(item)
+        conn.execute("INSERT INTO prospecting_runs(tenant_id,latitude,longitude,radius_m,category,result_count,status) VALUES(?,?,?,?,?,?,?)",
+          (tid,body.latitude,body.longitude,body.radius_m,body.category,saved,"success"))
+        conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,f"prospecting.search:{body.radius_m}m:{saved}"))
+    return {"status":"ok","source":"OpenStreetMap","radius_m":body.radius_m,"found":saved,
+      "saved":saved,"coverage":"نتایج موجود در داده‌های نقشه عمومی؛ کامل بودن اطلاعات تضمین نیست.",
+      "results":[{"name":x["name"],"category":x["category"],"subcategory":x["subcategory"],"phone":x["phone"],"website":x["website"],"street":x["street"],"neighbourhood":x["neighbourhood"],"suburb":x["suburb"],"city":x["city"],"region":x["region"],"address":x["address"],"latitude":x["latitude"],"longitude":x["longitude"],"source_url":x["source_url"]} for x in results]}
+
+@app.get("/api/prospecting/leads")
+def prospecting_leads(category: str = "all", area: str = "", status: str = "all", limit: int = 200, user=Depends(user_from_header)):
+    if category not in ("all","shop","office","food","health","service","tourism","craft"): raise HTTPException(422,"دسته‌بندی نامعتبر است.")
+    if status not in ("all","new","contacted","qualified","not_a_fit","customer"): raise HTTPException(422,"وضعیت نامعتبر است.")
+    limit=max(1,min(limit,500))
+    sql="SELECT id,name,category,subcategory,phone,website,street,neighbourhood,suburb,city,region,postcode,latitude,longitude,address,source,source_url,status,first_seen_at,last_seen_at FROM prospect_leads WHERE tenant_id=?"
+    args=[user["tenant_id"]]
+    if category!="all": sql+=" AND category=?"; args.append(category)
+    if status!="all": sql+=" AND status=?"; args.append(status)
+    if area.strip():
+        sql+=" AND (street LIKE ? OR neighbourhood LIKE ? OR suburb LIKE ? OR city LIKE ? OR region LIKE ? OR address LIKE ?)"
+        args.extend(["%"+area.strip()+"%"]*6)
+    sql+=" ORDER BY city,neighbourhood,street,name LIMIT ?"; args.append(limit)
+    with db() as conn: rows=conn.execute(sql,args).fetchall()
+    return [dict(row) for row in rows]
+
+@app.patch("/api/prospecting/leads/{lead_id}")
+def update_prospect_status(lead_id:int, body:ProspectStatusIn, user=Depends(user_from_header)):
+    with db() as conn:
+        cur=conn.execute("UPDATE prospect_leads SET status=? WHERE id=? AND tenant_id=?",(body.status,lead_id,user["tenant_id"]))
+        if cur.rowcount==0: raise HTTPException(404,"سرنخ مشتری یافت نشد.")
+        conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],f"prospect.status:{body.status}"))
+    return {"message":"وضعیت سرنخ ذخیره شد.","status":body.status}
+
+@app.get("/api/prospecting/summary")
+def prospecting_summary(user=Depends(user_from_header)):
+    with db() as conn:
+        total=conn.execute("SELECT COUNT(*) n FROM prospect_leads WHERE tenant_id=?",(user["tenant_id"],)).fetchone()["n"]
+        cats=conn.execute("SELECT category,COUNT(*) count FROM prospect_leads WHERE tenant_id=? GROUP BY category ORDER BY count DESC",(user["tenant_id"],)).fetchall()
+        areas=conn.execute("""SELECT COALESCE(NULLIF(neighbourhood,''),NULLIF(suburb,''),NULLIF(city,''),NULLIF(region,''),'محدوده نامشخص') area,COUNT(*) count FROM prospect_leads WHERE tenant_id=? GROUP BY area ORDER BY count DESC LIMIT 100""",(user["tenant_id"],)).fetchall()
+        latest=conn.execute("SELECT created_at,status,radius_m,result_count FROM prospecting_runs WHERE tenant_id=? ORDER BY id DESC LIMIT 1",(user["tenant_id"],)).fetchone()
+    return {"total":total,"categories":[dict(x) for x in cats],"areas":[dict(x) for x in areas],"last_run":dict(latest) if latest else None}
+
+def _tenant_backup_payload(tenant_id):
+    # Snapshot all tenant business data; never include user password hashes or auth tokens.
+    table_columns={
+      "products":"id,sku,name,price,stock","customers":"id,name,phone",
+      "invoices":"id,customer_id,invoice_number,issue_date,due_date,amount,note,created_at",
+      "payments":"id,invoice_id,paid_at,amount,method,reference",
+      "expenses":"id,title,category,amount,due_date,status,created_at",
+      "opportunities":"id,title,customer_id,source,stage,estimated_value,expected_close_date,last_contact_date,lost_reason,created_at",
+      "campaigns":"id,name,channel,spend,leads,conversions,revenue,start_date,end_date",
+      "agent_actions":"id,agent,severity,title,rationale,recommendation,status,sensitive,created_at",
+      "prospect_leads":"id,osm_type,osm_id,name,category,subcategory,phone,website,street,neighbourhood,suburb,city,region,postcode,latitude,longitude,address,source,source_url,tags_json,status,first_seen_at,last_seen_at",
+      "prospecting_runs":"id,latitude,longitude,radius_m,category,result_count,status,error_message,created_at",
+      "audit_log":"id,action,created_at"
+    }
+    payload={"format":"leadora-tenant-backup-v2","created_at":datetime.now(timezone.utc).isoformat(),"tables":{}}
+    with db() as conn:
+        tenant=conn.execute("SELECT id,name,industry FROM tenants WHERE id=?",(tenant_id,)).fetchone()
+        payload["tenant"]=dict(tenant) if tenant else None
+        for table,cols in table_columns.items():
+            try:
+                rows=conn.execute(f"SELECT {cols} FROM {table} WHERE tenant_id=? ORDER BY id",(tenant_id,)).fetchall()
+                payload["tables"][table]=[dict(x) for x in rows]
+            except sqlite3.OperationalError:
+                payload["tables"][table]=[]
+    return payload
+
+@app.get("/api/backup/full.json")
+def full_tenant_backup(user=Depends(user_from_header)):
+    payload=json.dumps(_tenant_backup_payload(user["tenant_id"]),ensure_ascii=False,indent=2)
+    return StreamingResponse(iter([payload]),media_type="application/json; charset=utf-8",
+      headers={"Content-Disposition":'attachment; filename="leadora-full-backup.json"',"Cache-Control":"no-store"})
+
+@app.post("/api/backup/snapshot")
+def create_backup_snapshot(user=Depends(user_from_header)):
+    backup_dir=Path(os.getenv("LEADORA_BACKUP_DIR",str(ROOT.parent/"backups")))
+    try:
+        backup_dir.mkdir(parents=True,exist_ok=True)
+        stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        target=backup_dir/f"leadora-tenant-{user['tenant_id']}-{stamp}.json"
+        raw=json.dumps(_tenant_backup_payload(user["tenant_id"]),ensure_ascii=False,indent=2).encode("utf-8")
+        # Exclusive creation avoids overwriting a previous backup if two requests arrive in the same second.
+        with target.open("xb") as handle: handle.write(raw)
+        with db() as conn: conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],"backup.snapshot.created"))
+        return {"status":"created","filename":target.name,"bytes":len(raw),"message":"نسخه پشتیبان روی دیسک سرور ذخیره شد."}
+    except OSError:
+        raise HTTPException(500,"ذخیره نسخه پشتیبان روی دیسک سرور ناموفق بود؛ فضای دیسک و مجوز پوشه را بررسی کنید.")
+
+@app.get("/api/storage/status")
+def storage_status(user=Depends(user_from_header)):
+    p=Path(DB_PATH)
+    try:
+        with db() as conn:
+            integrity=conn.execute("PRAGMA quick_check").fetchone()[0]
+            counts={}
+            for table in ("products","customers","invoices","payments","expenses","opportunities","campaigns","agent_actions","prospect_leads"):
+                try: counts[table]=conn.execute(f"SELECT COUNT(*) n FROM {table} WHERE tenant_id=?",(user["tenant_id"],)).fetchone()["n"]
+                except sqlite3.OperationalError: counts[table]=0
+        return {"database":"sqlite","persistent_path_configured":bool(os.getenv("LEADORA_DB")),"database_bytes":p.stat().st_size if p.exists() else 0,
+          "integrity":integrity,"records_by_table":counts,"backup_directory_configured":bool(os.getenv("LEADORA_BACKUP_DIR")),
+          "backup_directory":os.getenv("LEADORA_BACKUP_DIR",str(ROOT.parent/"backups")),
+          "note":"برای پایداری پس از راه‌اندازی مجدد، مسیر data و backups باید روی volume پایدار سرور نگاشت شوند؛ این endpoint وجود مسیر را تضمین نمی‌کند."}
+    except sqlite3.Error:
+        raise HTTPException(500,"بررسی وضعیت پایگاه داده ناموفق بود.")
