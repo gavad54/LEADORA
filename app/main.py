@@ -1083,3 +1083,113 @@ def storage_status(user=Depends(user_from_header)):
           "note":"برای پایداری پس از راه‌اندازی مجدد، مسیر data و backups باید روی volume پایدار سرور نگاشت شوند؛ این endpoint وجود مسیر را تضمین نمی‌کند."}
     except sqlite3.Error:
         raise HTTPException(500,"بررسی وضعیت پایگاه داده ناموفق بود.")
+
+# Unified order/invoice tracking with tenant-scoped status history.
+from datetime import date, timedelta
+with db() as conn:
+ conn.executescript("""
+ CREATE TABLE IF NOT EXISTS workflow_documents(
+ id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+ document_type TEXT NOT NULL CHECK(document_type IN ('order','invoice','purchase_order','sales_order')),
+ document_number TEXT NOT NULL,title TEXT NOT NULL,
+ party_role TEXT NOT NULL CHECK(party_role IN ('customer','supplier','vendor','our_company','other')),
+ party_name TEXT NOT NULL,party_contact TEXT NOT NULL DEFAULT '',
+ direction TEXT NOT NULL DEFAULT 'outgoing' CHECK(direction IN ('incoming','outgoing')),
+ amount REAL NOT NULL DEFAULT 0 CHECK(amount>=0),currency TEXT NOT NULL DEFAULT 'IRR',
+ issue_date TEXT NOT NULL DEFAULT '',due_date TEXT NOT NULL DEFAULT '',
+ status TEXT NOT NULL DEFAULT 'registered',notes TEXT NOT NULL DEFAULT '',
+ created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(tenant_id,document_type,document_number));
+ CREATE INDEX IF NOT EXISTS idx_workflow_docs_status ON workflow_documents(tenant_id,status,due_date);
+ CREATE TABLE IF NOT EXISTS workflow_events(
+ id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL REFERENCES tenants(id),document_id INTEGER NOT NULL REFERENCES workflow_documents(id),
+ old_status TEXT NOT NULL DEFAULT '',new_status TEXT NOT NULL,event_type TEXT NOT NULL DEFAULT 'status_change',
+ note TEXT NOT NULL DEFAULT '',actor TEXT NOT NULL DEFAULT 'user',created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+ CREATE INDEX IF NOT EXISTS idx_workflow_events_doc ON workflow_events(tenant_id,document_id,id);
+ """)
+WORKFLOW_STATUSES={"registered":"ثبت اولیه","review":"در حال بررسی","approved":"تأیید شده","in_progress":"در حال انجام","sent":"ارسال شده","received":"دریافت شده","awaiting_customer":"در انتظار مشتری","awaiting_supplier":"در انتظار تأمین‌کننده","awaiting_payment":"در انتظار پرداخت","partially_paid":"پرداخت جزئی","paid":"تسویه شده","fulfilled":"تحویل/اجرا شده","completed":"بسته شده","on_hold":"متوقف موقت","cancelled":"لغو شده","overdue":"معوق"}
+class WorkflowDocumentIn(BaseModel):
+ document_type:str=Field(pattern="^(order|invoice|purchase_order|sales_order)$")
+ document_number:str=Field(min_length=1,max_length=100)
+ title:str=Field(min_length=1,max_length=200)
+ party_role:str=Field(pattern="^(customer|supplier|vendor|our_company|other)$")
+ party_name:str=Field(min_length=1,max_length=200)
+ party_contact:str=Field(default="",max_length=200)
+ direction:str=Field(default="outgoing",pattern="^(incoming|outgoing)$")
+ amount:float=Field(default=0,ge=0,le=1000000000000)
+ currency:str=Field(default="IRR",min_length=3,max_length=8)
+ issue_date:str=Field(default="",max_length=10)
+ due_date:str=Field(default="",max_length=10)
+ status:str=Field(default="registered",pattern="^(registered|review|approved|in_progress|sent|received|awaiting_customer|awaiting_supplier|awaiting_payment|partially_paid|paid|fulfilled|completed|on_hold|cancelled|overdue)$")
+ notes:str=Field(default="",max_length=2000)
+class WorkflowStatusIn(BaseModel):
+ status:str=Field(pattern="^(registered|review|approved|in_progress|sent|received|awaiting_customer|awaiting_supplier|awaiting_payment|partially_paid|paid|fulfilled|completed|on_hold|cancelled|overdue)$")
+ note:str=Field(default="",max_length=2000)
+class WorkflowEventIn(BaseModel):
+ event_type:str=Field(default="note",pattern="^(note|call|email|meeting|payment|shipment|status_change|reminder)$")
+ note:str=Field(min_length=1,max_length=2000)
+def _workflow_doc(row):
+ x=dict(row);x["status_label"]=WORKFLOW_STATUSES.get(x["status"],x["status"]);return x
+@app.get("/api/workflow/statuses")
+def workflow_statuses(user=Depends(user_from_header)): return [{"code":k,"label":v} for k,v in WORKFLOW_STATUSES.items()]
+@app.post("/api/workflow/documents")
+def create_workflow_document(body:WorkflowDocumentIn,user=Depends(user_from_header)):
+ if not body.document_number.strip() or not body.party_name.strip(): raise HTTPException(422,"شماره سند و نام طرف معامله الزامی است.")
+ if body.issue_date and not _date_ok(body.issue_date): raise HTTPException(422,"تاریخ صدور معتبر نیست.")
+ if body.due_date and not _date_ok(body.due_date): raise HTTPException(422,"تاریخ سررسید معتبر نیست.")
+ if body.issue_date and body.due_date and body.due_date<body.issue_date: raise HTTPException(422,"سررسید قبل از تاریخ صدور است.")
+ with db() as conn:
+  try:
+   cur=conn.execute("INSERT INTO workflow_documents(tenant_id,document_type,document_number,title,party_role,party_name,party_contact,direction,amount,currency,issue_date,due_date,status,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(user["tenant_id"],body.document_type,body.document_number.strip(),body.title.strip(),body.party_role,body.party_name.strip(),body.party_contact.strip(),body.direction,body.amount,body.currency.upper(),body.issue_date,body.due_date,body.status,body.notes.strip()))
+  except sqlite3.IntegrityError: raise HTTPException(409,"این شماره سند برای این نوع سند قبلاً ثبت شده است.")
+  ident=cur.lastrowid
+  conn.execute("INSERT INTO workflow_events(tenant_id,document_id,old_status,new_status,event_type,note) VALUES(?,?,?,?,?,?)",(user["tenant_id"],ident,"",body.status,"status_change","ثبت سند"))
+  conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],"workflow.document.created"))
+  row=conn.execute("SELECT * FROM workflow_documents WHERE id=? AND tenant_id=?",(ident,user["tenant_id"])).fetchone()
+ return _workflow_doc(row)
+@app.get("/api/workflow/documents")
+def list_workflow_documents(document_type:str="all",status:str="all",party_role:str="all",q:str="",limit:int=200,user=Depends(user_from_header)):
+ if document_type not in ("all","order","invoice","purchase_order","sales_order"): raise HTTPException(422,"نوع سند نامعتبر است.")
+ if status!="all" and status not in WORKFLOW_STATUSES: raise HTTPException(422,"وضعیت نامعتبر است.")
+ if party_role not in ("all","customer","supplier","vendor","our_company","other"): raise HTTPException(422,"طرف معامله نامعتبر است.")
+ sql="SELECT * FROM workflow_documents WHERE tenant_id=?";args=[user["tenant_id"]]
+ for col,val in (("document_type",document_type),("status",status),("party_role",party_role)):
+  if val!="all": sql+=f" AND {col}=?";args.append(val)
+ if q.strip(): sql+=" AND (document_number LIKE ? OR title LIKE ? OR party_name LIKE ?)";args.extend(["%"+q.strip()+"%"]*3)
+ sql+=" ORDER BY CASE WHEN due_date='' THEN '9999-12-31' ELSE due_date END,id DESC LIMIT ?";args.append(max(1,min(limit,500)))
+ with db() as conn: rows=conn.execute(sql,args).fetchall()
+ return [_workflow_doc(x) for x in rows]
+@app.get("/api/workflow/documents/{document_id}")
+def get_workflow_document(document_id:int,user=Depends(user_from_header)):
+ with db() as conn:
+  row=conn.execute("SELECT * FROM workflow_documents WHERE id=? AND tenant_id=?",(document_id,user["tenant_id"])).fetchone()
+  if not row: raise HTTPException(404,"سند پیدا نشد.")
+  events=conn.execute("SELECT id,old_status,new_status,event_type,note,actor,created_at FROM workflow_events WHERE document_id=? AND tenant_id=? ORDER BY id",(document_id,user["tenant_id"])).fetchall()
+ return {"document":_workflow_doc(row),"timeline":[dict(x) for x in events]}
+@app.patch("/api/workflow/documents/{document_id}/status")
+def change_workflow_status(document_id:int,body:WorkflowStatusIn,user=Depends(user_from_header)):
+ with db() as conn:
+  row=conn.execute("SELECT status FROM workflow_documents WHERE id=? AND tenant_id=?",(document_id,user["tenant_id"])).fetchone()
+  if not row: raise HTTPException(404,"سند پیدا نشد.")
+  old=row["status"]
+  conn.execute("UPDATE workflow_documents SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",(body.status,document_id,user["tenant_id"]))
+  conn.execute("INSERT INTO workflow_events(tenant_id,document_id,old_status,new_status,event_type,note) VALUES(?,?,?,?,?,?)",(user["tenant_id"],document_id,old,body.status,"status_change",body.note.strip()))
+  conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],f"workflow.status:{document_id}:{body.status}"))
+  row=conn.execute("SELECT * FROM workflow_documents WHERE id=? AND tenant_id=?",(document_id,user["tenant_id"])).fetchone()
+ return _workflow_doc(row)
+@app.post("/api/workflow/documents/{document_id}/events")
+def add_workflow_event(document_id:int,body:WorkflowEventIn,user=Depends(user_from_header)):
+ with db() as conn:
+  row=conn.execute("SELECT status FROM workflow_documents WHERE id=? AND tenant_id=?",(document_id,user["tenant_id"])).fetchone()
+  if not row: raise HTTPException(404,"سند پیدا نشد.")
+  conn.execute("INSERT INTO workflow_events(tenant_id,document_id,old_status,new_status,event_type,note) VALUES(?,?,?,?,?,?)",(user["tenant_id"],document_id,row["status"],row["status"],body.event_type,body.note.strip()))
+  conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],f"workflow.event:{body.event_type}"))
+ return {"message":"رویداد پیگیری ثبت شد.","document_id":document_id}
+@app.get("/api/workflow/followups")
+def workflow_followups(days:int=7,user=Depends(user_from_header)):
+ days=max(0,min(days,365));today=date.today().isoformat();cutoff=(date.today()+timedelta(days=days)).isoformat()
+ with db() as conn: rows=conn.execute("SELECT * FROM workflow_documents WHERE tenant_id=? AND status NOT IN ('completed','cancelled','paid','fulfilled') AND due_date<>'' AND due_date<=? ORDER BY due_date LIMIT 500",(user["tenant_id"],cutoff)).fetchall()
+ items=[]
+ for row in rows:
+  x=_workflow_doc(row);x["overdue_days"]=max(0,(date.today()-date.fromisoformat(x["due_date"])).days);items.append(x)
+ return {"count":len(items),"items":items,"as_of":today}
