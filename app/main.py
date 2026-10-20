@@ -324,3 +324,242 @@ def insights(user=Depends(user_from_header)):
     return {"mode":"rules_based_mvp","low_stock":[dict(r) for r in low],"message":"تحلیل قواعدمحور نمونه؛ نه خروجی مدل هوش مصنوعی."}
 
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
+
+
+# LEADORA multi-business intelligence foundation (v0.5.0)
+# Rule-based, tenant-scoped operations; no sensitive external actions are executed automatically.
+with db() as c:
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS invoices(
+      id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+      customer_id INTEGER, invoice_number TEXT NOT NULL, issue_date TEXT NOT NULL,
+      due_date TEXT NOT NULL, amount REAL NOT NULL CHECK(amount>0),
+      status TEXT NOT NULL DEFAULT 'open', note TEXT NOT NULL DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(tenant_id,invoice_number));
+    CREATE TABLE IF NOT EXISTS payments(
+      id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+      invoice_id INTEGER NOT NULL, amount REAL NOT NULL CHECK(amount>0),
+      paid_at TEXT NOT NULL, method TEXT NOT NULL DEFAULT '', reference TEXT NOT NULL DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS expenses(
+      id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+      category TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+      amount REAL NOT NULL CHECK(amount>0), due_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'planned', vendor TEXT NOT NULL DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS opportunities(
+      id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+      customer_id INTEGER, title TEXT NOT NULL, source TEXT NOT NULL DEFAULT '',
+      stage TEXT NOT NULL DEFAULT 'lead', estimated_value REAL NOT NULL DEFAULT 0 CHECK(estimated_value>=0),
+      expected_close_date TEXT NOT NULL DEFAULT '', last_contact_at TEXT NOT NULL DEFAULT '',
+      lost_reason TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS agent_actions(
+      id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+      agent TEXT NOT NULL, severity TEXT NOT NULL DEFAULT 'info', title TEXT NOT NULL,
+      explanation TEXT NOT NULL, recommendation TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open', approval_required INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP, resolved_at TEXT);
+    CREATE INDEX IF NOT EXISTS idx_invoices_tenant_due ON invoices(tenant_id,due_date);
+    CREATE INDEX IF NOT EXISTS idx_expenses_tenant_due ON expenses(tenant_id,due_date);
+    CREATE INDEX IF NOT EXISTS idx_opportunities_tenant_stage ON opportunities(tenant_id,stage);
+    """)
+
+class InvoiceIn(BaseModel):
+    customer_id: int | None = None
+    invoice_number: str = Field(min_length=1,max_length=80)
+    issue_date: str = Field(min_length=10,max_length=10)
+    due_date: str = Field(min_length=10,max_length=10)
+    amount: float = Field(gt=0,le=1_000_000_000_000)
+    note: str = Field(default="",max_length=1000)
+
+class PaymentIn(BaseModel):
+    amount: float = Field(gt=0,le=1_000_000_000_000)
+    paid_at: str = Field(min_length=10,max_length=10)
+    method: str = Field(default="",max_length=80)
+    reference: str = Field(default="",max_length=120)
+
+class ExpenseIn(BaseModel):
+    category: str = Field(min_length=1,max_length=100)
+    description: str = Field(default="",max_length=300)
+    amount: float = Field(gt=0,le=1_000_000_000_000)
+    due_date: str = Field(min_length=10,max_length=10)
+    status: str = Field(default="planned",pattern="^(planned|paid|cancelled)$")
+    vendor: str = Field(default="",max_length=180)
+
+class OpportunityIn(BaseModel):
+    customer_id: int | None = None
+    title: str = Field(min_length=1,max_length=180)
+    source: str = Field(default="",max_length=100)
+    stage: str = Field(default="lead",pattern="^(lead|qualified|proposal|negotiation|won|lost)$")
+    estimated_value: float = Field(default=0,ge=0,le=1_000_000_000_000)
+    expected_close_date: str = Field(default="",max_length=10)
+    last_contact_at: str = Field(default="",max_length=10)
+    lost_reason: str = Field(default="",max_length=500)
+
+def _date_ok(value):
+    try:
+        from datetime import date
+        date.fromisoformat(value)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+def _paid_by_invoice(c, tenant_id):
+    return {r["invoice_id"]: r["paid"] for r in c.execute(
+        "SELECT invoice_id,COALESCE(SUM(amount),0) AS paid FROM payments WHERE tenant_id=? GROUP BY invoice_id",
+        (tenant_id,)).fetchall()}
+
+@app.post("/api/invoices")
+def create_invoice(body: InvoiceIn, user=Depends(user_from_header)):
+    if not _date_ok(body.issue_date) or not _date_ok(body.due_date) or body.due_date < body.issue_date:
+        raise HTTPException(422, "تاریخ صدور و سررسید باید معتبر باشند و سررسید قبل از صدور نباشد.")
+    tid = user["tenant_id"]
+    with db() as c:
+        if body.customer_id is not None and not c.execute("SELECT 1 FROM customers WHERE id=? AND tenant_id=?", (body.customer_id,tid)).fetchone():
+            raise HTTPException(404, "مشتری در این شرکت یافت نشد.")
+        try:
+            cur = c.execute("INSERT INTO invoices(tenant_id,customer_id,invoice_number,issue_date,due_date,amount,note) VALUES(?,?,?,?,?,?,?)",
+                (tid,body.customer_id,body.invoice_number.strip(),body.issue_date,body.due_date,body.amount,body.note.strip()))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "شماره فاکتور تکراری است.")
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"invoice.created"))
+    return {"id":cur.lastrowid,"message":"فاکتور ثبت شد."}
+
+@app.get("/api/invoices")
+def list_invoices(user=Depends(user_from_header)):
+    from datetime import date
+    tid=user["tenant_id"]; today=date.today().isoformat()
+    with db() as c:
+        rows=c.execute("""SELECT i.id,i.customer_id,i.invoice_number,i.issue_date,i.due_date,i.amount,i.note,
+          COALESCE(SUM(p.amount),0) AS paid, MAX(0,i.amount-COALESCE(SUM(p.amount),0)) AS outstanding,
+          CASE WHEN i.amount<=COALESCE(SUM(p.amount),0) THEN 'paid'
+               WHEN i.due_date<? THEN 'overdue' ELSE 'open' END AS computed_status
+          FROM invoices i LEFT JOIN payments p ON p.invoice_id=i.id AND p.tenant_id=i.tenant_id
+          WHERE i.tenant_id=? GROUP BY i.id ORDER BY i.due_date""",(today,tid)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/invoices/{invoice_id}/payments")
+def add_payment(invoice_id: int, body: PaymentIn, user=Depends(user_from_header)):
+    if not _date_ok(body.paid_at): raise HTTPException(422,"تاریخ پرداخت معتبر نیست.")
+    tid=user["tenant_id"]
+    with db() as c:
+        inv=c.execute("SELECT amount FROM invoices WHERE id=? AND tenant_id=?",(invoice_id,tid)).fetchone()
+        if not inv: raise HTTPException(404,"فاکتور یافت نشد.")
+        paid=c.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE invoice_id=? AND tenant_id=?",(invoice_id,tid)).fetchone()["total"]
+        if body.amount > inv["amount"]-paid+0.000001: raise HTTPException(422,"مبلغ پرداخت از مانده فاکتور بیشتر است.")
+        cur=c.execute("INSERT INTO payments(tenant_id,invoice_id,amount,paid_at,method,reference) VALUES(?,?,?,?,?,?)",
+          (tid,invoice_id,body.amount,body.paid_at,body.method.strip(),body.reference.strip()))
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"invoice.payment_recorded"))
+    return {"id":cur.lastrowid,"message":"پرداخت ثبت شد."}
+
+@app.post("/api/expenses")
+def create_expense(body: ExpenseIn, user=Depends(user_from_header)):
+    if not _date_ok(body.due_date): raise HTTPException(422,"تاریخ هزینه معتبر نیست.")
+    tid=user["tenant_id"]
+    with db() as c:
+        cur=c.execute("INSERT INTO expenses(tenant_id,category,description,amount,due_date,status,vendor) VALUES(?,?,?,?,?,?,?)",
+          (tid,body.category.strip(),body.description.strip(),body.amount,body.due_date,body.status,body.vendor.strip()))
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"expense.created"))
+    return {"id":cur.lastrowid,"message":"هزینه ثبت شد."}
+
+@app.get("/api/expenses")
+def list_expenses(user=Depends(user_from_header)):
+    with db() as c:
+        rows=c.execute("SELECT id,category,description,amount,due_date,status,vendor FROM expenses WHERE tenant_id=? ORDER BY due_date",(user["tenant_id"],)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/opportunities")
+def create_opportunity(body: OpportunityIn, user=Depends(user_from_header)):
+    tid=user["tenant_id"]
+    if body.expected_close_date and not _date_ok(body.expected_close_date): raise HTTPException(422,"تاریخ بستن فرصت معتبر نیست.")
+    if body.last_contact_at and not _date_ok(body.last_contact_at): raise HTTPException(422,"تاریخ آخرین تماس معتبر نیست.")
+    with db() as c:
+        if body.customer_id is not None and not c.execute("SELECT 1 FROM customers WHERE id=? AND tenant_id=?",(body.customer_id,tid)).fetchone():
+            raise HTTPException(404,"مشتری در این شرکت یافت نشد.")
+        cur=c.execute("""INSERT INTO opportunities(tenant_id,customer_id,title,source,stage,estimated_value,expected_close_date,last_contact_at,lost_reason)
+          VALUES(?,?,?,?,?,?,?,?,?)""",(tid,body.customer_id,body.title.strip(),body.source.strip(),body.stage,body.estimated_value,body.expected_close_date,body.last_contact_at,body.lost_reason.strip()))
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"opportunity.created"))
+    return {"id":cur.lastrowid,"message":"فرصت فروش ثبت شد."}
+
+@app.get("/api/opportunities")
+def list_opportunities(user=Depends(user_from_header)):
+    with db() as c:
+        rows=c.execute("SELECT id,customer_id,title,source,stage,estimated_value,expected_close_date,last_contact_at,lost_reason FROM opportunities WHERE tenant_id=? ORDER BY id DESC",(user["tenant_id"],)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.get("/api/agents/overview")
+def agents_overview(user=Depends(user_from_header)):
+    from datetime import date, timedelta
+    tid=user["tenant_id"]; today=date.today(); today_s=today.isoformat()
+    with db() as c:
+        inv=c.execute("""SELECT i.id,i.invoice_number,i.due_date,i.amount,COALESCE(SUM(p.amount),0) paid
+          FROM invoices i LEFT JOIN payments p ON p.invoice_id=i.id AND p.tenant_id=i.tenant_id
+          WHERE i.tenant_id=? GROUP BY i.id""",(tid,)).fetchall()
+        expenses=c.execute("SELECT amount,due_date,status,category,description FROM expenses WHERE tenant_id=?",(tid,)).fetchall()
+        opps=c.execute("SELECT stage,estimated_value,last_contact_at,expected_close_date FROM opportunities WHERE tenant_id=?",(tid,)).fetchall()
+        customers=c.execute("SELECT id,name FROM customers WHERE tenant_id=?",(tid,)).fetchall()
+    aging={"not_due":0.0,"1_30":0.0,"31_60":0.0,"61_90":0.0,"90_plus":0.0}
+    overdue=[]; receivable=0.0; due_in_7=0.0
+    for r in inv:
+        outstanding=max(0.0,float(r["amount"])-float(r["paid"]))
+        if outstanding<=0: continue
+        receivable+=outstanding
+        days=(today-date.fromisoformat(r["due_date"])).days
+        if days<=0:
+            aging["not_due"]+=outstanding
+            if (date.fromisoformat(r["due_date"])-today).days<=7: due_in_7+=outstanding
+        else:
+            key="1_30" if days<=30 else "31_60" if days<=60 else "61_90" if days<=90 else "90_plus"
+            aging[key]+=outstanding
+            overdue.append({"invoice_number":r["invoice_number"],"days_overdue":days,"outstanding":round(outstanding,2),"severity":"high" if days>30 else "medium"})
+    overdue.sort(key=lambda x:(x["days_overdue"],x["outstanding"]),reverse=True)
+    due_expenses=[dict(r) for r in expenses if r["status"]=="planned" and r["due_date"]<= (today+timedelta(days=30)).isoformat()]
+    expected_outflow=sum(float(r["amount"]) for r in due_expenses)
+    stages={}
+    for r in opps: stages[r["stage"]]=stages.get(r["stage"],0)+1
+    stale=[]
+    for r in customers:
+        # No churn claim without customer activity/purchase history; use explicit evidence status.
+        pass
+    actions=[]
+    if overdue: actions.append({"agent":"receivables","severity":"high" if any(x["days_overdue"]>30 for x in overdue) else "medium","title":"پیگیری مطالبات سررسیدگذشته","explanation":f"{len(overdue)} فاکتور دارای مانده سررسیدگذشته است.","recommendation":"فاکتورها را بر اساس مبلغ و روزهای تأخیر اولویت‌بندی و پیش‌نویس پیگیری تهیه کنید.","approval_required":True})
+    if expected_outflow: actions.append({"agent":"cash_flow","severity":"medium","title":"بررسی خروجی نقدی ۳۰ روز آینده","explanation":f"هزینه‌های برنامه‌ریزی‌شده نزدیک به سررسید: {expected_outflow:.2f}.","recommendation":"ورودی‌های نقدی مورد انتظار را با هزینه‌ها مقایسه و پرداخت‌ها را اولویت‌بندی کنید.","approval_required":True})
+    if not inv: actions.append({"agent":"receivables","severity":"info","title":"داده مطالبات کافی نیست","explanation":"هنوز فاکتوری ثبت نشده است.","recommendation":"فاکتورها را دستی ثبت کنید یا در مرحله بعد فایل استاندارد را وارد کنید.","approval_required":False})
+    if not opps: actions.append({"agent":"sales_analytics","severity":"info","title":"داده قیف فروش کافی نیست","explanation":"برای محاسبه نرخ تبدیل، فرصت‌های فروش ثبت نشده‌اند.","recommendation":"فرصت‌ها را همراه با مرحله فروش، ارزش تقریبی و منبع ثبت کنید.","approval_required":False})
+    return {"mode":"rules_based","as_of":today_s,"agents":[
+      {"id":"business_manager","name":"دستیار مدیریت کسب‌وکار","status":"rules_based"},
+      {"id":"receivables","name":"مدیریت مطالبات","status":"active"},
+      {"id":"sales_analytics","name":"تحلیل فروش و قیف","status":"active"},
+      {"id":"retention","name":"حفظ مشتری","status":"insufficient_data" if not opps else "limited_data"},
+      {"id":"cash_flow","name":"مدیریت نقدینگی","status":"active"},
+      {"id":"marketing_sales","name":"بازاریابی و فروش هوشمند","status":"limited_data"}],
+      "metrics":{"outstanding_receivables":round(receivable,2),"due_in_7_days":round(due_in_7,2),"aging":{k:round(v,2) for k,v in aging.items()},"planned_outflow_30_days":round(expected_outflow,2),"pipeline_count":len(opps),"pipeline_value":round(sum(float(r["estimated_value"]) for r in opps if r["stage"] not in ("won","lost")),2),"pipeline_by_stage":stages,"customer_count":len(customers)},
+      "overdue_invoices":overdue[:100],"actions":actions,
+      "limitations":["پیش‌بینی ریزش مشتری تا ثبت تاریخچه تعامل یا خرید، قابل اتکا نیست.","بازده کمپین تا ثبت هزینه و نتیجه کمپین محاسبه نمی‌شود.","پیش‌بینی نقدینگی فعلاً قواعدمحور است و موجودی بانکی زنده را نشان نمی‌دهد."]}
+
+@app.get("/api/agents/actions")
+def list_agent_actions(user=Depends(user_from_header)):
+    with db() as c:
+        rows=c.execute("SELECT id,agent,severity,title,explanation,recommendation,status,approval_required,created_at FROM agent_actions WHERE tenant_id=? ORDER BY id DESC LIMIT 200",(user["tenant_id"],)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/agents/actions/{action_id}/resolve")
+def resolve_agent_action(action_id: int, user=Depends(user_from_header)):
+    tid=user["tenant_id"]
+    with db() as c:
+        cur=c.execute("UPDATE agent_actions SET status='resolved',resolved_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=? AND status='open'",(action_id,tid))
+        if not cur.rowcount: raise HTTPException(404,"اقدام باز یافت نشد.")
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"agent_action.resolved"))
+    return {"message":"اقدام علامت‌گذاری شد."}
+
+@app.get("/api/import/template/{dataset}.csv")
+def import_template(dataset: str, user=Depends(user_from_header)):
+    templates={
+      "invoices":["invoice_number","customer_id","issue_date(YYYY-MM-DD)","due_date(YYYY-MM-DD)","amount","note"],
+      "expenses":["category","description","amount","due_date(YYYY-MM-DD)","status(planned/paid/cancelled)","vendor"],
+      "opportunities":["title","source","stage(lead/qualified/proposal/negotiation/won/lost)","estimated_value","expected_close_date(YYYY-MM-DD)","last_contact_at(YYYY-MM-DD)","lost_reason"]
+    }
+    if dataset not in templates: raise HTTPException(404,"قالب برای این نوع داده وجود ندارد.")
+    stream=io.StringIO(newline=""); csv.writer(stream).writerow(templates[dataset])
+    return StreamingResponse(iter(["\\ufeff"+stream.getvalue()]),media_type="text/csv; charset=utf-8",
+      headers={"Content-Disposition":f'attachment; filename="leadora-{dataset}-template.csv"',"Cache-Control":"no-store"})
