@@ -82,7 +82,7 @@ def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
     monkeypatch.setenv("LEADORA_OWNER_EMAILS", owner_email)
 
     contract = client.post("/api/finance/contracts", headers=owner_headers, json={
-        "tenant_id": company["tenant_id"],
+        "tenant_id": company["tenant"]["id"],
         "trial_start": "2026-01-01", "trial_end": "2026-03-31",
         "contract_start": "2026-01-01", "contract_end": "2026-12-31",
         "goal_name": "Increase net sales", "baseline": "100", "target": "120",
