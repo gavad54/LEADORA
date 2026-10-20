@@ -204,6 +204,10 @@ def create_router(db_factory, user_dependency):
     class ObjectionIn(BaseModel):
         reason: str = Field(min_length=5, max_length=2000)
 
+    class GoalDecisionIn(BaseModel):
+        achieved: bool
+        evidence: str = Field(min_length=5, max_length=2000)
+
     class SettlementIn(BaseModel):
         amount: Decimal = Field(gt=0)
         note: str = Field(default="", max_length=1000)
@@ -261,6 +265,18 @@ def create_router(db_factory, user_dependency):
                decimal_text(body.target), decimal_text(body.share_percent), json.dumps(body.direct_costs), body.notes.strip()))
             audit(c, user, "finance.contract.created", {"contract_id": cur.lastrowid, "tenant_id": body.tenant_id})
             return dict(c.execute("SELECT * FROM finance_contracts WHERE id=?", (cur.lastrowid,)).fetchone())
+
+    @router.post("/contracts/{contract_id}/goal")
+    def decide_goal(contract_id: int, body: GoalDecisionIn, user=Depends(user_dependency)):
+        require_owner(user)
+        with db_factory() as c:
+            row = c.execute("SELECT * FROM finance_contracts WHERE id=?", (contract_id,)).fetchone()
+            if not row:
+                raise HTTPException(404, "قرارداد پیدا نشد.")
+            c.execute("UPDATE finance_contracts SET goal_achieved=?,achieved_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                      (int(body.achieved), datetime.utcnow().isoformat(timespec="seconds") if body.achieved else "", contract_id))
+            audit(c, user, "finance.contract.goal_decided", {"contract_id": contract_id, "achieved": body.achieved, "evidence": body.evidence})
+        return {"ok": True, "goal_achieved": body.achieved, "message": "نتیجه هدف با ثبت مستندات ذخیره شد."}
 
     @router.post("/contracts/{contract_id}/activate")
     def activate_contract(contract_id: int, user=Depends(user_dependency)):
@@ -386,7 +402,7 @@ def create_router(db_factory, user_dependency):
                 if existing["status"] in ("approved", "closed", "adjusted"):
                     raise HTTPException(409, "گزارش تأییدشده قابل بازنویسی نیست؛ اصلاحیه جداگانه لازم است.")
                 c.execute("""UPDATE finance_reports SET currency=?,gross_sales=?,discounts=?,returns=?,net_sales=?,cogs=?,direct_costs=?,eligible_profit=?,share_percent=?,owner_share=?,contract_id=?,status='pending'
-                  WHERE id=?""", (next(iter(currencies), *values, contract_id, existing["id"]))
+                  WHERE id=?""", (next(iter(currencies)), *values, contract_id, existing["id"])
             report = c.execute("SELECT * FROM finance_reports WHERE tenant_id=? AND period=?", (user["tenant_id"], period)).fetchone()
             audit(c, user, "finance.report.calculated", {"period": period, "report_id": report["id"], "eligible_profit": report["eligible_profit"]})
         return dict(report)
