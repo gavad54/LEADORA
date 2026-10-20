@@ -15,6 +15,8 @@
 <nav class="tabs"><button class="active" data-view="company">اطلاعات شرکت</button><button data-view="entries">ثبت اطلاعات مالی</button><button data-view="reports">گزارش‌های سود</button><button data-view="owner" id="ownerTab" class="hidden">پنل مالک</button></nav>
 
 <section id="view-company" class="view active">
+<div class="panel"><h2>ثبت امن مالک سامانه (فقط یک بار)</h2><p class="muted">این بخش فقط برای راه‌اندازی اولیه است. مالک با رمز یک‌بارمصرفی که در تنظیمات امن سرور تعیین شده ثبت می‌شود؛ پس از ثبت، حساب دیگری نمی‌تواند مالک را جایگزین کند. اگر مالک از قبل در سرور تعیین شده باشد، این روش بسته است.</p>
+<form id="ownerClaimForm" class="fields"><div class="field"><label for="ownerBootstrapToken">رمز یک‌بارمصرف راه‌اندازی مالک</label><input id="ownerBootstrapToken" type="password" required minlength="32" maxlength="256" autocomplete="off" placeholder="رمز امن را وارد کنید"></div><div class="field" style="align-content:end"><button class="btn primary" type="submit">ثبت این حساب به‌عنوان مالک</button></div></form><div id="ownerClaimStatus" class="status hidden"></div></div>
 <div class="grid">
 <div class="panel"><h2>روش دریافت اطلاعات این شرکت</h2><p class="muted">هر شرکت می‌تواند روش‌های مجاز خود را مستقل انتخاب کند. اتصال بیرونی تا زمان تنظیم API مجاز، فعال محسوب نمی‌شود.</p>
 <div class="checks"><label><input type="checkbox" id="methodManual" checked> ثبت دستی</label><label><input type="checkbox" id="methodCsv" checked> فایل CSV</label><label><input type="checkbox" id="methodIntegration"> اتصال سامانه موجود</label></div>
@@ -126,6 +128,7 @@ window.decideGoal=async id=>{const yes=confirm('آیا تحقق هدف با اس
 $('contractForm').onsubmit=async e=>{e.preventDefault();const body={tenant_id:Number($('contractTenant').value),share_percent:$('sharePercent').value,trial_start:$('trialStart').value,trial_end:$('trialEnd').value,contract_start:$('contractStart').value,contract_end:$('contractEnd').value||null,goal_name:$('goalName').value,baseline:$('baseline').value,target:$('target').value,direct_costs:['direct_costs'],notes:$('contractNotes').value};try{const d=await api('/api/finance/contracts','POST',body);status('contractStatus','قرارداد شماره '+d.id+' با وضعیت «در انتظار تأیید» ثبت شد.','success');await loadOwner();await loadContracts()}catch(e){status('contractStatus',e.message,'error')}};
 $('loadOwner').onclick=loadOwner;
 async function init(){if(!token){status('globalStatus','برای استفاده از بخش مالی ابتدا از صفحه اصلی وارد شوید؛ سپس همین صفحه را باز کنید.','error');return}status('globalStatus','ورود فعال برای '+(company||email)+'؛ اطلاعات مالی فقط برای شرکت احراز هویت‌شده بارگیری می‌شود.','success');try{await loadSettings();await loadContracts();await loadEntries();await loadReports();await loadOwner()}catch(e){status('globalStatus',e.message,'error')}}
+$('ownerClaimForm').onsubmit=async e=>{e.preventDefault();const token=$('ownerBootstrapToken').value;try{const d=await api('/api/finance/owner/claim','POST',{token});$('ownerBootstrapToken').value='';status('ownerClaimStatus',d.message||'ثبت مالک انجام شد.','success');await loadOwner();}catch(err){status('ownerClaimStatus',err.message,'error')}};
 $('refresh').onclick=()=>init();
 init();
 </script></body></html>
