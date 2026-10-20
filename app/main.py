@@ -152,7 +152,7 @@ def register(body: RegisterIn):
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"tenant.registered"))
         except sqlite3.IntegrityError:
             raise HTTPException(409,"این ایمیل قبلاً برای این شرکت ثبت شده است.")
-    return {"token":token(uid,tid),"tenant":{"id":tid,"name":company_name,"industry":industry},"user":{"email":email}}
+    return {"token":token(uid,tid),"tenant":{"id":tid,"name":company_name,"industry":industry},"user":{"id":uid,"email":email}}
 
 @app.post("/api/login")
 def login(body: LoginIn):
