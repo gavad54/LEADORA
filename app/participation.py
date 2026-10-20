@@ -278,6 +278,10 @@ def create_router(db_factory, user_dependency):
             raise HTTPException(409, "مالک سامانه از طریق تنظیمات امن سرور تعیین شده است؛ ثبت مالک جدید مجاز نیست.")
         if not secrets_compare(body.token, expected):
             raise HTTPException(403, "رمز یک‌بارمصرف مالک معتبر نیست.")
+        expected_email = os.getenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "").strip().casefold()
+        account_email = str(user.get("email", "")).strip().casefold()
+        if expected_email and account_email != expected_email:
+            raise HTTPException(403, "این حساب با ایمیل مجاز مالک مطابقت ندارد.")
         user_id = str(user.get("id", ""))
         if not user_id:
             raise HTTPException(400, "شناسه حساب معتبر نیست.")
