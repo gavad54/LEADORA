@@ -185,3 +185,49 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
     assert denied.status_code == 403
     allowed = client.get("/api/finance/owner/overview", headers=owner_headers)
     assert allowed.status_code == 200
+
+
+def test_integration_webhook_key_rotation_ingest_and_tenant_isolation():
+    client = TestClient(app)
+    headers_a, _ = register(client, "Webhook A")
+    headers_b, _ = register(client, "Webhook B")
+    configured = client.put("/api/finance/settings", headers=headers_a, json={
+        "methods": ["integration"], "integration_provider": "generic-webhook-test"
+    })
+    assert configured.status_code == 200, configured.text
+    created = client.post("/api/finance/integration/key", headers=headers_a, json={})
+    assert created.status_code == 200, created.text
+    key_a = created.json()["integration_key"]
+
+    missing = client.post("/api/finance/integration/ingest", json={"entries": [{
+        "period": "2026-10", "document_ref": "WEB-1", "sales": "1000",
+        "discounts": "0", "returns": "0", "cogs": "600", "direct_costs": "0",
+        "currency": "IRT"
+    }]})
+    assert missing.status_code == 401
+
+    batch = client.post("/api/finance/integration/ingest", headers={"X-LEADORA-Integration-Key": key_a}, json={"entries": [
+        {"period": "2026-10", "document_ref": "WEB-1", "sales": "1000", "discounts": "0", "returns": "0", "cogs": "600", "direct_costs": "0", "currency": "IRT", "source_key": "erp-1"},
+        {"period": "2026-10", "document_ref": "WEB-1", "sales": "1000", "discounts": "0", "returns": "0", "cogs": "600", "direct_costs": "0", "currency": "IRT", "source_key": "erp-1"},
+    ]})
+    assert batch.status_code == 200, batch.text
+    assert batch.json()["imported"] == 1
+    assert len(batch.json()["rejected"]) == 1
+
+    entries_a = client.get("/api/finance/entries", headers=headers_a)
+    entries_b = client.get("/api/finance/entries", headers=headers_b)
+    assert entries_a.status_code == 200
+    assert any(row["document_ref"] == "WEB-1" and row["source"] == "integration" for row in entries_a.json())
+    assert all(row["document_ref"] != "WEB-1" for row in entries_b.json())
+
+    rotated = client.post("/api/finance/integration/key", headers=headers_a, json={})
+    assert rotated.status_code == 200
+    key_b = rotated.json()["integration_key"]
+    old_key = client.post("/api/finance/integration/ingest", headers={"X-LEADORA-Integration-Key": key_a}, json={"entries": [
+        {"period": "2026-10", "document_ref": "WEB-2", "sales": "10", "discounts": "0", "returns": "0", "cogs": "5", "direct_costs": "0", "currency": "IRT"}
+    ]})
+    assert old_key.status_code == 401
+    new_key = client.post("/api/finance/integration/ingest", headers={"X-LEADORA-Integration-Key": key_b}, json={"entries": [
+        {"period": "2026-10", "document_ref": "WEB-2", "sales": "10", "discounts": "0", "returns": "0", "cogs": "5", "direct_costs": "0", "currency": "IRT"}
+    ]})
+    assert new_key.status_code == 200, new_key.text
