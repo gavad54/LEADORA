@@ -92,11 +92,12 @@ def test_multisource_business_lead_import_deduplicates_and_is_tenant_scoped():
         {"name": "Example Market", "phone": "+98 21 12345678", "city": "Tehran",
          "category": "retail", "website": "https://example.test"},
         {"name": "", "city": "Tehran"},
+        {"name": "Unsafe Link Shop", "website": "javascript:alert(1)", "city": "Tehran"},
     ]}
     first = client.post("/api/prospecting/import", headers=a, json=payload)
     assert first.status_code == 200, first.text
     assert first.json()["imported"] == 1
-    assert first.json()["rejected"] == 1
+    assert first.json()["rejected"] == 2
     second = client.post("/api/prospecting/import", headers=a, json=payload)
     assert second.status_code == 200, second.text
     assert second.json()["updated"] == 1
@@ -105,6 +106,10 @@ def test_multisource_business_lead_import_deduplicates_and_is_tenant_scoped():
     assert leads.json()["total"] == 1
     assert leads.json()["items"][0]["name"] == "Example Market"
     assert client.get("/api/prospecting/business-leads", headers=b).json()["total"] == 0
+    exported = client.get("/api/prospecting/business-leads/export.csv", headers=a)
+    assert exported.status_code == 200
+    assert "Example Market" in exported.text
+    assert "javascript:" not in exported.text
     runs = client.get("/api/prospecting/source-runs", headers=a)
     assert len(runs.json()) >= 2
     sources = client.get("/api/prospecting/sources", headers=a).json()["sources"]
