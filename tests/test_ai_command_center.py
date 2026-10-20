@@ -52,7 +52,8 @@ def test_ai_workflows_are_tenant_isolated_and_transitions_guarded():
         "action": "qualify", "approved": False, "note": ""
     }).status_code == 404
 
-def test_customer_chat_persists_history_and_flags_handoff():
+def test_customer_chat_persists_history_and_flags_handoff(monkeypatch):
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     c = TestClient(app)
     h = _workspace(c, str(os.getpid()) + "-chat")
     r = c.post("/api/ai/chat", headers=h, json={
