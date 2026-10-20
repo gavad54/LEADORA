@@ -38,8 +38,8 @@ def period_start(value):
     return date.fromisoformat(value + "-01")
 
 
-def owner_emails():
-    return {x.strip().casefold() for x in os.getenv("LEADORA_OWNER_EMAILS", "").split(",") if x.strip()}
+def owner_user_ids():
+    return {x.strip() for x in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if x.strip()}
 
 
 def create_router(db_factory, user_dependency):
@@ -150,7 +150,7 @@ def create_router(db_factory, user_dependency):
         )
 
     def is_owner(user):
-        return bool(user.get("email", "").casefold() in owner_emails())
+        return str(user.get("id", "")) in owner_user_ids()
 
     def require_owner(user):
         if not is_owner(user):
@@ -246,6 +246,10 @@ def create_router(db_factory, user_dependency):
         def valid_adjustment_period(cls, value):
             period_start(value)
             return value
+
+    @router.get("/identity")
+    def identity(user=Depends(user_dependency)):
+        return {"user_id": user["id"], "tenant_id": user["tenant_id"], "email": user.get("email", ""), "is_platform_owner": is_owner(user)}
 
     @router.get("/settings")
     def get_settings(user=Depends(user_dependency)):
