@@ -1383,6 +1383,12 @@ def init_scheduled_prospecting():
         );
         CREATE INDEX IF NOT EXISTS idx_prospecting_settings_due
           ON prospecting_settings(enabled,next_run_at);
+        CREATE TABLE IF NOT EXISTS prospecting_worker_lease(
+          id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL DEFAULT '',
+          lease_until REAL NOT NULL DEFAULT 0, last_external_request_at REAL NOT NULL DEFAULT 0,
+          heartbeat_at REAL NOT NULL DEFAULT 0
+        );
+        INSERT OR IGNORE INTO prospecting_worker_lease(id,owner,lease_until,last_external_request_at,heartbeat_at) VALUES(1,'',0,0,0);
         """)
 init_scheduled_prospecting()
 
@@ -1420,8 +1426,13 @@ def prospecting_worker_status(user=Depends(user_from_header)):
     with db() as c:
         settings=c.execute("SELECT enabled,last_attempt_at,last_success_at,last_error,consecutive_failures,next_run_at,interval_seconds FROM prospecting_settings WHERE tenant_id=?",(user["tenant_id"],)).fetchone()
         events=c.execute("SELECT event_type,message,found,created_at FROM prospecting_worker_events WHERE tenant_id=? ORDER BY id DESC LIMIT 20",(user["tenant_id"],)).fetchall()
+        lease=c.execute("SELECT heartbeat_at,owner FROM prospecting_worker_lease WHERE id=1").fetchone()
+    import time as _time
+    heartbeat=float(lease["heartbeat_at"] or 0) if lease else 0
+    alive=bool(heartbeat and _time.time()-heartbeat < 90)
     return {"configured":settings is not None,"settings":dict(settings) if settings else None,"recent_events":[dict(x) for x in events],
-            "worker_process":"separate server process required; this API cannot prove that process is alive"}
+            "worker_process":{"alive":alive,"last_heartbeat_epoch":heartbeat,"owner":lease["owner"] if lease else ""},
+            "note":"Heartbeat confirms recent worker activity only; it does not guarantee upstream data-source availability."}
 
 @app.get("/api/prospecting/business-leads/export.csv")
 def export_business_leads(user=Depends(user_from_header)):
