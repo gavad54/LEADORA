@@ -18,3 +18,39 @@ def test_product_rejects_invalid_token():
 def test_registration_requires_long_password():
     response = client.post('/api/register', json={'company_name':'Test Co','industry':'retail','email':'short-password@example.com','password':'short'})
     assert response.status_code == 422
+
+
+def test_security_headers_are_set():
+    response = client.get("/api/health")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+
+def test_registration_rejects_invalid_email():
+    response = client.post("/api/register", json={
+        "company_name": "Invalid Email Test",
+        "industry": "retail",
+        "email": "not-an-email",
+        "password": "secure-test-password",
+    })
+    assert response.status_code == 422
+
+def test_login_handles_duplicate_company_and_email_across_tenants():
+    import os
+    suffix = str(os.getpid())
+    common_email = "duplicate-" + suffix + "@example.com"
+    for password in ("password-for-first-account", "password-for-second-account"):
+        response = client.post("/api/register", json={
+            "company_name": "Duplicate Company " + suffix,
+            "industry": "retail",
+            "email": common_email,
+            "password": password,
+        })
+        assert response.status_code == 200, response.text
+    response = client.post("/api/login", json={
+        "company_name": "Duplicate Company " + suffix,
+        "email": common_email,
+        "password": "password-for-second-account",
+    })
+    assert response.status_code == 200, response.text
+    assert response.json().get("token")
