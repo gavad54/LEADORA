@@ -426,4 +426,32 @@ def create_router(db,user_from_header):
  def health(user=Depends(user_from_header)):
   with db() as c: c.execute("SELECT 1").fetchone()
   return {"status":"ok","tenant_isolated":True,"persistence":"sqlite","registered_agents":len(AGENTS),"live_llm_configured":active_ai_provider()["configured"],"ai_provider":active_ai_provider(),"external_channels_connected":False,"payment_execution_connected":False}
+ @router.get("/api/ai/observability")
+ def observability(user=Depends(user_from_header)):
+  """Tenant-scoped operational snapshot; reports recorded state, not external system truth."""
+  tid=user["tenant_id"]
+  with db() as c:
+   def count(sql,params=(tid,)):
+    return int(c.execute(sql,params).fetchone()[0])
+   workflows={
+    "total":count("SELECT COUNT(*) FROM ai_workflows WHERE tenant_id=?"),
+    "active":count("SELECT COUNT(*) FROM ai_workflows WHERE tenant_id=? AND status='active'"),
+    "stale_over_72h":count("SELECT COUNT(*) FROM ai_workflows WHERE tenant_id=? AND status='active' AND updated_at < datetime('now','-72 hours')")
+   }
+   tasks={status:count("SELECT COUNT(*) FROM ai_agent_tasks WHERE tenant_id=? AND status=?",(tid,status)) for status in ("queued","blocked","needs_human","failed","completed")}
+   approvals={status:count("SELECT COUNT(*) FROM ai_approvals WHERE tenant_id=? AND status=?",(tid,status)) for status in ("pending","approved","rejected")}
+   followups={status:count("SELECT COUNT(*) FROM ai_followups WHERE tenant_id=? AND status=?",(tid,status)) for status in ("queued","draft_ready","cancelled","failed")}
+   events=c.execute("SELECT id,actor_type,event_type,entity_type,entity_id,created_at FROM ai_audit_events WHERE tenant_id=? ORDER BY id DESC LIMIT 20",(tid,)).fetchall()
+  return {
+   "scope":"tenant",
+   "generated_at_sql":"CURRENT_TIMESTAMP",
+   "workflows":workflows,
+   "agent_tasks":tasks,
+   "approvals":approvals,
+   "followups":followups,
+   "recent_events":[dict(r) for r in events],
+   "integrations":{"llm":active_ai_provider(),"messaging":"not_connected","catalog_inventory":"not_verified_as_connected","shipping":"not_connected","accounting_payment":"not_connected"},
+   "safety_note":"شمارنده‌ها از پایگاه داده LEADORA هستند؛ تا زمان اتصال و آزمون سامانه‌های بیرونی، وضعیت زنده انبار، حمل، حسابداری یا پرداخت را اثبات نمی‌کنند."
+  }
+
  return router
