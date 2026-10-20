@@ -15,6 +15,7 @@ CURRENCY_DEFAULT = "IRR"
 
 class PriceUpdate(BaseModel):
     modules: dict[str, int] = Field(description="Monthly price per module in the configured currency; 0 means free")
+    active_modules: list[str] = Field(default_factory=lambda: list(MODULES))
     currency: str = Field(min_length=2, max_length=12)
     currency_label: str = Field(min_length=1, max_length=40)
     base_monthly_price: int = Field(ge=0)
@@ -66,7 +67,7 @@ def create_router(db, user_from_header):
 
     @router.put("/api/owner/pricing")
     def set_owner_pricing(body: PriceUpdate, _=Depends(require_owner)):
-        unknown = set(body.modules) - set(MODULES)
+        unknown = (set(body.modules) | set(body.active_modules)) - set(MODULES)
         if unknown:
             raise HTTPException(422, "شناسه ماژول نامعتبر است.")
         if any((not isinstance(v, int)) or v < 0 for v in body.modules.values()):
@@ -76,6 +77,8 @@ def create_router(db, user_from_header):
                       (body.currency.upper(),body.currency_label,body.base_monthly_price,body.pricing_note))
             for key, price in body.modules.items():
                 c.execute("UPDATE leadora_module_prices SET monthly_price=? WHERE module_key=?", (price,key))
+            for key in MODULES:
+                c.execute("UPDATE leadora_module_prices SET active=? WHERE module_key=?", (1 if key in body.active_modules else 0,key))
         return {"saved":True,"message":"تنظیمات قیمت ذخیره شد."}
 
     @router.get("/api/modules")
