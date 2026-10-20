@@ -109,3 +109,25 @@ def test_multisource_business_lead_import_deduplicates_and_is_tenant_scoped():
     assert len(runs.json()) >= 2
     sources = client.get("/api/prospecting/sources", headers=a).json()["sources"]
     assert {item["id"] for item in sources} >= {"openstreetmap", "balad", "neshan", "snapp"}
+
+
+def test_scheduled_prospecting_settings_are_tenant_scoped_and_validated():
+    a, b = account("scheduled-a"), account("scheduled-b")
+    assert client.get("/api/prospecting/settings", headers=a).json()["configured"] is False
+    saved = client.put("/api/prospecting/settings", headers=a, json={
+        "latitude": 35.6892, "longitude": 51.3890, "radius_m": 5000,
+        "category": "shop", "enabled": True, "interval_seconds": 900,
+    })
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["enabled"] == 1
+    assert saved.json()["interval_seconds"] == 900
+    assert client.get("/api/prospecting/settings", headers=b).json()["configured"] is False
+    status = client.get("/api/prospecting/worker/status", headers=a)
+    assert status.status_code == 200
+    assert status.json()["configured"] is True
+    assert "worker_process" in status.json()
+    invalid = client.put("/api/prospecting/settings", headers=a, json={
+        "latitude": 300, "longitude": 0, "radius_m": 1000,
+        "category": "all", "enabled": True, "interval_seconds": 60,
+    })
+    assert invalid.status_code == 422
