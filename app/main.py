@@ -1474,6 +1474,8 @@ from app.participation import create_router
 app.include_router(create_router(db, user_from_header))
 from app.distribution_erp import create_router as create_distribution_router
 app.include_router(create_distribution_router(db, user_from_header))
+from app.pricing_modules import create_router as create_pricing_router
+app.include_router(create_pricing_router(db, user_from_header))
 
 @app.get("/distribution")
 def distribution_page():
@@ -1482,3 +1484,7 @@ def distribution_page():
 @app.get("/finance")
 def finance_page():
     return FileResponse(ROOT / "static" / "finance.html")
+
+@app.get("/owner/pricing")
+def owner_pricing_page():
+    return FileResponse(ROOT / "static" / "owner-pricing.html")
