@@ -29,7 +29,7 @@
 <div class="grid">
 <div class="panel"><h2>ثبت دستی سند فروش/هزینه مستقیم</h2><p class="muted">هر سند در یک دوره و برای یک شرکت شناسه یکتا دارد. تخفیف و برگشت از فروش جداگانه ثبت می‌شوند.</p>
 <form id="entryForm" class="fields">
-<div class="field"><label>دوره (YYYY-MM)</label><input id="entryPeriod" required pattern="\\d{4}-(0[1-9]|1[0-2])"></div>
+<div class="field"><label>دوره (YYYY-MM)</label><input id="entryPeriod" required pattern="\d{4}-(0[1-9]|1[0-2])"></div>
 <div class="field"><label>شناسه سند</label><input id="documentRef" required maxlength="160" placeholder="شماره فاکتور یا سند"></div>
 <div class="field"><label>فروش ثبت‌شده</label><input id="sales" required type="number" min="0" step="0.01"></div>
 <div class="field"><label>تخفیف</label><input id="discounts" type="number" min="0" step="0.01" value="0"></div>
@@ -47,7 +47,7 @@
 
 <section id="view-reports" class="view">
 <div class="panel"><h2>محاسبه گزارش ماهانه</h2><p class="muted">گزارش بر اساس اسناد ثبت‌شده همان دوره ساخته می‌شود. گزارش تأییدشده بازنویسی نمی‌شود؛ اصلاح آن باید از مسیر اصلاحیه انجام شود.</p>
-<div class="fields"><div class="field"><label>دوره گزارش (YYYY-MM)</label><input id="reportPeriod" required pattern="\\d{4}-(0[1-9]|1[0-2])"></div><div class="field"><label>عملیات</label><button class="btn primary" id="calculateReport">محاسبه و ارسال برای تأیید</button></div></div><div id="reportStatus" class="status hidden"></div></div>
+<div class="fields"><div class="field"><label>دوره گزارش (YYYY-MM)</label><input id="reportPeriod" required pattern="\d{4}-(0[1-9]|1[0-2])"></div><div class="field"><label>عملیات</label><button class="btn primary" id="calculateReport">محاسبه و ارسال برای تأیید</button></div></div><div id="reportStatus" class="status hidden"></div></div>
 <div class="panel"><div class="bar"><div><h2>گزارش‌ها و وضعیت تسویه</h2><p class="muted">سهم مالک در وضعیت پیش‌نویس، به معنی بدهی قطعی نیست.</p></div><button class="btn ghost" id="loadReports">بارگیری گزارش‌ها</button></div><div id="reportsTable" class="tablewrap"></div></div>
 </section>
 
