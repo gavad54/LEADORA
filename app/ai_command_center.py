@@ -50,7 +50,8 @@ class DiscoveryIn(BaseModel):
  phone: str = Field(default="",max_length=50)
  need: str = Field(default="",max_length=2000)
  source: str = Field(default="import",max_length=80)
- consent_to_follow_up: bool = False
+ # None means the source omitted consent; False explicitly withdraws consent.
+ consent_to_follow_up: Optional[bool] = None
 
 class FollowupIn(BaseModel):
  workflow_id: int = Field(gt=0)
@@ -173,17 +174,17 @@ def create_router(db,user_from_header):
     new_phone=phone or match["phone"]
     new_need=body.need.strip() or match["need"]
     new_source=source if source not in ("import","manual","unknown") else match["source"]
-    consent=max(int(match["consent_to_follow_up"]),int(body.consent_to_follow_up))
+    consent=int(body.consent_to_follow_up) if body.consent_to_follow_up is not None else int(match["consent_to_follow_up"])
     c.execute("UPDATE ai_workflows SET customer_name=?,phone=?,need=?,source=?,consent_to_follow_up=?,next_action=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",
       (new_name,new_phone,new_need,new_source,consent,"ارزیابی سرنخ تکراری/به‌روزشده و تکمیل اطلاعات",match["id"],tid))
     wid=match["id"]; created=False
-    audit(c,tid,"ai",None,"discovery.duplicate_updated","workflow",wid,{"source":source,"phone_match":bool(phone_digits),"consent_updated":bool(body.consent_to_follow_up)})
+    audit(c,tid,"ai",None,"discovery.duplicate_updated","workflow",wid,{"source":source,"phone_match":bool(phone_digits),"consent_updated":body.consent_to_follow_up is not None})
    else:
     cur=c.execute("INSERT INTO ai_workflows(tenant_id,customer_name,phone,need,source,consent_to_follow_up,stage,next_action) VALUES(?,?,?,?,?,?,'lead',?)",
-      (tid,name,phone,body.need.strip(),source,int(body.consent_to_follow_up),"ارزیابی خودکار سرنخ و شناسایی اطلاعات ناقص"))
+      (tid,name,phone,body.need.strip(),source,int(bool(body.consent_to_follow_up)),"ارزیابی خودکار سرنخ و شناسایی اطلاعات ناقص"))
     wid=cur.lastrowid; created=True
     audit(c,tid,"ai",None,"discovery.lead_ingested","workflow",wid,{"source":source,"has_phone":bool(phone_digits),"consent_to_follow_up":body.consent_to_follow_up})
-  return {"id":wid,"created":created,"duplicate_detected":not created,"tenant_deduplication":True,"consent_to_follow_up":bool(body.consent_to_follow_up or (match and match["consent_to_follow_up"])),"next_action":"امتیازدهی، تکمیل داده‌های ناقص و پیگیری فقط در صورت رضایت"}
+  return {"id":wid,"created":created,"duplicate_detected":not created,"tenant_deduplication":True,"consent_to_follow_up":bool(consent if match else body.consent_to_follow_up),"next_action":"امتیازدهی، تکمیل داده‌های ناقص و پیگیری فقط در صورت رضایت"}
  @router.post("/api/ai/followups")
  def schedule_followup(body:FollowupIn,user=Depends(user_from_header)):
   tid=user["tenant_id"]
