@@ -120,3 +120,41 @@ def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatc
     assert missing_provider.status_code == 422
     denied = client.get("/api/finance/owner/overview", headers=headers)
     assert denied.status_code == 403
+
+
+def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(monkeypatch):
+    client = TestClient(app)
+    owner_email = f"adjustment-owner-{uuid.uuid4().hex[:8]}@example.com"
+    owner_headers, _ = register(client, "Adjustment Owner", owner_email)
+    company_headers, _ = register(client, "Adjustment Company")
+    monkeypatch.setenv("LEADORA_OWNER_EMAILS", owner_email)
+
+    entry = client.post("/api/finance/entries", headers=company_headers, json={
+        "period": "2026-05", "document_ref": "ADJ-BASE", "sales": "1000",
+        "discounts": "0", "returns": "0", "cogs": "500",
+        "direct_costs": "0", "currency": "IRT",
+    })
+    assert entry.status_code == 200, entry.text
+    report = client.post("/api/finance/reports/calculate?period=2026-05", headers=company_headers, json={})
+    assert report.status_code == 200, report.text
+    report_id = report.json()["id"]
+    assert client.post(f"/api/finance/reports/{report_id}/approve", headers=owner_headers, json={}).status_code == 200
+
+    request = client.post(f"/api/finance/reports/{report_id}/adjustments", headers=company_headers, json={
+        "adjustment_period": "2026-06", "sales_adjustment": "-100",
+        "discounts_adjustment": "0", "returns_adjustment": "0",
+        "cogs_adjustment": "-50", "direct_costs_adjustment": "0",
+        "currency": "IRT", "reason": "Corrected invoice cost after review",
+    })
+    assert request.status_code == 200, request.text
+    adjustment_id = request.json()["id"]
+    pending = client.post("/api/finance/reports/calculate?period=2026-06", headers=company_headers, json={})
+    assert pending.status_code == 422
+
+    review = client.post(f"/api/finance/adjustments/{adjustment_id}/review?decision=approve", headers=owner_headers, json={})
+    assert review.status_code == 200, review.text
+    report_next = client.post("/api/finance/reports/calculate?period=2026-06", headers=company_headers, json={})
+    assert report_next.status_code == 200, report_next.text
+    assert report_next.json()["gross_sales"] == "-100.00"
+    assert report_next.json()["cogs"] == "-50.00"
+    assert report_next.json()["eligible_profit"] == "-50.00"
