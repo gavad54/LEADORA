@@ -16,7 +16,7 @@ from app import main
 DB_PATH = main.DB_PATH
 OWNER = f"{socket.gethostname()}:{os.getpid()}"
 POLL_SECONDS = max(5, int(os.getenv("LEADORA_WORKER_POLL_SECONDS", "15")))
-GLOBAL_MIN_INTERVAL = max(300, int(os.getenv("LEADORA_SOURCE_MIN_INTERVAL_SECONDS", "300")))
+GLOBAL_MIN_INTERVAL = max(900, int(os.getenv("LEADORA_SOURCE_MIN_INTERVAL_SECONDS", "900")) )
 MAX_BACKOFF = 21600
 
 
