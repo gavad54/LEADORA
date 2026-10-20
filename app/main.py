@@ -1194,3 +1194,149 @@ def workflow_followups(days:int=7,user=Depends(user_from_header)):
  for row in rows:
   x=_workflow_doc(row);x["overdue_days"]=max(0,(date.today()-date.fromisoformat(x["due_date"])).days);items.append(x)
  return {"count":len(items),"items":items,"as_of":today}
+
+
+# LEADORA multi-source business lead registry.
+# Source adapters may only be enabled for official/public/licensed data feeds.
+def init_business_lead_registry():
+    with db() as c:
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS business_leads(
+          id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+          source TEXT NOT NULL, source_record_id TEXT NOT NULL DEFAULT '',
+          name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '',
+          phone TEXT NOT NULL DEFAULT '', website TEXT NOT NULL DEFAULT '',
+          address TEXT NOT NULL DEFAULT '', city TEXT NOT NULL DEFAULT '',
+          region TEXT NOT NULL DEFAULT '', latitude REAL, longitude REAL,
+          source_url TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+          fingerprint TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'new',
+          first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(tenant_id, fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_business_leads_tenant_category
+          ON business_leads(tenant_id, category, city, status);
+        CREATE TABLE IF NOT EXISTS business_source_runs(
+          id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+          source TEXT NOT NULL, status TEXT NOT NULL,
+          imported INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL DEFAULT 0,
+          rejected INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+init_business_lead_registry()
+
+class BusinessLeadImportIn(BaseModel):
+    source: str = Field(min_length=2, max_length=100)
+    records: list[dict] = Field(min_length=1, max_length=2000)
+
+def _lead_fingerprint(name, phone, website, city, address):
+    # Normalize only business identifiers; do not treat name alone as globally unique.
+    import unicodedata
+    def norm(v):
+        return " ".join(unicodedata.normalize("NFKC", str(v or "")).casefold().split())
+    import hashlib
+    identity = "|".join((norm(name), norm(phone), norm(website), norm(city), norm(address)))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+@app.get("/api/prospecting/sources")
+def prospecting_sources(user=Depends(user_from_header)):
+    # Availability means adapter status, not a claim of a live partnership or API connection.
+    return {
+      "sources": [
+        {"id":"openstreetmap","name":"OpenStreetMap / Overpass","mode":"available_in_app","data":"Publicly mapped businesses and locations","limits":"Shared public service; suitable only for modest, rate-limited queries"},
+        {"id":"balad","name":"بلد","mode":"requires_official_access","data":"Potential business listings where the provider permits use","limits":"Official API, commercial permission, or an authorized export required"},
+        {"id":"neshan","name":"نشان","mode":"requires_official_access","data":"Potential business listings where the provider permits use","limits":"Official API, commercial permission, or an authorized export required"},
+        {"id":"snapp","name":"اسنپ","mode":"requires_official_access","data":"Only public business information explicitly available for this purpose","limits":"No access to private customer, driver, merchant, or internal datasets"},
+        {"id":"licensed_directory","name":"Licensed directories / association lists","mode":"manual_or_api_import","data":"Company and trade-directory records covered by the applicable license","limits":"Record source and permitted purpose must be retained"}
+      ],
+      "note":"No source is represented as connected unless an authorized connector is configured and verified."
+    }
+
+@app.post("/api/prospecting/import")
+def import_business_leads(body: BusinessLeadImportIn, user=Depends(user_from_header)):
+    tid = user["tenant_id"]
+    source = body.source.strip()[:100]
+    imported = updated = rejected = 0
+    with db() as c:
+        for row in body.records:
+            try:
+                name = str(row.get("name") or row.get("company") or row.get("business_name") or "").strip()[:180]
+                if not name:
+                    rejected += 1
+                    continue
+                phone = str(row.get("phone") or row.get("telephone") or row.get("contact_phone") or "").strip()[:100]
+                website = str(row.get("website") or row.get("url") or "").strip()[:500]
+                address = str(row.get("address") or row.get("street_address") or "").strip()[:500]
+                city = str(row.get("city") or row.get("town") or "").strip()[:180]
+                region = str(row.get("region") or row.get("state") or "").strip()[:180]
+                category = str(row.get("category") or row.get("industry") or row.get("type") or "").strip()[:100]
+                source_record_id = str(row.get("source_record_id") or row.get("external_id") or row.get("id") or "").strip()[:180]
+                source_url = str(row.get("source_url") or row.get("profile_url") or "").strip()[:1000]
+                lat = row.get("latitude", row.get("lat"))
+                lon = row.get("longitude", row.get("lon", row.get("lng")))
+                try:
+                    lat = float(lat) if lat not in (None, "") else None
+                    lon = float(lon) if lon not in (None, "") else None
+                    if lat is not None and not -90 <= lat <= 90: raise ValueError()
+                    if lon is not None and not -180 <= lon <= 180: raise ValueError()
+                    if (lat is None) != (lon is None): raise ValueError()
+                except (TypeError, ValueError):
+                    rejected += 1
+                    continue
+                fingerprint = _lead_fingerprint(name, phone, website, city, address)
+                existing = c.execute("SELECT id FROM business_leads WHERE tenant_id=? AND fingerprint=?", (tid, fingerprint)).fetchone()
+                c.execute("""INSERT INTO business_leads
+                  (tenant_id,source,source_record_id,name,category,phone,website,address,city,region,latitude,longitude,source_url,fingerprint)
+                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                  ON CONFLICT(tenant_id,fingerprint) DO UPDATE SET
+                    source=excluded.source,
+                    source_record_id=CASE WHEN excluded.source_record_id!='' THEN excluded.source_record_id ELSE business_leads.source_record_id END,
+                    category=CASE WHEN excluded.category!='' THEN excluded.category ELSE business_leads.category END,
+                    phone=CASE WHEN excluded.phone!='' THEN excluded.phone ELSE business_leads.phone END,
+                    website=CASE WHEN excluded.website!='' THEN excluded.website ELSE business_leads.website END,
+                    address=CASE WHEN excluded.address!='' THEN excluded.address ELSE business_leads.address END,
+                    city=CASE WHEN excluded.city!='' THEN excluded.city ELSE business_leads.city END,
+                    region=CASE WHEN excluded.region!='' THEN excluded.region ELSE business_leads.region END,
+                    latitude=COALESCE(excluded.latitude,business_leads.latitude),
+                    longitude=COALESCE(excluded.longitude,business_leads.longitude),
+                    source_url=CASE WHEN excluded.source_url!='' THEN excluded.source_url ELSE business_leads.source_url END,
+                    last_seen_at=CURRENT_TIMESTAMP""",
+                  (tid,source,source_record_id,name,category,phone,website,address,city,region,lat,lon,source_url,fingerprint))
+                if existing: updated += 1
+                else: imported += 1
+            except (sqlite3.Error, TypeError, ValueError):
+                rejected += 1
+        c.execute("INSERT INTO business_source_runs(tenant_id,source,status,imported,updated,rejected,message) VALUES(?,?,?,?,?,?,?)",
+          (tid,source,"completed" if rejected == 0 else "completed_with_rejections",imported,updated,rejected,
+           "Rows deduplicated by normalized business identifiers; source provenance retained."))
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"business_leads.imported"))
+    return {"source":source,"imported":imported,"updated":updated,"rejected":rejected,
+            "received":len(body.records),"message":"داده‌های مجاز پردازش شد؛ رکوردهای تکراری به‌روزرسانی شدند."}
+
+@app.get("/api/prospecting/business-leads")
+def list_business_leads(q: str = "", category: str = "", city: str = "", status: str = "new",
+                        limit: int = 100, offset: int = 0, user=Depends(user_from_header)):
+    limit = max(1, min(limit, 500)); offset = max(0, offset)
+    tid = user["tenant_id"]
+    clauses = ["tenant_id=?"]; args = [tid]
+    if q.strip():
+        clauses.append("(name LIKE ? OR phone LIKE ? OR website LIKE ? OR address LIKE ?)")
+        term = "%" + q.strip()[:100] + "%"
+        args.extend([term,term,term,term])
+    if category.strip(): clauses.append("category=?"); args.append(category.strip()[:100])
+    if city.strip(): clauses.append("city LIKE ?"); args.append("%" + city.strip()[:100] + "%")
+    if status in ("new","contacted","qualified","converted","discarded"):
+        clauses.append("status=?"); args.append(status)
+    where = " AND ".join(clauses)
+    with db() as c:
+        total = c.execute("SELECT COUNT(*) n FROM business_leads WHERE " + where, args).fetchone()["n"]
+        rows = c.execute("SELECT id,source,source_record_id,name,category,phone,website,address,city,region,latitude,longitude,source_url,status,first_seen_at,last_seen_at FROM business_leads WHERE " + where + " ORDER BY last_seen_at DESC LIMIT ? OFFSET ?", args + [limit,offset]).fetchall()
+    return {"total":total,"limit":limit,"offset":offset,"items":[dict(r) for r in rows]}
+
+@app.get("/api/prospecting/source-runs")
+def list_business_source_runs(limit: int = 100, user=Depends(user_from_header)):
+    limit = max(1, min(limit, 500))
+    with db() as c:
+        rows = c.execute("SELECT id,source,status,imported,updated,rejected,message,created_at FROM business_source_runs WHERE tenant_id=? ORDER BY id DESC LIMIT ?",(user["tenant_id"],limit)).fetchall()
+    return [dict(r) for r in rows]
