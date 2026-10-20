@@ -110,12 +110,18 @@ def create_router(db,user_from_header):
  def advance(workflow_id:int,body:AdvanceIn,user=Depends(user_from_header)):
   mapping={"qualify":("qualified","تکمیل امتیازدهی"),"draft_contact":("contact_drafted","بازبینی پیام و ارسال در کانال مجاز"),"discover_need":("need_discovered","تکمیل نیاز و شرایط"),"draft_offer":("offer_drafted","بازبینی پیشنهاد و قیمت معتبر"),"request_order_confirmation":("order_pending_confirmation","دریافت تأیید صریح مشتری"),"confirm_order":("order_confirmed","کنترل موجودی و آماده‌سازی انبار"),"start_picking":("picking","برداشت و کنترل اقلام"),"mark_ready_to_ship":("ready_to_ship","تأیید برنامه ارسال"),"start_delivery":("in_delivery","ثبت پیگیری از سامانه حمل"),"mark_delivered":("delivered","تطبیق مدرک تحویل"),"request_settlement":("settlement_pending","تطبیق فاکتور و رسید"),"mark_settled":("settled","کنترل نهایی"),"close":("closed","ثبت علت بستن")}
   if body.action not in mapping: raise HTTPException(422,"اقدام نامعتبر است.")
-  if body.action in ("confirm_order","start_delivery","mark_settled") and not body.approved: raise HTTPException(409,"این اقدام نیازمند تأیید صریح انسانی است.")
   tid=user["tenant_id"]; stage,next_action=mapping[body.action]
   human=body.action in ("draft_contact","draft_offer","confirm_order","start_delivery","mark_settled")
+  allowed_from={"qualify":["lead"],"draft_contact":["qualified"],"discover_need":["contact_drafted","qualified"],"draft_offer":["need_discovered"],"request_order_confirmation":["offer_drafted"],"confirm_order":["order_pending_confirmation"],"start_picking":["order_confirmed"],"mark_ready_to_ship":["picking"],"start_delivery":["ready_to_ship"],"mark_delivered":["in_delivery"],"request_settlement":["delivered"],"mark_settled":["settlement_pending"]}
   with db() as c:
-   row=c.execute("SELECT id FROM ai_workflows WHERE id=? AND tenant_id=?",(workflow_id,tid)).fetchone()
+   row=c.execute("SELECT id,stage,consent_to_follow_up FROM ai_workflows WHERE id=? AND tenant_id=?",(workflow_id,tid)).fetchone()
    if not row: raise HTTPException(404,"فرایند یافت نشد.")
+   if body.action in allowed_from and row["stage"] not in allowed_from[body.action]:
+    raise HTTPException(409,"ترتیب فرایند رعایت نشده است؛ مرحله فعلی: "+LABELS.get(row["stage"],row["stage"]))
+   if body.action=="draft_contact" and not row["consent_to_follow_up"]:
+    raise HTTPException(409,"پیش‌نویس تماس تا ثبت رضایت مشتری مجاز نیست.")
+   if body.action in ("confirm_order","start_delivery","mark_settled") and not body.approved:
+    raise HTTPException(409,"این اقدام نیازمند تأیید صریح انسانی است.")
    c.execute("UPDATE ai_workflows SET stage=?,human_required=?,next_action=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",(stage,int(human),next_action,workflow_id,tid))
    if human: c.execute("INSERT INTO ai_approvals(tenant_id,workflow_id,action,status,requested_by,note) VALUES(?,?,?,'pending','ai',?)",(tid,workflow_id,body.action,body.note))
    audit(c,tid,"human" if body.approved else "ai",user["id"] if body.approved else None,"workflow.advanced","workflow",workflow_id,{"action":body.action,"stage":stage,"approved":body.approved})
