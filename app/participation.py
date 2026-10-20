@@ -8,9 +8,11 @@ import io
 import json
 import os
 import re
+import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from fastapi import APIRouter, Depends, HTTPException
+from hmac import compare_digest as secrets_compare
 from pydantic import BaseModel, Field, field_validator
 
 CENT = Decimal("0.01")
@@ -53,6 +55,12 @@ def create_router(db_factory, user_dependency):
           integration_provider TEXT NOT NULL DEFAULT '',
           integration_status TEXT NOT NULL DEFAULT 'not_configured',
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS finance_platform_owner(
+          singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+          user_id TEXT NOT NULL UNIQUE,
+          email TEXT NOT NULL DEFAULT '',
+          claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS finance_contracts(
           id INTEGER PRIMARY KEY,
@@ -150,7 +158,14 @@ def create_router(db_factory, user_dependency):
         )
 
     def is_owner(user):
-        return str(user.get("id", "")) in owner_user_ids()
+        user_id = str(user.get("id", ""))
+        if user_id and user_id in owner_user_ids():
+            return True
+        if not user_id:
+            return False
+        with db_factory() as owner_db:
+            row = owner_db.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+        return bool(row and str(row["user_id"]) == user_id)
 
     def require_owner(user):
         if not is_owner(user):
@@ -250,6 +265,34 @@ def create_router(db_factory, user_dependency):
     @router.get("/identity")
     def identity(user=Depends(user_dependency)):
         return {"user_id": user["id"], "tenant_id": user["tenant_id"], "email": user.get("email", ""), "is_platform_owner": is_owner(user)}
+
+    class OwnerClaimIn(BaseModel):
+        token: str = Field(min_length=32, max_length=256)
+
+    @router.post("/owner/claim")
+    def claim_owner(body: OwnerClaimIn, user=Depends(user_dependency)):
+        expected = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "")
+        if not expected:
+            raise HTTPException(503, "فرایند ثبت مالک از سمت سرور فعال نشده است.")
+        if owner_user_ids():
+            raise HTTPException(409, "مالک سامانه از طریق تنظیمات امن سرور تعیین شده است؛ ثبت مالک جدید مجاز نیست.")
+        if not secrets_compare(body.token, expected):
+            raise HTTPException(403, "رمز یک‌بارمصرف مالک معتبر نیست.")
+        user_id = str(user.get("id", ""))
+        if not user_id:
+            raise HTTPException(400, "شناسه حساب معتبر نیست.")
+        with db_factory() as c:
+            existing = c.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+            if existing:
+                if str(existing["user_id"]) == user_id:
+                    return {"ok": True, "is_platform_owner": True, "message": "این حساب قبلاً به‌عنوان مالک ثبت شده است."}
+                raise HTTPException(409, "مالک سامانه قبلاً ثبت شده است؛ ثبت مجدد مسدود است.")
+            try:
+                c.execute("INSERT INTO finance_platform_owner(singleton,user_id,email) VALUES(1,?,?)", (user_id, user.get("email", "")))
+            except sqlite3.IntegrityError:
+                raise HTTPException(409, "ثبت مالک هم‌زمان انجام شده است؛ صفحه را تازه‌سازی کنید.")
+            audit(c, user, "finance.owner.claimed", {"user_id": user_id})
+        return {"ok": True, "is_platform_owner": True, "message": "مالک سامانه با موفقیت ثبت شد."}
 
     @router.get("/settings")
     def get_settings(user=Depends(user_dependency)):
