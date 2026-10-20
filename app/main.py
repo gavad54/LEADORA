@@ -12,7 +12,7 @@ ENV = os.getenv("LEADORA_ENV", "development")
 if ENV == "production" and (len(SECRET) < 32 or SECRET == "development-only-change-me"):
     raise RuntimeError("Set a random LEADORA_SECRET of at least 32 characters")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-app = FastAPI(title="LEADORA MVP", version="0.3.1", description="Persian-first business operations MVP")
+app = FastAPI(title="LEADORA MVP", version="0.3.2", description="Persian-first business operations MVP")
 
 @app.middleware("http")
 async def security_headers(request, call_next):
@@ -42,6 +42,32 @@ init_db()
 
 def pw_hash(password, salt):
     return hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 180000).hex()
+
+def login_attempt_key(company_name, email):
+    identity = f"{company_name.strip().casefold()}\\0{email.strip().lower()}"
+    return hashlib.sha256((SECRET + identity).encode()).hexdigest()
+
+def check_login_throttle(attempt_key):
+    now = int(time.time())
+    with db() as c:
+        row = c.execute("SELECT attempts,window_start FROM login_attempts WHERE attempt_key=?", (attempt_key,)).fetchone()
+        if row and now - row["window_start"] < 900 and row["attempts"] >= 5:
+            raise HTTPException(429, "تعداد تلاش‌های ورود زیاد است؛ ۱۵ دقیقه دیگر دوباره تلاش کنید.")
+        if row and now - row["window_start"] >= 900:
+            c.execute("DELETE FROM login_attempts WHERE attempt_key=?", (attempt_key,))
+
+def record_login_failure(attempt_key):
+    now = int(time.time())
+    with db() as c:
+        row = c.execute("SELECT attempts,window_start FROM login_attempts WHERE attempt_key=?", (attempt_key,)).fetchone()
+        if not row or now - row["window_start"] >= 900:
+            c.execute("INSERT OR REPLACE INTO login_attempts(attempt_key,attempts,window_start) VALUES(?,?,?)", (attempt_key, 1, now))
+        else:
+            c.execute("UPDATE login_attempts SET attempts=attempts+1 WHERE attempt_key=?", (attempt_key,))
+
+def clear_login_failures(attempt_key):
+    with db() as c:
+        c.execute("DELETE FROM login_attempts WHERE attempt_key=?", (attempt_key,))
 
 def token(uid, tid):
     raw = f"{uid}:{tid}:{int(time.time())+43200}:{secrets.token_urlsafe(12)}"
@@ -100,7 +126,7 @@ def pwa_icon():
 @app.get("/api/health")
 def health():
     with db() as c: c.execute("SELECT 1")
-    return {"status":"ok","database":"ok","product":"LEADORA","version":"0.3.0","mode":"mvp"}
+    return {"status":"ok","database":"ok","product":"LEADORA","version":"0.3.2","mode":"mvp"}
 
 @app.post("/api/register")
 def register(body: RegisterIn):
@@ -125,12 +151,19 @@ def register(body: RegisterIn):
 def login(body: LoginIn):
     email = body.email.strip().lower()
     company_name = body.company_name.strip().lower()
+    attempt_key = login_attempt_key(company_name, email)
+    check_login_throttle(attempt_key)
     with db() as c:
         rows=c.execute("SELECT u.id,u.tenant_id,u.email,u.salt,u.password_hash FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=? AND lower(t.name)=? ORDER BY u.id",(email,company_name)).fetchall()
     # Check all matching accounts because company names and email addresses are not globally unique.
     row = next((candidate for candidate in rows if hmac.compare_digest(pw_hash(body.password,candidate["salt"]),candidate["password_hash"])), None)
+    if not rows:
+        # Keep nonexistent-account failures closer in cost to a real password check.
+        pw_hash(body.password, "leadora-dummy-salt")
     if not row:
+        record_login_failure(attempt_key)
         raise HTTPException(401,"اطلاعات ورود صحیح نیست.")
+    clear_login_failures(attempt_key)
     return {"token":token(row["id"],row["tenant_id"]),"user":{"email":row["email"]}}
 
 @app.get("/api/products")
@@ -140,6 +173,8 @@ def products(user=Depends(user_from_header)):
 
 @app.post("/api/products")
 def add_product(body: ProductIn,user=Depends(user_from_header)):
+    if not body.sku.strip() or not body.name.strip():
+        raise HTTPException(422, "کد و نام کالا نباید خالی باشد.")
     with db() as c:
         try:
             cur=c.execute("INSERT INTO products(tenant_id,sku,name,price,stock) VALUES(?,?,?,?,?)",(user["tenant_id"],body.sku.strip(),body.name.strip(),body.price,body.stock))
@@ -154,6 +189,8 @@ def customers(user=Depends(user_from_header)):
 
 @app.post("/api/customers")
 def add_customer(body: CustomerIn,user=Depends(user_from_header)):
+    if not body.name.strip():
+        raise HTTPException(422, "نام مشتری نباید خالی باشد.")
     with db() as c:
         cur=c.execute("INSERT INTO customers(tenant_id,name,phone) VALUES(?,?,?)",(user["tenant_id"],body.name.strip(),body.phone.strip()))
         c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],"customer.created"))
