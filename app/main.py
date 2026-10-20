@@ -595,9 +595,17 @@ def import_rows(body: ImportRowsIn, user=Depends(user_from_header)):
                 x=InvoiceIn(**row)
                 with db() as c: _insert_invoice(c,tid,x)
             elif body.dataset=="expenses":
-                x=ExpenseIn(**row)
-                if not _date_ok(x.due_date): raise ValueError("تاریخ سررسید نامعتبر است.")
-                with db() as c: c.execute("INSERT INTO expenses(tenant_id,title,category,amount,due_date,status) VALUES(?,?,?,?,?,?)",(tid,x.title.strip(),x.category.strip(),x.amount,x.due_date,"pending" if x.status=="planned" else x.status))
+                # Keep legacy CSV import tolerant of title/description and planned/pending aliases.
+                title=str(row.get("title") or row.get("description") or "").strip()
+                category=str(row.get("category") or "عمومی").strip()[:100]
+                amount=float(row.get("amount"))
+                due_date=str(row.get("due_date") or "").strip()
+                status=str(row.get("status") or "pending").strip()
+                if not title or len(title)>180: raise ValueError("عنوان هزینه الزامی است.")
+                if amount<=0 or amount>1_000_000_000_000: raise ValueError("مبلغ هزینه نامعتبر است.")
+                if not _date_ok(due_date): raise ValueError("تاریخ سررسید نامعتبر است.")
+                if status not in ("pending","paid","planned"): raise ValueError("وضعیت هزینه نامعتبر است.")
+                with db() as c: c.execute("INSERT INTO expenses(tenant_id,title,category,amount,due_date,status) VALUES(?,?,?,?,?,?)",(tid,title,category,amount,due_date,"pending" if status=="planned" else status))
             elif body.dataset=="opportunities":
                 x=OpportunityIn(**row)
                 with db() as c: c.execute("INSERT INTO opportunities(tenant_id,title,customer_id,source,stage,estimated_value,expected_close_date,last_contact_date,lost_reason) VALUES(?,?,?,?,?,?,?,?,?)",(tid,x.title.strip(),x.customer_id,x.source,x.stage,x.estimated_value,x.expected_close_date,x.last_contact_date,x.lost_reason))
@@ -1402,7 +1410,7 @@ def put_prospecting_settings(body: ProspectingSettingsIn, user=Depends(user_from
           radius_m=excluded.radius_m,category=excluded.category,enabled=excluded.enabled,
           interval_seconds=excluded.interval_seconds,next_run_at=CASE WHEN excluded.enabled=1 THEN 0 ELSE excluded.next_run_at END,
           last_error='',consecutive_failures=0,updated_at=CURRENT_TIMESTAMP""",
-          (user["tenant_id"],body.latitude,body.longitude,body.radius_m,body.category,int(body.enabled),body.interval_seconds,0 if body.enabled else 0,""))
+          (user["tenant_id"],body.latitude,body.longitude,body.radius_m,body.category,int(body.enabled),body.interval_seconds,0,"",0))
         c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],"prospecting.settings.updated"))
         row=c.execute("SELECT latitude,longitude,radius_m,category,enabled,interval_seconds,next_run_at,updated_at FROM prospecting_settings WHERE tenant_id=?",(user["tenant_id"],)).fetchone()
     return {"configured":True,**dict(row),"message":"تنظیمات ذخیره شد؛ اجرای زمان‌بندی‌شده فقط روی سروری فعال است که worker آن اجرا شده باشد."}
