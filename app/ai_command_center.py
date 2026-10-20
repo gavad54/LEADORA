@@ -44,6 +44,18 @@ class AdvanceIn(BaseModel):
  action: str = Field(min_length=1,max_length=80)
  approved: bool = False
  note: str = Field(default="",max_length=1000)
+\nclass DiscoveryIn(BaseModel):
+ customer_name: str = Field(min_length=1,max_length=160)
+ phone: str = Field(default="",max_length=50)
+ need: str = Field(default="",max_length=2000)
+ source: str = Field(default="import",max_length=80)
+ consent_to_follow_up: bool = False
+
+class FollowupIn(BaseModel):
+ workflow_id: int = Field(gt=0)
+ due_in_minutes: int = Field(default=1440,ge=0,le=43200)
+ channel: str = Field(default="web",min_length=1,max_length=30)
+
 
 def create_router(db,user_from_header):
  router=APIRouter()
@@ -58,6 +70,8 @@ def create_router(db,user_from_header):
   CREATE TABLE IF NOT EXISTS ai_audit_events(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,actor_type TEXT NOT NULL,actor_id INTEGER,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id INTEGER,detail_json TEXT NOT NULL DEFAULT '{}',created_at TEXT DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS ai_agent_tasks(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,workflow_id INTEGER NOT NULL,agent_id TEXT NOT NULL,task_type TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',priority INTEGER NOT NULL DEFAULT 50,input_json TEXT NOT NULL DEFAULT '{}',output_json TEXT NOT NULL DEFAULT '{}',created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
   CREATE INDEX IF NOT EXISTS idx_ai_tasks_tenant_status ON ai_agent_tasks(tenant_id,status,priority);
+  CREATE TABLE IF NOT EXISTS ai_followups(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,workflow_id INTEGER NOT NULL,channel TEXT NOT NULL DEFAULT 'web',status TEXT NOT NULL DEFAULT 'queued',due_at TEXT NOT NULL,draft TEXT NOT NULL DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+  CREATE INDEX IF NOT EXISTS idx_ai_followups_due ON ai_followups(tenant_id,status,due_at);
   """)
  def audit(c,tid,actor,actor_id,event,entity,eid,detail):
   c.execute("INSERT INTO ai_audit_events(tenant_id,actor_type,actor_id,event_type,entity_type,entity_id,detail_json) VALUES(?,?,?,?,?,?,?)",(tid,actor,actor_id,event,entity,eid,json.dumps(detail,ensure_ascii=False)))
@@ -108,7 +122,79 @@ def create_router(db,user_from_header):
   if any(x in msg.casefold() for x in ["سلام","درود","hello","hi"]): return "سلام"+(" "+name.strip() if name.strip() else "")+"، به فروش هوشمند خوش آمدید. دنبال چه کالا یا خدمتی هستید و چه مقدار نیاز دارید؟"
   return "برای راهنمایی دقیق، نوع کالا یا خدمت، مقدار موردنیاز و شهر تحویل را بفرمایید. فقط اطلاعات تأییدشده اعلام می‌شود و پیش از سفارش نهایی، تأیید شما گرفته خواهد شد."
 
- @router.get("/api/ai/agents")
+ @router.post("/api/ai/discovery/ingest")
+ def ingest_discovery(body:DiscoveryIn,user=Depends(user_from_header)):
+  """Ingest a prospect from an explicitly authorized source and deduplicate within its tenant."""
+  tid=user["tenant_id"]
+  name=body.customer_name.strip()
+  phone=body.phone.strip()
+  phone_digits="".join(ch for ch in phone if ch.isdigit())
+  source=body.source.strip() or "import"
+  with db() as c:
+   rows=c.execute("SELECT id,customer_name,phone,need,source,consent_to_follow_up,stage FROM ai_workflows WHERE tenant_id=? AND status='active' ORDER BY id DESC",(tid,)).fetchall()
+   match=None
+   for row in rows:
+    existing_digits="".join(ch for ch in (row["phone"] or "") if ch.isdigit())
+    if phone_digits and existing_digits and phone_digits==existing_digits:
+     match=row; break
+   if match is None and not phone_digits:
+    normalized=name.casefold().strip()
+    for row in rows:
+     if not (row["phone"] or "").strip() and (row["customer_name"] or "").casefold().strip()==normalized:
+      match=row; break
+   if match:
+    new_name=name or match["customer_name"]
+    new_phone=phone or match["phone"]
+    new_need=body.need.strip() or match["need"]
+    new_source=source if source not in ("import","manual","unknown") else match["source"]
+    consent=max(int(match["consent_to_follow_up"]),int(body.consent_to_follow_up))
+    c.execute("UPDATE ai_workflows SET customer_name=?,phone=?,need=?,source=?,consent_to_follow_up=?,next_action=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",
+      (new_name,new_phone,new_need,new_source,consent,"ارزیابی سرنخ تکراری/به‌روزشده و تکمیل اطلاعات",match["id"],tid))
+    wid=match["id"]; created=False
+    audit(c,tid,"ai",None,"discovery.duplicate_updated","workflow",wid,{"source":source,"phone_match":bool(phone_digits),"consent_updated":bool(body.consent_to_follow_up)})
+   else:
+    cur=c.execute("INSERT INTO ai_workflows(tenant_id,customer_name,phone,need,source,consent_to_follow_up,stage,next_action) VALUES(?,?,?,?,?,?,'lead',?)",
+      (tid,name,phone,body.need.strip(),source,int(body.consent_to_follow_up),"ارزیابی خودکار سرنخ و شناسایی اطلاعات ناقص"))
+    wid=cur.lastrowid; created=True
+    audit(c,tid,"ai",None,"discovery.lead_ingested","workflow",wid,{"source":source,"has_phone":bool(phone_digits),"consent_to_follow_up":body.consent_to_follow_up})
+  return {"id":wid,"created":created,"duplicate_detected":not created,"tenant_deduplication":True,"consent_to_follow_up":bool(body.consent_to_follow_up or (match and match["consent_to_follow_up"])),"next_action":"امتیازدهی، تکمیل داده‌های ناقص و پیگیری فقط در صورت رضایت"}
+ @router.post("/api/ai/followups")
+ def schedule_followup(body:FollowupIn,user=Depends(user_from_header)):
+  tid=user["tenant_id"]
+  with db() as c:
+   w=c.execute("SELECT id,consent_to_follow_up,status FROM ai_workflows WHERE id=? AND tenant_id=?",(body.workflow_id,tid)).fetchone()
+   if not w: raise HTTPException(404,"سرنخ یا فرایند یافت نشد.")
+   if not w["consent_to_follow_up"]: raise HTTPException(409,"برای پیگیری بیرونی، رضایت صریح مشتری لازم است.")
+   if w["status"]!="active": raise HTTPException(409,"برای فرایند بسته‌شده پیگیری جدید زمان‌بندی نمی‌شود.")
+   cur=c.execute("INSERT INTO ai_followups(tenant_id,workflow_id,channel,status,due_at) VALUES(?,?,?,'queued',datetime(CURRENT_TIMESTAMP, '+' || ? || ' minutes'))",
+     (tid,body.workflow_id,body.channel.strip(),body.due_in_minutes))
+   fid=cur.lastrowid
+   audit(c,tid,"ai",None,"followup.scheduled","followup",fid,{"workflow_id":body.workflow_id,"channel":body.channel,"due_in_minutes":body.due_in_minutes})
+  return {"id":fid,"workflow_id":body.workflow_id,"status":"queued","due_in_minutes":body.due_in_minutes,"external_message_sent":False}
+ @router.get("/api/ai/followups")
+ def list_followups(user=Depends(user_from_header)):
+  with db() as c:
+   rows=c.execute("SELECT f.id,f.workflow_id,f.channel,f.status,f.due_at,f.draft,f.created_at FROM ai_followups f WHERE f.tenant_id=? ORDER BY f.due_at,f.id DESC LIMIT 200",(user["tenant_id"],)).fetchall()
+  return [{"id":r["id"],"workflow_id":r["workflow_id"],"channel":r["channel"],"status":r["status"],"due_at":r["due_at"],"draft":r["draft"],"sent":False,"created_at":r["created_at"]} for r in rows]
+ @router.post("/api/ai/followups/run")
+ def run_due_followups(user=Depends(user_from_header)):
+  tid=user["tenant_id"]; processed=[]
+  with db() as c:
+   rows=c.execute("SELECT f.*,w.customer_name,w.need,w.consent_to_follow_up,w.status AS workflow_status FROM ai_followups f JOIN ai_workflows w ON w.id=f.workflow_id AND w.tenant_id=f.tenant_id WHERE f.tenant_id=? AND f.status='queued' AND f.due_at<=CURRENT_TIMESTAMP ORDER BY f.due_at,f.id LIMIT 100",(tid,)).fetchall()
+   for r in rows:
+    if not r["consent_to_follow_up"] or r["workflow_status"]!="active":
+     status="blocked"; draft=""
+     reason="رضایت پیگیری موجود نیست یا فرایند بسته شده است"
+    else:
+     status="draft_ready"
+     reason=""
+     need=(r["need"] or "").strip()
+     draft="سلام "+(r["customer_name"] or "وقت بخیر")+"، برای پیگیری درخواست شما"+(" درباره «"+need[:240]+"»" if need else "")+" آماده کمک هستیم. آیا مایلید اطلاعات یا مرحله بعد را بررسی کنیم؟"
+    c.execute("UPDATE ai_followups SET status=?,draft=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=? AND status='queued'",(status,draft,r["id"],tid))
+    audit(c,tid,"ai",None,"followup."+status,"followup",r["id"],{"workflow_id":r["workflow_id"],"reason":reason,"sent":False})
+    processed.append({"id":r["id"],"status":status,"draft":draft,"sent":False,"reason":reason})
+  return {"processed":len(processed),"results":processed,"external_message_sent":False,"note":"متن پیگیری آماده می‌شود؛ ارسال واقعی تا اتصال کانال و فعال‌سازی مجوز ارسال انجام نمی‌شود."}
+\n @router.get("/api/ai/agents")
  def agents(user=Depends(user_from_header)):
   return {"product":"LEADORA","separate_from_ARIANA":True,"command_center":"AI Command Center","agents":AGENTS,"human_approval_gates":GATES,"external_side_effects_require_integrations":True}
  @router.get("/api/ai/command-center")
