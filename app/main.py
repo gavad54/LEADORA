@@ -1476,6 +1476,8 @@ from app.distribution_erp import create_router as create_distribution_router
 app.include_router(create_distribution_router(db, user_from_header))
 from app.pricing_modules import create_router as create_pricing_router
 app.include_router(create_pricing_router(db, user_from_header))
+from app.ai_command_center import create_router as create_ai_command_center_router
+app.include_router(create_ai_command_center_router(db, user_from_header))
 
 @app.get("/distribution")
 def distribution_page():
@@ -1492,3 +1494,7 @@ def owner_pricing_page():
 @app.get("/plans")
 def plans_page():
     return FileResponse(ROOT / "static" / "plans.html")
+
+@app.get("/ai-command-center")
+def ai_command_center_page():
+    return FileResponse(ROOT / "static" / "ai-command-center.html")
