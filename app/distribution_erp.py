@@ -97,6 +97,10 @@ def post(c,t,dt,desc,source,source_id,lines,uid=None):
 
 class Warehouse(BaseModel):
  code:str=Field(min_length=1,max_length=40); name:str=Field(min_length=1,max_length=160); location:str=""
+
+class FiscalYearIn(BaseModel):
+ jalali_year:int=Field(ge=1200,le=1599)
+
 class SaleLine(BaseModel):
  product_id:int; quantity:float=Field(gt=0,le=1e9); unit_price:Decimal=Field(ge=0); discount:Decimal=Field(default=Decimal("0"),ge=0)
 class Sale(BaseModel):
@@ -125,6 +129,54 @@ def create_router(db,user_dep):
   with db() as c:
    for code,name,nature in DEFAULTS:c.execute("INSERT OR IGNORE INTO dist_accounts(tenant_id,code,name,nature) VALUES(?,?,?,?)",(t,code,name,nature))
   return t
+ @r.get("/fiscal-years")
+ def fiscal_years(u=Depends(user_dep)):
+  with db() as c:
+   rows=c.execute("SELECT id,jalali_year,start_date,end_date,status,carry_forward_done,created_at,closed_at FROM dist_fiscal_years WHERE tenant_id=? ORDER BY jalali_year DESC",(tenant(u),)).fetchall()
+  return [dict(x) for x in rows]
+ @r.post("/fiscal-years")
+ def create_fiscal_year(b:FiscalYearIn,u=Depends(user_dep)):
+  t=tenant(u);start,next_start=jalali_year_range(b.jalali_year);end=(date.fromisoformat(next_start)-__import__("datetime").timedelta(days=1)).isoformat()
+  with db() as c:
+   try:c.execute("INSERT INTO dist_fiscal_years(tenant_id,jalali_year,start_date,end_date) VALUES(?,?,?,?)",(t,b.jalali_year,start,end))
+   except sqlite3.IntegrityError:raise HTTPException(409,"این سال مالی قبلاً تعریف شده است.")
+   row=c.execute("SELECT id,jalali_year,start_date,end_date,status,carry_forward_done FROM dist_fiscal_years WHERE tenant_id=? AND jalali_year=?",(t,b.jalali_year)).fetchone();audit(c,t,"distribution.fiscal_year.created:"+str(b.jalali_year))
+  return dict(row)
+ @r.post("/fiscal-years/{fyid}/close")
+ def close_fiscal_year(fyid:int,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   fy=c.execute("SELECT * FROM dist_fiscal_years WHERE tenant_id=? AND id=?",(t,fyid)).fetchone()
+   if not fy:raise HTTPException(404,"سال مالی یافت نشد.")
+   if fy["status"]=="CLOSED":return {"status":"CLOSED","jalali_year":fy["jalali_year"]}
+   unbalanced=c.execute("SELECT j.entry_no FROM dist_journals j JOIN dist_journal_lines l ON l.tenant_id=j.tenant_id AND l.journal_id=j.id WHERE j.tenant_id=? AND j.entry_date BETWEEN ? AND ? AND j.status='POSTED' GROUP BY j.id HAVING SUM(l.debit_minor)!=SUM(l.credit_minor) LIMIT 1",(t,fy["start_date"],fy["end_date"])).fetchone()
+   if unbalanced:raise HTTPException(409,"سند نامتوازن وجود دارد: "+unbalanced["entry_no"])
+   c.execute("UPDATE dist_fiscal_years SET status='CLOSED',closed_at=CURRENT_TIMESTAMP WHERE tenant_id=? AND id=?",(t,fyid))
+   audit(c,t,"distribution.fiscal_year.closed:"+str(fy["jalali_year"]))
+  return {"status":"CLOSED","jalali_year":fy["jalali_year"]}
+ @r.post("/fiscal-years/{fyid}/carry-forward")
+ def carry_forward(fyid:int,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   fy=c.execute("SELECT * FROM dist_fiscal_years WHERE tenant_id=? AND id=?",(t,fyid)).fetchone()
+   if not fy:raise HTTPException(404,"سال مالی یافت نشد.")
+   if fy["status"]!="CLOSED":raise HTTPException(409,"ابتدا سال مالی را ببندید.")
+   nxt=c.execute("SELECT * FROM dist_fiscal_years WHERE tenant_id=? AND jalali_year=?",(t,fy["jalali_year"]+1)).fetchone()
+   if not nxt:raise HTTPException(409,"ابتدا سال مالی بعد را تعریف کنید.")
+   if fy["carry_forward_done"]:raise HTTPException(409,"انتقال مانده‌ها قبلاً انجام شده است.")
+   rows=c.execute("SELECT a.code,COALESCE(SUM(l.debit_minor-l.credit_minor),0) bal FROM dist_accounts a LEFT JOIN dist_journals j ON j.tenant_id=a.tenant_id AND j.entry_date BETWEEN ? AND ? AND j.status='POSTED' LEFT JOIN dist_journal_lines l ON l.tenant_id=j.tenant_id AND l.journal_id=j.id AND l.account_code=a.code WHERE a.tenant_id=? AND a.nature IN ('asset','liability','equity') GROUP BY a.code",(fy["start_date"],fy["end_date"],t)).fetchall()
+   for x in rows:c.execute("INSERT INTO dist_fiscal_carryovers(tenant_id,from_year_id,to_year_id,account_code,amount_minor) VALUES(?,?,?,?,?)",(t,fyid,nxt["id"],x["code"],x["bal"]))
+   c.execute("UPDATE dist_fiscal_years SET carry_forward_done=1 WHERE tenant_id=? AND id=?",(t,fyid));audit(c,t,"distribution.fiscal_year.carry_forward:"+str(fy["jalali_year"]))
+  return {"status":"TRANSFERRED","from_year":fy["jalali_year"],"to_year":fy["jalali_year"]+1,"accounts_transferred":len(rows),"note":"سوابق اسناد حفظ شده‌اند؛ انتقال مانده ترازنامه به‌صورت snapshot قابل حسابرسی ثبت شد."}
+ @r.get("/fiscal-years/{fyid}/summary")
+ def fiscal_summary(fyid:int,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   fy=c.execute("SELECT * FROM dist_fiscal_years WHERE tenant_id=? AND id=?",(t,fyid)).fetchone()
+   if not fy:raise HTTPException(404,"سال مالی یافت نشد.")
+   sales=c.execute("SELECT COUNT(*) n,COALESCE(SUM(total_minor),0) total FROM dist_sales WHERE tenant_id=? AND order_date BETWEEN ? AND ? AND status!='CANCELLED'",(t,fy["start_date"],fy["end_date"])).fetchone()
+   journals=c.execute("SELECT COUNT(*) FROM dist_journals WHERE tenant_id=? AND entry_date BETWEEN ? AND ? AND status='POSTED'",(t,fy["start_date"],fy["end_date"])).fetchone()[0]
+  return {"jalali_year":fy["jalali_year"],"start_date":fy["start_date"],"end_date":fy["end_date"],"status":fy["status"],"sales_orders":sales["n"],"sales_total":money(sales["total"]),"posted_journals":journals,"carry_forward_done":bool(fy["carry_forward_done"])}
  @r.get("/overview")
  def overview(u=Depends(user_dep)):
   t=tenant(u)
