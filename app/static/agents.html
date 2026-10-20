@@ -88,7 +88,8 @@ async function renderProspects(){try{const rows=await api('/api/prospecting/lead
 async function searchFromCurrentPosition(){if(!navigator.geolocation){msg('prosStatus','مرورگر از موقعیت مکانی پشتیبانی نمی‌کند.');return}msg('prosStatus','برای جست‌وجو، اجازه موقعیت مکانی را در مرورگر بدهید.');navigator.geolocation.getCurrentPosition(async p=>{try{const d=await api('/api/prospecting/search','POST',{latitude:p.coords.latitude,longitude:p.coords.longitude,radius_m:Number($('prosRadius').value),category:$('prosCategory').value,limit:300});msg('prosStatus','تعداد '+num(d.found)+' کسب‌وکار پیدا و در بانک شرکت ذخیره شد.',true);await renderProspects()}catch(e){msg('prosStatus',e.message)}},e=>msg('prosStatus',e.code===1?'اجازه موقعیت داده نشد؛ مجوز مرورگر را بررسی کنید.':'موقعیت دریافت نشد؛ GPS و مجوز را بررسی کنید.'),{enableHighAccuracy:true,timeout:12000,maximumAge:60000})}
 $('startProspecting').onclick=searchFromCurrentPosition;$('expandProspecting').onclick=searchFromCurrentPosition;$('loadProspects').onclick=renderProspects;$('prosCategory').onchange=renderProspects;
 $('prosArea').addEventListener('keydown',e=>{if(e.key==='Enter')renderProspects()});
-$('storageCheck').onclick=async()=>{try{const d=await api('/api/storage/status');$('storageInfo').textContent=JSON.stringify(d,null,2);msg('backupMsg','وضعیت پایگاه داده دریافت شد.',true)}catch(e){msg('backupMsg',e.message)}};\n
+$('storageCheck').onclick=async()=>{try{const d=await api('/api/storage/status');$('storageInfo').textContent=JSON.stringify(d,null,2);msg('backupMsg','وضعیت پایگاه داده دریافت شد.',true)}catch(e){msg('backupMsg',e.message)}};
+
 const wfLabels={registered:'ثبت اولیه',review:'در حال بررسی',approved:'تأیید شده',in_progress:'در حال انجام',sent:'ارسال شده',received:'دریافت شده',awaiting_customer:'در انتظار مشتری',awaiting_supplier:'در انتظار تأمین‌کننده',awaiting_payment:'در انتظار پرداخت',partially_paid:'پرداخت جزئی',paid:'تسویه شده',fulfilled:'تحویل/اجرا شده',completed:'بسته شده',on_hold:'متوقف موقت',cancelled:'لغو شده',overdue:'معوق'};
 const wfOpts=Object.entries(wfLabels).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('');
 async function wfLoad(){
@@ -138,5 +139,5 @@ $('leadSettingsForm').addEventListener('submit',async e=>{e.preventDefault();try
 $('leadRefresh').onclick=async()=>{await leadLoadSettings();await leadLoadBank();await leadLoadStatus();await leadLoadSources()};
 $('leadSearch').onclick=leadLoadBank;$('leadQuery').addEventListener('keydown',e=>{if(e.key==='Enter')leadLoadBank()});
 $('leadExport').onclick=async()=>{try{const r=await fetch('/api/prospecting/business-leads/export.csv',{headers:{Authorization:'Bearer '+token}});if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.detail||'خروجی دریافت نشد.')}const blob=await r.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='leadora-business-leads.csv';a.click();URL.revokeObjectURL(url)}catch(e){msg('leadImportMsg',e.message)}};
-\nif(token){showApp();load();leadLoadSettings();leadLoadBank();leadLoadStatus();leadLoadSources()}else showAuth();
+if(token){showApp();load();leadLoadSettings();leadLoadBank();leadLoadStatus();leadLoadSources()}else showAuth();
 </script></body></html>
