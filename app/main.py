@@ -109,7 +109,7 @@ def register(body: RegisterIn):
     email = body.email.strip().lower()
     if not company_name or not industry:
         raise HTTPException(422, "نام شرکت و حوزه فعالیت نباید خالی باشد.")
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise HTTPException(422, "قالب ایمیل معتبر نیست.")
     salt=secrets.token_hex(16)
     with db() as c:
