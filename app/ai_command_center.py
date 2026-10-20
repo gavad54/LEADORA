@@ -358,7 +358,7 @@ def create_router(db,user_from_header):
     if not w["need"].strip(): questions.append("دقیقاً چه کالا یا خدمتی و برای چه کاربردی نیاز دارید؟")
     if w["need"].strip() and len(w["need"].strip())<25: questions.append("چه مقدار، چه زمان تحویل و چه مشخصاتی مدنظر است؟")
     if not w["phone"].strip(): questions.append("در صورت تمایل، راه تماس مناسب برای پیگیری چیست؟")
-    if not w["consent_to_follow_up"]: questions.append("آیا با پیگیری بعدی از طریق کانال انتخابی خود موافق هستید؟")
+    if not w["consent_to_follow_up"]: questions.append("آیا رضایت می‌دهید از طریق کانال انتخابی خود پیگیری بعدی انجام شود؟")
     output={"lead_score":score,"tier":tier,"score_method":"explainable_rules_v1","factors":factors,"missing_fields":missing,"targeted_questions":questions,"reason":"امتیاز بر اساس داده‌های ثبت‌شده محاسبه شده؛ این امتیاز تضمین خرید نیست."}
     new_stage="qualified"; next_action=("تکمیل داده‌های ناقص سرنخ: "+ "؛ ".join(questions[:2])) if questions else "تهیه پیش‌نویس ارتباط متناسب با نیاز و کانال مجاز"
    elif kind=="draft_contact":
