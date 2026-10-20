@@ -64,3 +64,52 @@ def test_tenant_isolation_for_products_and_customers():
     assert c.get("/api/customers", headers=headers_a).json()
     assert c.get("/api/products", headers=headers_b).json() == []
     assert c.get("/api/customers", headers=headers_b).json() == []
+
+
+def test_product_and_customer_update_delete_are_tenant_scoped():
+    c = TestClient(app)
+    suffix = str(os.getpid())
+    first = c.post("/api/register", json={
+        "company_name": "CRUD A " + suffix, "industry": "retail",
+        "email": "crud-a-" + suffix + "@example.com", "password": "secure-test-password-A",
+    })
+    second = c.post("/api/register", json={
+        "company_name": "CRUD B " + suffix, "industry": "retail",
+        "email": "crud-b-" + suffix + "@example.com", "password": "secure-test-password-B",
+    })
+    assert first.status_code == second.status_code == 200
+    headers_a = {"Authorization": "Bearer " + first.json()["token"]}
+    headers_b = {"Authorization": "Bearer " + second.json()["token"]}
+
+    product = c.post("/api/products", headers=headers_a, json={
+        "sku": "CRUD-" + suffix, "name": "Original", "price": 5, "stock": 8,
+    })
+    customer = c.post("/api/customers", headers=headers_a, json={"name": "Original Customer", "phone": "123"})
+    assert product.status_code == customer.status_code == 200
+    product_id, customer_id = product.json()["id"], customer.json()["id"]
+
+    assert c.put(f"/api/products/{product_id}", headers=headers_a, json={
+        "sku": "CRUD-UPDATED-" + suffix, "name": "Updated", "price": 9, "stock": 2,
+    }).status_code == 200
+    assert c.put(f"/api/customers/{customer_id}", headers=headers_a, json={
+        "name": "Updated Customer", "phone": "456",
+    }).status_code == 200
+    assert c.get("/api/products", headers=headers_a).json()[0]["name"] == "Updated"
+    assert c.get("/api/customers", headers=headers_a).json()[0]["name"] == "Updated Customer"
+
+    # A tenant must not be able to update or delete another tenant's records.
+    assert c.put(f"/api/products/{product_id}", headers=headers_b, json={
+        "sku": "STOLEN", "name": "Stolen", "price": 1, "stock": 1,
+    }).status_code == 404
+    assert c.delete(f"/api/products/{product_id}", headers=headers_b).status_code == 404
+    assert c.put(f"/api/customers/{customer_id}", headers=headers_b, json={
+        "name": "Stolen Customer", "phone": "",
+    }).status_code == 404
+    assert c.delete(f"/api/customers/{customer_id}", headers=headers_b).status_code == 404
+    assert c.get("/api/products", headers=headers_a).json()[0]["name"] == "Updated"
+    assert c.get("/api/customers", headers=headers_a).json()[0]["name"] == "Updated Customer"
+
+    assert c.delete(f"/api/products/{product_id}", headers=headers_a).status_code == 200
+    assert c.delete(f"/api/customers/{customer_id}", headers=headers_a).status_code == 200
+    assert c.get("/api/products", headers=headers_a).json() == []
+    assert c.get("/api/customers", headers=headers_a).json() == []
