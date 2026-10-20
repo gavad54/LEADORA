@@ -4,6 +4,8 @@ Amounts are stored as decimal strings and calculated with Decimal. The router
 uses the host application's tenant-scoped database and authenticated user.
 """
 import csv
+import hashlib
+import secrets
 import io
 import json
 import os
@@ -11,7 +13,7 @@ import re
 import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from hmac import compare_digest as secrets_compare
 from pydantic import BaseModel, Field, field_validator
 
@@ -61,6 +63,13 @@ def create_router(db_factory, user_dependency):
           user_id TEXT NOT NULL UNIQUE,
           email TEXT NOT NULL DEFAULT '',
           claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS finance_integration_keys(
+          tenant_id INTEGER PRIMARY KEY REFERENCES tenants(id),
+          key_hash TEXT NOT NULL,
+          key_prefix TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          rotated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS finance_contracts(
           id INTEGER PRIMARY KEY,
@@ -235,6 +244,9 @@ def create_router(db_factory, user_dependency):
     class CsvIn(BaseModel):
         content: str = Field(min_length=1, max_length=2_000_000)
 
+    class IntegrationBatchIn(BaseModel):
+        entries: list[EntryIn] = Field(min_length=1, max_length=100)
+
     class ObjectionIn(BaseModel):
         reason: str = Field(min_length=5, max_length=2000)
 
@@ -312,7 +324,8 @@ def create_router(db_factory, user_dependency):
         if "integration" in body.methods and not provider:
             raise HTTPException(422, "برای روش اتصال خودکار، نام سامانه منبع را مشخص کنید.")
         with db_factory() as c:
-            status = "not_configured" if "integration" in body.methods else "disabled"
+            key_exists = c.execute("SELECT 1 FROM finance_integration_keys WHERE tenant_id=?", (user["tenant_id"],)).fetchone() is not None
+            status = ("configured" if key_exists else "not_configured") if "integration" in body.methods else "disabled"
             c.execute("""INSERT INTO finance_settings(tenant_id,methods_json,integration_provider,integration_status,updated_at)
               VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(tenant_id) DO UPDATE SET
               methods_json=excluded.methods_json,integration_provider=excluded.integration_provider,
@@ -396,6 +409,55 @@ def create_router(db_factory, user_dependency):
             raise
         audit(c, user, "finance.entry.created", {"period": body.period, "document_ref": body.document_ref, "source": source})
         return {"ok": True, "message": "سند مالی ثبت شد."}
+
+    @router.post("/integration/key")
+    def create_integration_key(user=Depends(user_dependency)):
+        raw_key = "ldint_" + secrets.token_urlsafe(32)
+        key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+        with db_factory() as c:
+            settings = c.execute("SELECT methods_json,integration_provider FROM finance_settings WHERE tenant_id=?", (user["tenant_id"],)).fetchone()
+            enabled = json.loads(settings["methods_json"]) if settings else ["manual", "csv"]
+            if "integration" not in enabled:
+                raise HTTPException(403, "ابتدا روش اتصال سامانه موجود را در تنظیمات این شرکت فعال کنید.")
+            if not settings or not settings["integration_provider"].strip():
+                raise HTTPException(422, "نام سامانه منبع را در تنظیمات وارد کنید.")
+            c.execute("""INSERT INTO finance_integration_keys(tenant_id,key_hash,key_prefix)
+              VALUES(?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET key_hash=excluded.key_hash,key_prefix=excluded.key_prefix,rotated_at=CURRENT_TIMESTAMP""",
+              (user["tenant_id"], key_hash, raw_key[:12]))
+            c.execute("UPDATE finance_settings SET integration_status='configured',updated_at=CURRENT_TIMESTAMP WHERE tenant_id=?", (user["tenant_id"],))
+            audit(c, user, "finance.integration_key.rotated", {"key_prefix": raw_key[:12], "provider": settings["integration_provider"]})
+        return {"ok": True, "integration_key": raw_key, "key_prefix": raw_key[:12], "message": "کلید فقط همین یک بار نمایش داده می‌شود. آن را در سامانه منبع به‌صورت محرمانه ذخیره کنید."}
+
+    @router.get("/integration/status")
+    def integration_status(user=Depends(user_dependency)):
+        with db_factory() as c:
+            settings = c.execute("SELECT integration_provider,integration_status,methods_json FROM finance_settings WHERE tenant_id=?", (user["tenant_id"],)).fetchone()
+            key = c.execute("SELECT key_prefix,created_at,rotated_at FROM finance_integration_keys WHERE tenant_id=?", (user["tenant_id"],)).fetchone()
+        return {"provider": settings["integration_provider"] if settings else "", "status": settings["integration_status"] if settings else "not_configured", "enabled": bool(settings and "integration" in json.loads(settings["methods_json"])), "key_prefix": key["key_prefix"] if key else "", "created_at": key["created_at"] if key else None, "rotated_at": key["rotated_at"] if key else None}
+
+    @router.post("/integration/ingest")
+    def ingest_integration_batch(body: IntegrationBatchIn, x_leadora_integration_key: str = Header(default="", alias="X-LEADORA-Integration-Key")):
+        if not x_leadora_integration_key:
+            raise HTTPException(401, "کلید اتصال الزامی است.")
+        supplied_hash = hashlib.sha256(x_leadora_integration_key.encode("utf-8")).hexdigest()
+        with db_factory() as c:
+            key_row = c.execute("SELECT tenant_id,key_hash FROM finance_integration_keys WHERE key_prefix=?", (x_leadora_integration_key[:12],)).fetchone()
+            if not key_row or not secrets_compare(supplied_hash, key_row["key_hash"]):
+                raise HTTPException(401, "کلید اتصال نامعتبر یا لغوشده است.")
+            tid = key_row["tenant_id"]
+            settings = c.execute("SELECT methods_json FROM finance_settings WHERE tenant_id=?", (tid,)).fetchone()
+            if not settings or "integration" not in json.loads(settings["methods_json"]):
+                raise HTTPException(403, "اتصال خودکار برای این شرکت فعال نیست.")
+            integration_user = {"tenant_id": tid, "email": "integration:webhook", "id": "integration"}
+            imported, rejected = 0, []
+            for index, entry in enumerate(body.entries, start=1):
+                try:
+                    insert_entry(c, integration_user, entry, "integration")
+                    imported += 1
+                except HTTPException as exc:
+                    rejected.append({"index": index, "document_ref": entry.document_ref, "status": exc.status_code, "reason": str(exc.detail)})
+            audit(c, integration_user, "finance.integration.batch_received", {"imported": imported, "rejected": len(rejected)})
+        return {"ok": True, "imported": imported, "rejected": rejected, "message": "همگام‌سازی دسته‌ای انجام شد؛ اسناد ردشده نیازمند بررسی هستند."}
 
     @router.post("/entries")
     def create_entry(body: EntryIn, user=Depends(user_dependency)):
