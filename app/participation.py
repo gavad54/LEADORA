@@ -122,12 +122,31 @@ def create_router(db_factory, user_dependency):
           details_json TEXT NOT NULL DEFAULT '{}',
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS finance_adjustments(
+          id INTEGER PRIMARY KEY,
+          tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+          target_report_id INTEGER NOT NULL REFERENCES finance_reports(id),
+          adjustment_period TEXT NOT NULL,
+          currency TEXT NOT NULL,
+          sales_adjustment TEXT NOT NULL DEFAULT '0.00',
+          discounts_adjustment TEXT NOT NULL DEFAULT '0.00',
+          returns_adjustment TEXT NOT NULL DEFAULT '0.00',
+          cogs_adjustment TEXT NOT NULL DEFAULT '0.00',
+          direct_costs_adjustment TEXT NOT NULL DEFAULT '0.00',
+          reason TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+          reviewed_by TEXT NOT NULL DEFAULT '',
+          reviewed_at TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS finance_adjustments_period_idx ON finance_adjustments(tenant_id,adjustment_period,status);
         """)
 
-    def audit(c, user, action, details):
+    def audit(c, user, action, details, tenant_id=None):
+        target_tenant_id = user["tenant_id"] if tenant_id is None else tenant_id
         c.execute(
             "INSERT INTO finance_audit(tenant_id,actor_email,action,details_json) VALUES(?,?,?,?)",
-            (user["tenant_id"], user.get("email", ""), action, json.dumps(details, ensure_ascii=False, default=str)),
+            (target_tenant_id, user.get("email", ""), action, json.dumps(details, ensure_ascii=False, default=str)),
         )
 
     def is_owner(user):
@@ -211,6 +230,22 @@ def create_router(db_factory, user_dependency):
     class SettlementIn(BaseModel):
         amount: Decimal = Field(gt=0)
         note: str = Field(default="", max_length=1000)
+
+    class AdjustmentIn(BaseModel):
+        adjustment_period: str
+        sales_adjustment: Decimal = Decimal("0")
+        discounts_adjustment: Decimal = Decimal("0")
+        returns_adjustment: Decimal = Decimal("0")
+        cogs_adjustment: Decimal = Decimal("0")
+        direct_costs_adjustment: Decimal = Decimal("0")
+        currency: str = Field(pattern="^(IRT|IRR|USD|EUR)$")
+        reason: str = Field(min_length=5, max_length=2000)
+
+        @field_validator("adjustment_period")
+        @classmethod
+        def valid_adjustment_period(cls, value):
+            period_start(value)
+            return value
 
     @router.get("/settings")
     def get_settings(user=Depends(user_dependency)):
@@ -369,12 +404,16 @@ def create_router(db_factory, user_dependency):
         period_start(period)
         with db_factory() as c:
             rows = c.execute("SELECT * FROM finance_entries WHERE tenant_id=? AND period=? ORDER BY id", (user["tenant_id"], period)).fetchall()
-            if not rows:
-                raise HTTPException(422, "برای این دوره هیچ سند مالی ثبت نشده است.")
-            currencies = {r["currency"] for r in rows}
+            adjustments = c.execute("SELECT * FROM finance_adjustments WHERE tenant_id=? AND adjustment_period=? AND status='approved' ORDER BY id", (user["tenant_id"], period)).fetchall()
+            if not rows and not adjustments:
+                raise HTTPException(422, "برای این دوره هیچ سند مالی یا اصلاحیه تأییدشده ثبت نشده است.")
+            currencies = {r["currency"] for r in rows} | {a["currency"] for a in adjustments}
             if len(currencies) != 1:
-                raise HTTPException(422, "واحد پول اسناد یکسان نیست؛ گزارش قابل محاسبه نیست.")
+                raise HTTPException(422, "واحد پول اسناد و اصلاحیه‌ها یکسان نیست؛ گزارش قابل محاسبه نیست.")
             totals = {k: sum((money(r[k]) for r in rows), Decimal("0")) for k in ("sales", "discounts", "returns", "cogs", "direct_costs")}
+            for adjustment in adjustments:
+                for key in ("sales", "discounts", "returns", "cogs", "direct_costs"):
+                    totals[key] += money(adjustment[key + "_adjustment"])
             net_sales = totals["sales"] - totals["discounts"] - totals["returns"]
             eligible = net_sales - totals["cogs"] - totals["direct_costs"]
             contract = tenant_contract(c, user["tenant_id"])
@@ -469,6 +508,56 @@ def create_router(db_factory, user_dependency):
                 c.execute("UPDATE finance_reports SET status='closed' WHERE id=?", (report_id,))
             audit(c, user, "finance.settlement.recorded", {"report_id": report_id, "amount": str(amount), "note": body.note})
         return {"ok": True, "settled_amount": format(total, "f"), "settlement_status": status}
+
+    @router.post("/reports/{report_id}/adjustments")
+    def request_adjustment(report_id: int, body: AdjustmentIn, user=Depends(user_dependency)):
+        period_start(body.adjustment_period)
+        with db_factory() as c:
+            report = c.execute("SELECT * FROM finance_reports WHERE id=? AND tenant_id=?", (report_id, user["tenant_id"])).fetchone()
+            if not report:
+                raise HTTPException(404, "گزارش پیدا نشد.")
+            if report["status"] not in ("approved", "closed", "disputed"):
+                raise HTTPException(409, "درخواست اصلاحیه فقط برای گزارش تأییدشده یا مورد اختلاف ممکن است.")
+            if period_start(body.adjustment_period) <= period_start(report["period"]):
+                raise HTTPException(422, "اصلاحیه باید در یک دوره بعد از گزارش اصلی ثبت شود.")
+            if body.currency != report["currency"]:
+                raise HTTPException(422, "واحد پول اصلاحیه باید با گزارش اصلی یکسان باشد.")
+            values = {key: money(getattr(body, key)) for key in ("sales_adjustment", "discounts_adjustment", "returns_adjustment", "cogs_adjustment", "direct_costs_adjustment")}
+            if not any(values.values()):
+                raise HTTPException(422, "حداقل یکی از مقادیر اصلاحیه باید غیرصفر باشد.")
+            cur = c.execute("""INSERT INTO finance_adjustments
+              (tenant_id,target_report_id,adjustment_period,currency,sales_adjustment,discounts_adjustment,returns_adjustment,cogs_adjustment,direct_costs_adjustment,reason)
+              VALUES(?,?,?,?,?,?,?,?,?,?)""",
+              (user["tenant_id"], report_id, body.adjustment_period, body.currency, *[format(v, "f") for v in values.values()], body.reason.strip()))
+            audit(c, user, "finance.adjustment.requested", {"adjustment_id": cur.lastrowid, "target_report_id": report_id, "adjustment_period": body.adjustment_period})
+            return dict(c.execute("SELECT * FROM finance_adjustments WHERE id=?", (cur.lastrowid,)).fetchone())
+
+    @router.get("/adjustments")
+    def list_adjustments(user=Depends(user_dependency)):
+        with db_factory() as c:
+            if is_owner(user):
+                rows = c.execute("""SELECT fa.*,t.name AS company_name FROM finance_adjustments fa
+                  JOIN tenants t ON t.id=fa.tenant_id ORDER BY fa.id DESC LIMIT 500""").fetchall()
+            else:
+                rows = c.execute("SELECT * FROM finance_adjustments WHERE tenant_id=? ORDER BY id DESC LIMIT 100", (user["tenant_id"],)).fetchall()
+        return [dict(x) for x in rows]
+
+    @router.post("/adjustments/{adjustment_id}/review")
+    def review_adjustment(adjustment_id: int, decision: str, user=Depends(user_dependency)):
+        require_owner(user)
+        if decision not in ("approve", "reject"):
+            raise HTTPException(422, "تصمیم باید approve یا reject باشد.")
+        with db_factory() as c:
+            row = c.execute("SELECT * FROM finance_adjustments WHERE id=?", (adjustment_id,)).fetchone()
+            if not row:
+                raise HTTPException(404, "درخواست اصلاحیه پیدا نشد.")
+            if row["status"] != "pending":
+                raise HTTPException(409, "این اصلاحیه قبلاً بررسی شده است.")
+            status_value = "approved" if decision == "approve" else "rejected"
+            c.execute("UPDATE finance_adjustments SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?",
+                      (status_value, user.get("email", ""), adjustment_id))
+            audit(c, user, "finance.adjustment." + status_value, {"adjustment_id": adjustment_id, "target_report_id": row["target_report_id"]}, tenant_id=row["tenant_id"])
+        return {"ok": True, "status": status_value, "message": "تصمیم درباره اصلاحیه ثبت شد."}
 
     @router.get("/owner/overview")
     def owner_overview(user=Depends(user_dependency)):
