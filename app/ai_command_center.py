@@ -44,7 +44,8 @@ class AdvanceIn(BaseModel):
  action: str = Field(min_length=1,max_length=80)
  approved: bool = False
  note: str = Field(default="",max_length=1000)
-\nclass DiscoveryIn(BaseModel):
+
+class DiscoveryIn(BaseModel):
  customer_name: str = Field(min_length=1,max_length=160)
  phone: str = Field(default="",max_length=50)
  need: str = Field(default="",max_length=2000)
@@ -194,7 +195,8 @@ def create_router(db,user_from_header):
     audit(c,tid,"ai",None,"followup."+status,"followup",r["id"],{"workflow_id":r["workflow_id"],"reason":reason,"sent":False})
     processed.append({"id":r["id"],"status":status,"draft":draft,"sent":False,"reason":reason})
   return {"processed":len(processed),"results":processed,"external_message_sent":False,"note":"متن پیگیری آماده می‌شود؛ ارسال واقعی تا اتصال کانال و فعال‌سازی مجوز ارسال انجام نمی‌شود."}
-\n @router.get("/api/ai/agents")
+
+ @router.get("/api/ai/agents")
  def agents(user=Depends(user_from_header)):
   return {"product":"LEADORA","separate_from_ARIANA":True,"command_center":"AI Command Center","agents":AGENTS,"human_approval_gates":GATES,"external_side_effects_require_integrations":True}
  @router.get("/api/ai/command-center")
