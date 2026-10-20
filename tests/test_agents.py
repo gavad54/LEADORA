@@ -82,7 +82,7 @@ def test_csv_row_import_reports_invalid_rows():
         ],
     })
     assert r.status_code == 200, r.text
-    assert r.json()["imported"] == 1
+    assert r.json()["imported"] == 1, r.json()
     assert r.json()["rejected"] == 1
 
 
