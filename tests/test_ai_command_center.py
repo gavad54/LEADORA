@@ -75,3 +75,26 @@ def test_command_center_page_is_served():
     r = c.get("/ai-command-center")
     assert r.status_code == 200
     assert "فرماندهی هوشمند LEADORA" in r.text
+
+
+def test_orchestrator_runs_safe_tasks_and_blocks_missing_consent():
+    c = TestClient(app)
+    h = _workspace(c, str(os.getpid()) + "-orchestrator")
+    wf = c.post("/api/ai/workflows", headers=h, json={
+        "customer_name": "Prospect", "need": "bulk order", "source": "manual",
+        "consent_to_follow_up": False
+    })
+    assert wf.status_code == 200, wf.text
+    run = c.post("/api/ai/orchestrate", headers=h)
+    assert run.status_code == 200, run.text
+    assert run.json()["created_tasks"] == 1
+    tasks = c.get("/api/ai/tasks", headers=h)
+    assert tasks.status_code == 200
+    assert tasks.json()[0]["task_type"] == "qualify"
+    assert tasks.json()[0]["status"] == "completed"
+    second = c.post("/api/ai/orchestrate", headers=h)
+    assert second.status_code == 200, second.text
+    tasks = c.get("/api/ai/tasks", headers=h).json()
+    draft = next(x for x in tasks if x["task_type"] == "draft_contact")
+    assert draft["status"] == "blocked"
+    assert "رضایت" in draft["output"]["reason"]
