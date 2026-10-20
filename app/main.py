@@ -1269,12 +1269,18 @@ def import_business_leads(body: BusinessLeadImportIn, user=Depends(user_from_hea
                     continue
                 phone = str(row.get("phone") or row.get("telephone") or row.get("contact_phone") or "").strip()[:100]
                 website = str(row.get("website") or row.get("url") or "").strip()[:500]
+                if website and not re.match(r"^https?://", website, re.I):
+                    rejected += 1
+                    continue
                 address = str(row.get("address") or row.get("street_address") or "").strip()[:500]
                 city = str(row.get("city") or row.get("town") or "").strip()[:180]
                 region = str(row.get("region") or row.get("state") or "").strip()[:180]
                 category = str(row.get("category") or row.get("industry") or row.get("type") or "").strip()[:100]
                 source_record_id = str(row.get("source_record_id") or row.get("external_id") or row.get("id") or "").strip()[:180]
                 source_url = str(row.get("source_url") or row.get("profile_url") or "").strip()[:1000]
+                if source_url and not re.match(r"^https?://", source_url, re.I):
+                    rejected += 1
+                    continue
                 lat = row.get("latitude", row.get("lat"))
                 lon = row.get("longitude", row.get("lon", row.get("lng")))
                 try:
