@@ -1462,3 +1462,53 @@ def export_business_leads(user=Depends(user_from_header)):
     for row in rows: writer.writerow(dict(row))
     return StreamingResponse(iter([output.getvalue()]),media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition":"attachment; filename=leadora-business-leads.csv"})
+
+
+# Persistent discovery configuration consumed by the independent worker process.
+with db() as c:
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS prospecting_settings(
+      tenant_id INTEGER PRIMARY KEY REFERENCES tenants(id),
+      enabled INTEGER NOT NULL DEFAULT 0,
+      latitude REAL, longitude REAL,
+      radius_m INTEGER NOT NULL DEFAULT 1500 CHECK(radius_m BETWEEN 100 AND 25000),
+      category TEXT NOT NULL DEFAULT 'all',
+      interval_seconds INTEGER NOT NULL DEFAULT 1800 CHECK(interval_seconds BETWEEN 300 AND 86400),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS prospecting_worker_state(
+      tenant_id INTEGER PRIMARY KEY REFERENCES tenants(id),
+      last_attempt_at TEXT, last_success_at TEXT, next_run_at TEXT,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT NOT NULL DEFAULT ''
+    );
+    """)
+
+class ProspectingSettingsIn(BaseModel):
+    enabled: bool = False
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    radius_m: int = Field(default=1500, ge=100, le=25000)
+    category: str = Field(default="all", pattern="^(all|shop|office|food|health|service|tourism|craft)$")
+    interval_seconds: int = Field(default=1800, ge=300, le=86400)
+
+@app.get("/api/prospecting/settings")
+def get_prospecting_settings(user=Depends(user_from_header)):
+    with db() as c:
+        row=c.execute("SELECT * FROM prospecting_settings WHERE tenant_id=?",(user["tenant_id"],)).fetchone()
+        state=c.execute("SELECT * FROM prospecting_worker_state WHERE tenant_id=?",(user["tenant_id"],)).fetchone()
+    return {"settings":dict(row) if row else {"tenant_id":user["tenant_id"],"enabled":False,"latitude":None,"longitude":None,"radius_m":1500,"category":"all","interval_seconds":1800},
+            "worker":dict(state) if state else None,
+            "note":"فعال شدن زمان‌بندی نیازمند اجرای سرویس مستقل worker روی سرور است."}
+
+@app.put("/api/prospecting/settings")
+def put_prospecting_settings(body: ProspectingSettingsIn,user=Depends(user_from_header)):
+    with db() as c:
+        c.execute("""INSERT INTO prospecting_settings(tenant_id,enabled,latitude,longitude,radius_m,category,interval_seconds,updated_at)
+          VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+          ON CONFLICT(tenant_id) DO UPDATE SET enabled=excluded.enabled,latitude=excluded.latitude,
+          longitude=excluded.longitude,radius_m=excluded.radius_m,category=excluded.category,
+          interval_seconds=excluded.interval_seconds,updated_at=CURRENT_TIMESTAMP""",
+          (user["tenant_id"],int(body.enabled),body.latitude,body.longitude,body.radius_m,body.category,body.interval_seconds))
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],"prospecting.settings.updated"))
+    return {"saved":True,"enabled":body.enabled,"worker_required":True,"message":"تنظیمات ذخیره شد؛ برای اجرای خودکار باید سرویس worker روی سرور فعال باشد."}
