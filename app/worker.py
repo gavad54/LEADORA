@@ -24,9 +24,13 @@ def ensure_worker_tables():
     with main.db() as c:
         c.execute("""CREATE TABLE IF NOT EXISTS prospecting_worker_lease(
           id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL DEFAULT '',
-          lease_until REAL NOT NULL DEFAULT 0, last_external_request_at REAL NOT NULL DEFAULT 0
+          lease_until REAL NOT NULL DEFAULT 0, last_external_request_at REAL NOT NULL DEFAULT 0,
+          heartbeat_at REAL NOT NULL DEFAULT 0
         )""")
-        c.execute("INSERT OR IGNORE INTO prospecting_worker_lease(id,owner,lease_until,last_external_request_at) VALUES(1,'',0,0)")
+        columns = {r["name"] for r in c.execute("PRAGMA table_info(prospecting_worker_lease)").fetchall()}
+        if "heartbeat_at" not in columns:
+            c.execute("ALTER TABLE prospecting_worker_lease ADD COLUMN heartbeat_at REAL NOT NULL DEFAULT 0")
+        c.execute("INSERT OR IGNORE INTO prospecting_worker_lease(id,owner,lease_until,last_external_request_at,heartbeat_at) VALUES(1,'',0,0,0)")
 
 
 def acquire_lease():
@@ -37,7 +41,7 @@ def acquire_lease():
         if row and row["lease_until"] > now and row["owner"] != OWNER:
             c.rollback()
             return False
-        c.execute("UPDATE prospecting_worker_lease SET owner=?,lease_until=? WHERE id=1", (OWNER, now + 60))
+        c.execute("UPDATE prospecting_worker_lease SET owner=?,lease_until=?,heartbeat_at=? WHERE id=1", (OWNER, now + 60, now))
         c.commit()
     return True
 
