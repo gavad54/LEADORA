@@ -989,6 +989,24 @@ def prospecting_search(body: ProspectSearchIn, user=Depends(user_from_header)):
               latitude=excluded.latitude,longitude=excluded.longitude,address=CASE WHEN excluded.address<>'' THEN excluded.address ELSE prospect_leads.address END,
               tags_json=excluded.tags_json,last_seen_at=CURRENT_TIMESTAMP""",
               (tid,item["osm_type"],item["osm_id"],item["name"],item["category"],item["subcategory"],item["phone"],item["website"],item["street"],item["neighbourhood"],item["suburb"],item["city"],item["region"],item["postcode"],item["latitude"],item["longitude"],item["address"],item["source_url"],item["tags_json"]))
+            # Keep manual map searches and scheduled discovery in the same unified lead registry.
+            source_record_id=f'{item["osm_type"]}/{item["osm_id"]}'
+            fingerprint=_lead_fingerprint(item["name"],item["phone"],item["website"],item["city"],item["address"])
+            conn.execute("""INSERT INTO business_leads
+              (tenant_id,source,source_record_id,name,category,phone,website,address,city,region,latitude,longitude,source_url,fingerprint)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              ON CONFLICT(tenant_id,fingerprint) DO UPDATE SET source=excluded.source,
+                source_record_id=excluded.source_record_id,
+                category=excluded.category,
+                phone=CASE WHEN excluded.phone!='' THEN excluded.phone ELSE business_leads.phone END,
+                website=CASE WHEN excluded.website!='' THEN excluded.website ELSE business_leads.website END,
+                address=CASE WHEN excluded.address!='' THEN excluded.address ELSE business_leads.address END,
+                city=CASE WHEN excluded.city!='' THEN excluded.city ELSE business_leads.city END,
+                region=CASE WHEN excluded.region!='' THEN excluded.region ELSE business_leads.region END,
+                latitude=COALESCE(excluded.latitude,business_leads.latitude),
+                longitude=COALESCE(excluded.longitude,business_leads.longitude),
+                source_url=excluded.source_url,last_seen_at=CURRENT_TIMESTAMP""",
+              (tid,"OpenStreetMap",source_record_id,item["name"],item["category"],item["phone"],item["website"],item["address"],item["city"],item["region"],item["latitude"],item["longitude"],item["source_url"],fingerprint))
             saved+=1
             results.append(item)
         conn.execute("INSERT INTO prospecting_runs(tenant_id,latitude,longitude,radius_m,category,result_count,status) VALUES(?,?,?,?,?,?,?)",
