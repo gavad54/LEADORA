@@ -77,21 +77,37 @@ def create_router(db,user_from_header):
  def audit(c,tid,actor,actor_id,event,entity,eid,detail):
   c.execute("INSERT INTO ai_audit_events(tenant_id,actor_type,actor_id,event_type,entity_type,entity_id,detail_json) VALUES(?,?,?,?,?,?,?)",(tid,actor,actor_id,event,entity,eid,json.dumps(detail,ensure_ascii=False)))
  def call_live_llm(message,intent,customer_name,history=None):
+  """Use a local Ollama model or OpenAI Responses API; never claim external actions."""
+  provider=os.getenv("LEADORA_AI_PROVIDER","").strip().lower()
   api_key=os.getenv("OPENAI_API_KEY","").strip()
-  if not api_key: return None
+  if not provider:
+   provider="openai" if api_key else "none"
   system=("You are LEADORA's Persian-first B2B sales assistant. Be concise, polite, useful and ask targeted questions. "
           "Never invent product facts, stock, prices, delivery status, invoices, payment status, discounts or promises. "
           "No catalog, inventory, order, courier or payment data was supplied, so ask for missing details or say that a connected system or employee must verify them. "
           "Never claim you sent a message, created an order, dispatched goods or received money. "
           "Respect consent; for complaints, disputes, refunds, credit or sensitive exceptions recommend human handoff. "
           "Respond in Persian unless the customer clearly writes in another language.")
-  payload={"model":os.getenv("OPENAI_MODEL","gpt-4.1-mini"),"instructions":system,
-           "input":"Customer name: "+customer_name+"\nIntent classification: "+intent+"\nRecent conversation context (oldest first):\n"+json.dumps(history or [],ensure_ascii=False)+"\nLatest customer message: "+message,
-           "max_output_tokens":300}
-  request=urllib.request.Request("https://api.openai.com/v1/responses",data=json.dumps(payload).encode("utf-8"),
-          headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
+  prompt="Customer name: "+customer_name+"\nIntent classification: "+intent+"\nRecent conversation context (oldest first):\n"+json.dumps(history or [],ensure_ascii=False)+"\nLatest customer message: "+message
   try:
-   with urllib.request.urlopen(request,timeout=8) as response:
+   if provider=="ollama":
+    host=os.getenv("OLLAMA_HOST","http://127.0.0.1:11434").rstrip("/")
+    payload={"model":os.getenv("OLLAMA_MODEL","qwen2.5:3b"),"stream":False,
+             "messages":[{"role":"system","content":system},{"role":"user","content":prompt}],
+             "options":{"temperature":0.2,"num_predict":300}}
+    request=urllib.request.Request(host+"/api/chat",data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type":"application/json"},method="POST")
+    with urllib.request.urlopen(request,timeout=float(os.getenv("OLLAMA_TIMEOUT_SECONDS","45"))) as response:
+     data=json.loads(response.read().decode("utf-8"))
+    answer=(data.get("message") or {}).get("content","").strip()
+    return answer[:5000] if answer else None
+   if provider!="openai" or not api_key:
+    return None
+   payload={"model":os.getenv("OPENAI_MODEL","gpt-4.1-mini"),"instructions":system,
+            "input":prompt,"max_output_tokens":300}
+   request=urllib.request.Request("https://api.openai.com/v1/responses",data=json.dumps(payload).encode("utf-8"),
+           headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
+   with urllib.request.urlopen(request,timeout=12) as response:
     data=json.loads(response.read().decode("utf-8"))
    parts=[]
    for item in data.get("output",[]):
@@ -102,6 +118,15 @@ def create_router(db,user_from_header):
    return answer[:5000] if answer else None
   except Exception:
    return None
+ def active_ai_provider():
+  provider=os.getenv("LEADORA_AI_PROVIDER","").strip().lower()
+  if provider=="ollama":
+   return {"provider":"ollama","configured":True,"model":os.getenv("OLLAMA_MODEL","qwen2.5:3b")}
+  if provider=="openai" and os.getenv("OPENAI_API_KEY","").strip():
+   return {"provider":"openai","configured":True,"model":os.getenv("OPENAI_MODEL","gpt-4.1-mini")}
+  if not provider and os.getenv("OPENAI_API_KEY","").strip():
+   return {"provider":"openai","configured":True,"model":os.getenv("OPENAI_MODEL","gpt-4.1-mini")}
+  return {"provider":"rules_fallback","configured":False,"model":None}
  def classify(msg):
   m=msg.casefold()
   if any(x in m for x in ["قیمت","هزینه","چنده","تخفیف","price","cost"]): return "pricing"
@@ -210,7 +235,7 @@ def create_router(db,user_from_header):
    task_count=c.execute("SELECT COUNT(*) n FROM ai_agent_tasks WHERE tenant_id=? AND status IN ('queued','blocked','needs_human')",(tid,)).fetchone()["n"]
    stages=[dict(r) for r in c.execute("SELECT stage,COUNT(*) count FROM ai_workflows WHERE tenant_id=? AND status='active' GROUP BY stage",(tid,)).fetchall()]
    recent=[dict(r) for r in c.execute("SELECT id,customer_name,stage,status,human_required,next_action,updated_at FROM ai_workflows WHERE tenant_id=? ORDER BY id DESC LIMIT 10",(tid,)).fetchall()]
-  return {"summary":{"workflows_total":total,"workflows_active":active,"approvals_pending":pending,"open_conversations":conv,"agent_tasks_pending":task_count},"stages":[{**r,"label":LABELS.get(r["stage"],r["stage"])} for r in stages],"recent_workflows":recent,"automation_policy":{"routine_actions":"only after verified data, permissions and policy checks","human_approval_gates":GATES,"live_llm_configured":bool(os.getenv("OPENAI_API_KEY","").strip()),"external_channels_connected":False,"payment_execution_connected":False}}
+  return {"summary":{"workflows_total":total,"workflows_active":active,"approvals_pending":pending,"open_conversations":conv,"agent_tasks_pending":task_count},"stages":[{**r,"label":LABELS.get(r["stage"],r["stage"])} for r in stages],"recent_workflows":recent,"automation_policy":{"routine_actions":"only after verified data, permissions and policy checks","human_approval_gates":GATES,"live_llm_configured":active_ai_provider()["configured"],"ai_provider":active_ai_provider(),"external_channels_connected":False,"payment_execution_connected":False}}
  @router.post("/api/ai/workflows")
  def create_workflow(body:WorkflowIn,user=Depends(user_from_header)):
   tid=user["tenant_id"]
@@ -399,5 +424,5 @@ def create_router(db,user_from_header):
  @router.get("/api/ai/health")
  def health(user=Depends(user_from_header)):
   with db() as c: c.execute("SELECT 1").fetchone()
-  return {"status":"ok","tenant_isolated":True,"persistence":"sqlite","registered_agents":len(AGENTS),"live_llm_configured":bool(os.getenv("OPENAI_API_KEY","").strip()),"external_channels_connected":False,"payment_execution_connected":False}
+  return {"status":"ok","tenant_isolated":True,"persistence":"sqlite","registered_agents":len(AGENTS),"live_llm_configured":active_ai_provider()["configured"],"ai_provider":active_ai_provider(),"external_channels_connected":False,"payment_execution_connected":False}
  return router
