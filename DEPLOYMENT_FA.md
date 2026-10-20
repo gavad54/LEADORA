@@ -7,7 +7,8 @@
    `python -c "import secrets; print(secrets.token_urlsafe(48))"`
 4. اجرا کنید: `docker compose up -d --build`
 5. سلامت سرویس را بررسی کنید: `curl http://127.0.0.1:8000/api/health`
-6. برای دیدن گزارش worker: `docker compose logs -f leadora`
+6. گزارش وب: `docker compose logs -f leadora`؛ گزارش worker مستقل: `docker compose logs -f leadora-worker`.
+7. وضعیت سرویس‌ها: `docker compose ps`؛ worker باید `healthy` شود. اگر worker سالم نشد، لاگ آن و وضعیت `/api/prospecting/worker/status` را بررسی کنید.
 7. برای مشاهده وضعیت بانک و worker، وارد صفحه «ایجنت‌های هوشمند» شوید.
 
 داده‌های SQLite و نسخه‌های پشتیبان در volume پایدار `leadora_data` روی مسیر `/data` قرار می‌گیرند. از volume به‌صورت دوره‌ای نسخه خارج از سرور نیز تهیه کنید؛ snapshot داخل همان volume به‌تنهایی نسخه پشتیبان خارج از سرور محسوب نمی‌شود.
