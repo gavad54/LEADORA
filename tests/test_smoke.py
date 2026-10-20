@@ -155,8 +155,10 @@ def test_agent_finance_and_sales_endpoints_are_tenant_scoped():
     assert overview.status_code == 200, overview.text
     data = overview.json()
     assert data["mode"] == "rules_based"
-    assert data["metrics"]["outstanding_receivables"] == 1000
-    assert data["metrics"]["pipeline_count"] == 1
-    assert len(data["agents"]) == 6
-    assert "پیش‌بینی ریزش مشتری" in " ".join(data["limitations"])
+    assert data["receivables"]["outstanding_total"] == 1000
+    assert data["sales"]["opportunities"] == 1
+    assert data["sales"]["pipeline_value"] == 2500
+    assert len(data["insights"]) >= 1
+    assert data["retention"]["risk_model"] == "insufficient_history_rule_based"
+    assert "forecast_note" in data
     assert c.get("/api/invoices").status_code == 401
