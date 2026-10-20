@@ -113,3 +113,50 @@ def test_product_and_customer_update_delete_are_tenant_scoped():
     assert c.delete(f"/api/customers/{customer_id}", headers=headers_a).status_code == 200
     assert c.get("/api/products", headers=headers_a).json() == []
     assert c.get("/api/customers", headers=headers_a).json() == []
+
+
+def test_agent_finance_and_sales_endpoints_are_tenant_scoped():
+    c = TestClient(app)
+    suffix = str(os.getpid())
+    reg = c.post("/api/register", json={
+        "company_name": "Agent Test " + suffix, "industry": "multi-business",
+        "email": "agent-test-" + suffix + "@example.com", "password": "secure-agent-test-password",
+    })
+    assert reg.status_code == 200, reg.text
+    h = {"Authorization": "Bearer " + reg.json()["token"]}
+    customer = c.post("/api/customers", headers=h, json={"name": "Customer for invoice"})
+    assert customer.status_code == 200
+    invoice = c.post("/api/invoices", headers=h, json={
+        "customer_id": customer.json()["id"], "invoice_number": "INV-" + suffix,
+        "issue_date": "2026-01-01", "due_date": "2026-01-10", "amount": 1500, "note": "test",
+    })
+    assert invoice.status_code == 200, invoice.text
+    invoice_id = invoice.json()["id"]
+    rows = c.get("/api/invoices", headers=h)
+    assert rows.status_code == 200
+    assert rows.json()[0]["outstanding"] == 1500
+    payment = c.post(f"/api/invoices/{invoice_id}/payments", headers=h, json={
+        "amount": 500, "paid_at": "2026-01-05", "method": "transfer", "reference": "PAY-1",
+    })
+    assert payment.status_code == 200, payment.text
+    assert c.get("/api/invoices", headers=h).json()[0]["outstanding"] == 1000
+    expense = c.post("/api/expenses", headers=h, json={
+        "category": "rent", "description": "office", "amount": 300,
+        "due_date": "2026-01-25", "status": "planned", "vendor": "landlord",
+    })
+    assert expense.status_code == 200, expense.text
+    opportunity = c.post("/api/opportunities", headers=h, json={
+        "customer_id": customer.json()["id"], "title": "New deal", "source": "referral",
+        "stage": "proposal", "estimated_value": 2500, "expected_close_date": "2026-12-01",
+        "last_contact_at": "2026-10-01",
+    })
+    assert opportunity.status_code == 200, opportunity.text
+    overview = c.get("/api/agents/overview", headers=h)
+    assert overview.status_code == 200, overview.text
+    data = overview.json()
+    assert data["mode"] == "rules_based"
+    assert data["metrics"]["outstanding_receivables"] == 1000
+    assert data["metrics"]["pipeline_count"] == 1
+    assert len(data["agents"]) == 6
+    assert "پیش‌بینی ریزش مشتری" in " ".join(data["limitations"])
+    assert c.get("/api/invoices").status_code == 401
