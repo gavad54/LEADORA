@@ -22,13 +22,15 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
       - name: Build installable APK
         working-directory: android
-        run: |
-          chmod +x gradlew 2>/dev/null || true
-          gradle --no-daemon assembleDebug
+        run: gradle --no-daemon assembleDebug
       - name: Prepare APK
         run: |
           mkdir -p release
@@ -46,9 +48,9 @@ jobs:
           tag_name: android-v1.0.${{ github.run_number }}
           name: LEADORA Android v1.0.${{ github.run_number }}
           body: |
-            LEADORA native Android wrapper for the live LEADORA business platform.
-            This APK is built by GitHub Actions and debug-signed for direct installation/testing.
-            It requires an internet connection and uses the LEADORA production website for business data.
+            LEADORA Android app for the live LEADORA business platform.
+            This APK is CI-built and debug-signed for direct installation/testing.
+            Internet connection is required; business data remains on the LEADORA production server.
           files: |
             release/LEADORA-Android.apk
             release/LEADORA-Android.apk.sha256
