@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 461" role="img" aria-labelledby="title desc">
+<title id="title">LEADORA — AI Powered Distribution Platform</title><desc id="desc">Blue glass logistics emblem with location pin and delivery truck, LEADORA wordmark and AI, Find, Connect, Sell, Deliver capabilities.</desc>
+<defs>
+ <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#061426"/><stop offset=".5" stop-color="#102b45"/><stop offset="1" stop-color="#050d1c"/></linearGradient>
+ <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e8ffff"/><stop offset=".22" stop-color="#38d8ff"/><stop offset=".52" stop-color="#087bfa"/><stop offset=".78" stop-color="#153e9f"/><stop offset="1" stop-color="#48edff"/></linearGradient>
+ <linearGradient id="letters" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fff"/><stop offset=".45" stop-color="#bdeeff"/><stop offset="1" stop-color="#5b9ed6"/></linearGradient>
+ <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+ <filter id="shadow"><feGaussianBlur stdDeviation="18"/></filter>
+</defs>
+<rect width="1536" height="461" fill="url(#bg)"/>
+<g opacity=".18" stroke="#8edcff"><path d="M0 60H1536M0 120H1536M0 180H1536M0 240H1536M0 300H1536M0 360H1536M0 420H1536" /><path d="M100 0V461M200 0V461M300 0V461M400 0V461M500 0V461M600 0V461M700 0V461M800 0V461M900 0V461M1000 0V461M1100 0V461M1200 0V461M1300 0V461M1400 0V461"/></g>
+<ellipse cx="370" cy="390" rx="270" ry="30" fill="#00bfff" opacity=".25" filter="url(#shadow)"/>
+<g transform="translate(90 38)" filter="url(#glow)" stroke="url(#glass)" stroke-width="7" stroke-linejoin="round">
+ <path d="M197 34 314 4 233 151 190 239 245 272 388 264 490 202Q539 167 492 137L385 143 423 111 517 120Q587 154 529 216L416 302Q385 326 327 324L183 316Q112 308 132 253Z" fill="#062653" fill-opacity=".72"/>
+ <path d="M197 34 240 19 190 239 245 272 388 264 490 202Q539 167 492 137L385 143 423 111" fill="none" stroke="#c9fbff" stroke-width="3"/>
+ <path d="M218 55 284 22 231 139 198 211 177 253 151 250 182 188Z" fill="#4bdfff" fill-opacity=".48" stroke="none"/>
+ <path d="M192 251Q308 159 482 163Q509 165 516 184Q520 198 493 217L411 279Q374 300 325 295L226 290" fill="none" stroke="#27cfff" stroke-width="5"/>
+ <path d="M388 146 419 129 461 134 486 147" fill="none" stroke="#baf8ff" stroke-width="3"/>
+ <g transform="translate(332 55)"><path d="M0 48C-29 14-12-18 13-18S44 15 21 48L11 66Z" fill="#0875db" stroke="#b8f8ff" stroke-width="4"/><circle cx="12" cy="12" r="10" fill="#e6ffff" stroke="#30d6ff" stroke-width="3"/></g>
+ <g transform="translate(285 176)" stroke="#d7faff" stroke-width="4"><path d="M0 15H73L91 33H112V65H-12V33Z" fill="#e8fbff"/><path d="M73 16V34H92" fill="none" stroke="#2b6caa"/><circle cx="14" cy="66" r="10" fill="#071a34"/><circle cx="83" cy="66" r="10" fill="#071a34"/></g>
+ <path d="M270 177l-35 6M263 191l-45 6M258 205l-48 6" fill="none" stroke="#3de4ff" stroke-width="4"/>
+</g>
+<g font-family="Arial,Helvetica,sans-serif">
+ <text x="605" y="255" font-size="126" font-weight="600" letter-spacing="7" fill="url(#letters)" stroke="#a4e8ff" stroke-width="1.4">LEADORA</text>
+ <text x="638" y="307" font-size="27" letter-spacing="7" fill="#d5eaff">AI POWERED DISTRIBUTION PLATFORM</text>
+</g>
+<g transform="translate(668 357)" font-family="Arial,Helvetica,sans-serif" fill="#d9f4ff" text-anchor="middle">
+ <g stroke="#08d9ff" fill="none" stroke-width="2"><circle cx="0" cy="0" r="23"/><circle cx="151" cy="0" r="23"/><circle cx="302" cy="0" r="23"/><circle cx="453" cy="0" r="23"/><circle cx="604" cy="0" r="23"/></g>
+ <g stroke="#70e8ff" stroke-width="2" fill="none"><path d="M-8 -5q8 -10 16 0v11h-16zM-3 -11v5M3 -11v5M-3 0h6M-3 5h6"/><circle cx="144" cy="-5" r="7"/><path d="M132 12q12-16 24 0M160 8l8 8"/><path d="M293 0h18M302-9l9 9-9 9"/><path d="M442-8h21v15h-21zM447 8h12M447-11h12"/><path d="M590-7h15v13h-15zM605-3h7l6 6v6h-13zM593 9a3 3 0 1 0 6 0M608 9a3 3 0 1 0 6 0"/></g>
+ <g font-size="18" letter-spacing="2"><text x="0" y="58">AI</text><text x="151" y="58">FIND</text><text x="302" y="58">CONNECT</text><text x="453" y="58">SELL</text><text x="604" y="58">DELIVER</text></g>
+ <g stroke="#3e7eaa" stroke-width="1"><path d="M62 -20V45M213 -20V45M364 -20V45M515 -20V45"/></g>
+</g>
+</svg>
