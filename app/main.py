@@ -1488,3 +1488,7 @@ def finance_page():
 @app.get("/owner/pricing")
 def owner_pricing_page():
     return FileResponse(ROOT / "static" / "owner-pricing.html")
+
+@app.get("/plans")
+def plans_page():
+    return FileResponse(ROOT / "static" / "plans.html")
