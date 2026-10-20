@@ -13,7 +13,7 @@ ENV = os.getenv("LEADORA_ENV", "development")
 if ENV == "production" and (len(SECRET) < 32 or SECRET == "development-only-change-me"):
     raise RuntimeError("Set a random LEADORA_SECRET of at least 32 characters")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-app = FastAPI(title="LEADORA MVP", version="0.4.0", description="Persian-first business operations MVP")
+app = FastAPI(title="LEADORA MVP", version="0.5.0", description="Persian-first business operations MVP")
 
 @app.middleware("http")
 async def security_headers(request, call_next):
@@ -128,7 +128,7 @@ def pwa_icon():
 @app.get("/api/health")
 def health():
     with db() as c: c.execute("SELECT 1")
-    return {"status":"ok","database":"ok","product":"LEADORA","version":"0.4.0","mode":"mvp"}
+    return {"status":"ok","database":"ok","product":"LEADORA","version":"0.5.0","mode":"mvp"}
 
 @app.post("/api/register")
 def register(body: RegisterIn):
