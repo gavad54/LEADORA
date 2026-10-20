@@ -1,4 +1,4 @@
-import os, sqlite3, secrets, hashlib, hmac, time
+import os, sqlite3, secrets, hashlib, hmac, time, re
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import FileResponse
@@ -12,7 +12,16 @@ ENV = os.getenv("LEADORA_ENV", "development")
 if ENV == "production" and (len(SECRET) < 32 or SECRET == "development-only-change-me"):
     raise RuntimeError("Set a random LEADORA_SECRET of at least 32 characters")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-app = FastAPI(title="LEADORA MVP", version="0.3.0", description="Persian-first business operations MVP")
+app = FastAPI(title="LEADORA MVP", version="0.3.1", description="Persian-first business operations MVP")
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
 
 def db():
     c = sqlite3.connect(DB_PATH, timeout=10)
@@ -95,21 +104,32 @@ def health():
 
 @app.post("/api/register")
 def register(body: RegisterIn):
-    email=body.email.strip().lower(); salt=secrets.token_hex(16)
+    company_name = body.company_name.strip()
+    industry = body.industry.strip()
+    email = body.email.strip().lower()
+    if not company_name or not industry:
+        raise HTTPException(422, "نام شرکت و حوزه فعالیت نباید خالی باشد.")
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+        raise HTTPException(422, "قالب ایمیل معتبر نیست.")
+    salt=secrets.token_hex(16)
     with db() as c:
         try:
-            tid=c.execute("INSERT INTO tenants(name,industry) VALUES(?,?)",(body.company_name.strip(),body.industry.strip())).lastrowid
+            tid=c.execute("INSERT INTO tenants(name,industry) VALUES(?,?)",(company_name,industry)).lastrowid
             uid=c.execute("INSERT INTO users(tenant_id,email,salt,password_hash) VALUES(?,?,?,?)",(tid,email,salt,pw_hash(body.password,salt))).lastrowid
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"tenant.registered"))
         except sqlite3.IntegrityError:
             raise HTTPException(409,"این ایمیل قبلاً برای این شرکت ثبت شده است.")
-    return {"token":token(uid,tid),"tenant":{"id":tid,"name":body.company_name,"industry":body.industry},"user":{"email":email}}
+    return {"token":token(uid,tid),"tenant":{"id":tid,"name":company_name,"industry":industry},"user":{"email":email}}
 
 @app.post("/api/login")
 def login(body: LoginIn):
+    email = body.email.strip().lower()
+    company_name = body.company_name.strip().lower()
     with db() as c:
-        row=c.execute("SELECT u.id,u.tenant_id,u.email,u.salt,u.password_hash FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=? AND lower(t.name)=?",(body.email.strip().lower(),body.company_name.strip().lower())).fetchone()
-    if not row or not hmac.compare_digest(pw_hash(body.password,row["salt"]),row["password_hash"]):
+        rows=c.execute("SELECT u.id,u.tenant_id,u.email,u.salt,u.password_hash FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=? AND lower(t.name)=? ORDER BY u.id",(email,company_name)).fetchall()
+    # Check all matching accounts because company names and email addresses are not globally unique.
+    row = next((candidate for candidate in rows if hmac.compare_digest(pw_hash(body.password,candidate["salt"]),candidate["password_hash"])), None)
+    if not row:
         raise HTTPException(401,"اطلاعات ورود صحیح نیست.")
     return {"token":token(row["id"],row["tenant_id"]),"user":{"email":row["email"]}}
 
