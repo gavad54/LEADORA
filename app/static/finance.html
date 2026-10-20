@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101b35"><title>LEADORA | مالی و مشارکت</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap');
+:root{font-family:Vazirmatn,Tahoma,sans-serif;color:#1c2945;background:#f3f6fb;--navy:#101b35;--blue:#4962e8;--mint:#68dfcc;--line:#e3e9f2;--muted:#7c879d}*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer}.shell{max-width:1240px;margin:auto;padding:20px}.top{background:linear-gradient(120deg,#111d39,#304c87);color:#fff;border-radius:20px;padding:22px 24px;display:flex;justify-content:space-between;gap:12px;align-items:center}.brand{font-size:22px;font-weight:800;letter-spacing:1px}.brand small{display:block;font-size:11px;color:#c5d4f0;font-weight:400;letter-spacing:0}.top p{margin:5px 0 0;color:#d3def1;font-size:12px}.btn{border:0;border-radius:10px;padding:10px 14px;font-weight:700;font-size:12px}.primary{background:var(--blue);color:white}.mint{background:var(--mint);color:#13203d}.ghost{background:#eef1ff;color:#3d55c6}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.tabs button{border:1px solid var(--line);background:white;color:#4a5874;border-radius:11px;padding:11px 14px}.tabs button.active{background:var(--navy);color:#fff}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px;min-width:0;box-shadow:0 8px 25px #1a2b5008}.panel h2{font-size:15px;margin:0 0 5px}.muted{color:var(--muted);font-size:11px;line-height:1.9}.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;margin-top:15px}.field{display:grid;gap:5px;min-width:0}.field.full{grid-column:1/-1}.field label{font-size:11px;font-weight:700;color:#52617d}.field input,.field select,.field textarea{width:100%;min-width:0;border:1px solid #dce3ee;border-radius:9px;padding:10px;background:#fff;color:#25324d}.field textarea{min-height:90px;resize:vertical}.checks{display:flex;gap:14px;flex-wrap:wrap;margin:13px 0}.checks label{font-size:12px;display:flex;gap:7px;align-items:center}.status{white-space:pre-wrap;border-radius:10px;padding:10px 12px;background:#eef2ff;color:#3d55ad;font-size:11px;margin-top:12px;line-height:1.9}.status.error{background:#fff0ed;color:#ac4438}.status.success{background:#e8faf2;color:#167b65}.hidden{display:none!important}.tablewrap{overflow:auto;margin-top:12px}table{border-collapse:collapse;width:100%;min-width:650px}th,td{text-align:right;padding:10px 8px;border-bottom:1px solid #edf0f6;font-size:11px;vertical-align:middle}th{color:#7d899f;font-weight:700;background:#fafbfe}td .btn{padding:6px 8px;margin:2px}.pill{display:inline-block;border-radius:7px;padding:4px 7px;background:#eef2ff;color:#4055ae;font-size:10px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}.metric{background:white;border:1px solid var(--line);border-radius:13px;padding:13px}.metric small{display:block;color:var(--muted);font-size:10px}.metric b{display:block;font-size:20px;margin-top:6px;overflow-wrap:anywhere}.bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.view{display:none}.view.active{display:block}.alert{border:1px solid #f2dfba;background:#fff8e9;color:#7e5d1d;padding:12px;border-radius:12px;font-size:11px;line-height:2;margin:12px 0}a{color:#4962e8}@media(max-width:760px){.shell{padding:10px}.top{padding:17px;align-items:flex-start;flex-direction:column}.grid{grid-template-columns:1fr}.fields{grid-template-columns:1fr}.field.full{grid-column:auto}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.panel{padding:14px}.brand{font-size:20px}}
+</style>
+</head>
+<body><main class="shell">
+<header class="top"><div><div class="brand">LEADORA <small>مالی، قرارداد و مشارکت</small></div><p>محاسبه شفاف سود قابل‌مشارکت، گزارش ماهانه و پیگیری تسویه</p></div><div><button class="btn ghost" onclick="location.href='/'">بازگشت به برنامه</button> <button class="btn mint" id="refresh">به‌روزرسانی</button></div></header>
+<div id="globalStatus" class="status">در حال بررسی نشست کاربر…</div>
+<nav class="tabs"><button class="active" data-view="company">اطلاعات شرکت</button><button data-view="entries">ثبت اطلاعات مالی</button><button data-view="reports">گزارش‌های سود</button><button data-view="owner" id="ownerTab" class="hidden">پنل مالک</button></nav>
+
+<section id="view-company" class="view active">
+<div class="grid">
+<div class="panel"><h2>روش دریافت اطلاعات این شرکت</h2><p class="muted">هر شرکت می‌تواند روش‌های مجاز خود را مستقل انتخاب کند. اتصال بیرونی تا زمان تنظیم API مجاز، فعال محسوب نمی‌شود.</p>
+<div class="checks"><label><input type="checkbox" id="methodManual" checked> ثبت دستی</label><label><input type="checkbox" id="methodCsv" checked> فایل CSV</label><label><input type="checkbox" id="methodIntegration"> اتصال سامانه موجود</label></div>
+<div class="field"><label for="provider">نام سامانه برای اتصال خودکار (در صورت انتخاب)</label><input id="provider" placeholder="مثلاً نام نرم‌افزار فروش یا انبار"></div>
+<div class="formactions"><button class="btn primary" id="saveSettings">ذخیره تنظیمات</button></div><div id="settingsStatus" class="status hidden"></div></div>
+<div class="panel"><h2>قرارداد مشارکت شرکت</h2><p class="muted">سه ماه رایگان به‌تنهایی سهم مالک ایجاد نمی‌کند. سهم فقط پس از فعال‌شدن قرارداد، پایان دوره رایگان و تأیید تحقق هدف محاسبه می‌شود.</p><div id="contractList" class="muted">در حال بارگیری قراردادها…</div></div>
+</div>
+<div class="alert">این ماژول برای محاسبه مشارکت قراردادی است و جایگزین نرم‌افزار حسابداری یا تأیید قانونی اسناد شرکت نیست. قبل از تسویه واقعی، مبنای قرارداد و اسناد منبع را بررسی کنید.</div>
+</section>
+
+<section id="view-entries" class="view">
+<div class="grid">
+<div class="panel"><h2>ثبت دستی سند فروش/هزینه مستقیم</h2><p class="muted">هر سند در یک دوره و برای یک شرکت شناسه یکتا دارد. تخفیف و برگشت از فروش جداگانه ثبت می‌شوند.</p>
+<form id="entryForm" class="fields">
+<div class="field"><label>دوره (YYYY-MM)</label><input id="entryPeriod" required pattern="\d{4}-(0[1-9]|1[0-2])"></div>
+<div class="field"><label>شناسه سند</label><input id="documentRef" required maxlength="160" placeholder="شماره فاکتور یا سند"></div>
+<div class="field"><label>فروش ثبت‌شده</label><input id="sales" required type="number" min="0" step="0.01"></div>
+<div class="field"><label>تخفیف</label><input id="discounts" type="number" min="0" step="0.01" value="0"></div>
+<div class="field"><label>برگشت از فروش</label><input id="returns" type="number" min="0" step="0.01" value="0"></div>
+<div class="field"><label>بهای تمام‌شده کالای فروخته‌شده</label><input id="cogs" required type="number" min="0" step="0.01"></div>
+<div class="field"><label>هزینه مستقیم توافق‌شده</label><input id="directCosts" type="number" min="0" step="0.01" value="0"></div>
+<div class="field"><label>واحد پول</label><select id="currency"><option value="IRT">تومان (IRT)</option><option value="IRR">ریال (IRR)</option><option value="USD">دلار (USD)</option><option value="EUR">یورو (EUR)</option></select></div>
+<div class="field full"><button class="btn primary">ثبت سند</button></div>
+</form><div id="entryStatus" class="status hidden"></div></div>
+<div class="panel"><h2>ورود گروهی CSV</h2><p class="muted">ستون‌های لازم: period, document_ref, sales, discounts, returns, cogs, direct_costs, currency. واحد پول در هر گزارش باید یکسان باشد.</p>
+<div class="field"><label for="csvFile">انتخاب فایل CSV</label><input type="file" id="csvFile" accept=".csv,text/csv"></div><div class="formactions"><button class="btn primary" id="importCsv">بررسی و ورود فایل</button><button class="btn ghost" id="sampleCsv">کپی نمونه CSV</button></div><div id="csvStatus" class="status hidden"></div>
+</div></div>
+<div class="panel"><div class="bar"><div><h2>اسناد ثبت‌شده</h2><p class="muted">آخرین ۱۰۰۰ سند این شرکت</p></div><button class="btn ghost" id="loadEntries">بارگیری اسناد</button></div><div id="entriesTable" class="tablewrap"></div></div>
+</section>
+
+<section id="view-reports" class="view">
+<div class="panel"><h2>محاسبه گزارش ماهانه</h2><p class="muted">گزارش بر اساس اسناد ثبت‌شده همان دوره ساخته می‌شود. گزارش تأییدشده بازنویسی نمی‌شود؛ اصلاح آن باید از مسیر اصلاحیه انجام شود.</p>
+<div class="fields"><div class="field"><label>دوره گزارش (YYYY-MM)</label><input id="reportPeriod" required pattern="\d{4}-(0[1-9]|1[0-2])"></div><div class="field"><label>عملیات</label><button class="btn primary" id="calculateReport">محاسبه و ارسال برای تأیید</button></div></div><div id="reportStatus" class="status hidden"></div></div>
+<div class="panel"><div class="bar"><div><h2>گزارش‌ها و وضعیت تسویه</h2><p class="muted">سهم مالک در وضعیت پیش‌نویس، به معنی بدهی قطعی نیست.</p></div><button class="btn ghost" id="loadReports">بارگیری گزارش‌ها</button></div><div id="reportsTable" class="tablewrap"></div></div>
+<div class="panel"><h2>درخواست اصلاحیه برای گزارش بسته‌شده</h2><p class="muted">اصلاحیه در دوره بعد ثبت می‌شود و پس از تأیید مالک، در محاسبه همان دوره اعمال خواهد شد.</p>
+<form id="adjustmentForm" class="fields">
+<div class="field"><label>گزارش اصلی</label><select id="adjustmentReport" required></select></div>
+<div class="field"><label>دوره اعمال اصلاحیه</label><input id="adjustmentPeriod" required pattern="\d{4}-(0[1-9]|1[0-2])"></div>
+<div class="field"><label>اصلاح فروش (+ یا −)</label><input id="adjSales" type="number" step="0.01" value="0"></div>
+<div class="field"><label>اصلاح تخفیف (+ یا −)</label><input id="adjDiscounts" type="number" step="0.01" value="0"></div>
+<div class="field"><label>اصلاح برگشت (+ یا −)</label><input id="adjReturns" type="number" step="0.01" value="0"></div>
+<div class="field"><label>اصلاح بهای تمام‌شده (+ یا −)</label><input id="adjCogs" type="number" step="0.01" value="0"></div>
+<div class="field"><label>اصلاح هزینه مستقیم (+ یا −)</label><input id="adjDirect" type="number" step="0.01" value="0"></div>
+<div class="field"><label>واحد پول گزارش اصلی</label><select id="adjCurrency"><option>IRT</option><option>IRR</option><option>USD</option><option>EUR</option></select></div>
+<div class="field full"><label>دلیل و مستندات اصلاح</label><textarea id="adjReason" required minlength="5"></textarea></div>
+<div class="field full"><button class="btn primary">ثبت درخواست اصلاحیه</button></div></form><div id="adjustmentStatus" class="status hidden"></div></div>
+</section>
+
+<section id="view-owner" class="view">
+<div id="ownerStatus" class="status hidden"></div>
+<div id="ownerMetrics" class="metrics"></div>
+<div class="panel"><h2>ایجاد قرارداد اختصاصی برای شرکت</h2><p class="muted">فقط مالک مجاز است قرارداد را ثبت و فعال کند. شناسه شرکت از فهرست شرکت‌ها در پنل زیر قابل مشاهده است.</p>
+<form id="contractForm" class="fields">
+<div class="field"><label>شناسه شرکت (tenant_id)</label><input id="contractTenant" required type="number" min="1"></div>
+<div class="field"><label>درصد مشارکت (۰ تا ۱۰۰)</label><input id="sharePercent" required type="number" min="0" max="100" step="0.01"></div>
+<div class="field"><label>شروع دوره رایگان</label><input id="trialStart" required type="date"></div>
+<div class="field"><label>پایان دوره رایگان</label><input id="trialEnd" required type="date"></div>
+<div class="field"><label>شروع قرارداد</label><input id="contractStart" required type="date"></div>
+<div class="field"><label>پایان قرارداد (اختیاری)</label><input id="contractEnd" type="date"></div>
+<div class="field"><label>نام هدف اختصاصی</label><input id="goalName" required placeholder="مثلاً رشد فروش خالص"></div>
+<div class="field"><label>خط مبنا</label><input id="baseline" required type="number" min="0" step="0.01"></div>
+<div class="field"><label>مقدار هدف</label><input id="target" required type="number" min="0" step="0.01"></div>
+<div class="field full"><label>یادداشت و شرط قراردادی</label><textarea id="contractNotes" placeholder="تعریف دقیق سود، هزینه‌های مستقیم و روش اثبات هدف"></textarea></div>
+<div class="field full"><button class="btn primary">ثبت قرارداد در انتظار تأیید</button></div>
+</form><div id="contractStatus" class="status hidden"></div></div>
+<div class="panel"><div class="bar"><div><h2>قراردادها و شرکت‌ها</h2><p class="muted">فعال‌سازی قرارداد و ثبت نتیجه هدف با مستندات</p></div><button class="btn ghost" id="loadOwner">به‌روزرسانی پنل</button></div><div id="ownerContracts" class="tablewrap"></div></div>
+<div class="panel"><h2>درخواست‌های اصلاحیه</h2><div id="adjustmentsTable" class="tablewrap"></div></div>
+<div class="panel"><h2>ممیزی تغییرات مالی</h2><div id="auditTable" class="tablewrap"></div></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const token=localStorage.getItem('leadora_token')||'';
+const email=localStorage.getItem('leadora_email')||'';
+const company=localStorage.getItem('leadora_company')||'شرکت';
+const faNum=n=>{if(n===null||n===undefined||n==='')return '—';const x=Number(n);return Number.isFinite(x)?x.toLocaleString('fa-IR',{maximumFractionDigits:2}):String(n)};
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function status(id,msg,type=''){const e=$(id);e.textContent=msg;e.className='status '+type;}
+async function api(path,method='GET',body=null){const h={Accept:'application/json'};if(body!==null)h['Content-Type']='application/json';if(token)h.Authorization='Bearer '+token;let r=await fetch(path,{method,headers:h,body:body===null?undefined:JSON.stringify(body)});let d;try{d=await r.json()}catch{d={detail:'پاسخ سرور قابل خواندن نیست.'}}if(!r.ok)throw Error(d.detail||'خطای درخواست: '+r.status);return d}
+function table(headers,rows){if(!rows.length)return '<div class="muted">هنوز داده‌ای ثبت نشده است.</div>';return '<table><thead><tr>'+headers.map(x=>'<th>'+esc(x[0])+'</th>').join('')+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map(x=>'<td>'+x+'</td>').join('')+'</tr>').join('')+'</tbody></table>'}
+function pill(v){return '<span class="pill">'+esc(v||'—')+'</span>'}
+function moneyCell(v){return esc(faNum(v))}
+document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+b.dataset.view));}));
+function currentPeriod(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
+$('entryPeriod').value=currentPeriod();$('reportPeriod').value=currentPeriod();
+async function loadSettings(){const d=await api('/api/finance/settings');$('methodManual').checked=d.methods.includes('manual');$('methodCsv').checked=d.methods.includes('csv');$('methodIntegration').checked=d.methods.includes('integration');$('provider').value=d.integration_provider||'';status('settingsStatus','روش‌های فعال: '+d.methods.join('، ')+' | وضعیت اتصال: '+d.integration_status,'success')}
+async function saveSettings(){const methods=[];if($('methodManual').checked)methods.push('manual');if($('methodCsv').checked)methods.push('csv');if($('methodIntegration').checked)methods.push('integration');try{const d=await api('/api/finance/settings','PUT',{methods,integration_provider:$('provider').value});status('settingsStatus',d.message,'success')}catch(e){status('settingsStatus',e.message,'error')}}
+async function loadContracts(){try{const d=await api('/api/finance/contracts');$('contractList').innerHTML=d.length?d.map(c=>'<div style="padding:10px 0;border-bottom:1px solid #edf0f6"><b>'+esc(c.goal_name)+'</b><div class="muted">وضعیت: '+esc(c.status)+' | درصد: '+esc(c.share_percent)+'٪ | هدف: '+(c.goal_achieved?'تأیید شده':'در انتظار تأیید')+'</div><div class="muted">دوره رایگان: '+esc(c.trial_start)+' تا '+esc(c.trial_end)+'</div></div>').join(''):'قراردادی ثبت نشده است.'}catch(e){$('contractList').textContent=e.message}}
+$('saveSettings').onclick=saveSettings;
+$('entryForm').onsubmit=async e=>{e.preventDefault();const body={period:$('entryPeriod').value,document_ref:$('documentRef').value,sales:$('sales').value,discounts:$('discounts').value||'0',returns:$('returns').value||'0',cogs:$('cogs').value,direct_costs:$('directCosts').value||'0',currency:$('currency').value};try{const d=await api('/api/finance/entries','POST',body);status('entryStatus',d.message,'success');$('entryForm').reset();$('entryPeriod').value=currentPeriod();$('discounts').value='0';$('returns').value='0';$('directCosts').value='0';await loadEntries()}catch(e){status('entryStatus',e.message,'error')}};
+$('sampleCsv').onclick=async()=>{const sample='period,document_ref,sales,discounts,returns,cogs,direct_costs,currency\n'+currentPeriod()+',INV-001,1000000,50000,0,650000,20000,IRT\n';try{await navigator.clipboard.writeText(sample);status('csvStatus','نمونه CSV کپی شد. فایل را با همین سرستون‌ها ذخیره کنید.','success')}catch{status('csvStatus',sample,'success')}};
+$('importCsv').onclick=async()=>{const file=$('csvFile').files[0];if(!file){status('csvStatus','ابتدا فایل CSV را انتخاب کنید.','error');return}if(file.size>2_000_000){status('csvStatus','حداکثر اندازه فایل ۲ مگابایت است.','error');return}try{const content=await file.text();const d=await api('/api/finance/import/csv','POST',{content});status('csvStatus','ورودی: '+d.received+' | ثبت موفق: '+d.imported+' | ردشده: '+d.rejected.length+(d.rejected.length?'\n'+d.rejected.slice(0,12).map(x=>'خط '+x.line+': '+x.reason).join('\n'):''),d.rejected.length?'error':'success');await loadEntries()}catch(e){status('csvStatus',e.message,'error')}};
+async function loadEntries(){try{const d=await api('/api/finance/entries');$('entriesTable').innerHTML=table([['دوره'],['سند'],['روش'],['فروش'],['تخفیف'],['برگشت'],['بهای تمام‌شده'],['هزینه مستقیم'],['واحد پول']],d.map(x=>[esc(x.period),esc(x.document_ref),pill(x.source),moneyCell(x.sales),moneyCell(x.discounts),moneyCell(x.returns),moneyCell(x.cogs),moneyCell(x.direct_costs),esc(x.currency)]))}catch(e){$('entriesTable').textContent=e.message}}
+$('loadEntries').onclick=loadEntries;
+$('calculateReport').onclick=async()=>{try{const d=await api('/api/finance/reports/calculate?period='+encodeURIComponent($('reportPeriod').value),'POST',{});status('reportStatus','گزارش محاسبه شد. سود قابل‌مشارکت: '+faNum(d.eligible_profit)+' | سهم مالک: '+faNum(d.owner_share)+' | وضعیت: '+d.status,'success');await loadReports()}catch(e){status('reportStatus',e.message,'error')}};
+async function loadReports(){try{const d=await api('/api/finance/reports');$('reportsTable').innerHTML=table([['شرکت'],['دوره'],['فروش خالص'],['بهای تمام‌شده'],['سود قابل‌مشارکت'],['درصد'],['سهم مالک'],['وضعیت'],['تسویه'],['عملیات']],d.map(x=>[esc(x.company_name||company),esc(x.period),moneyCell(x.net_sales),moneyCell(x.cogs),moneyCell(x.eligible_profit),esc(x.share_percent)+'٪',moneyCell(x.owner_share),pill(x.status),pill(x.settlement_status),x.status==='pending'&&ownerMode?'<button class="btn primary" onclick="approveReport('+x.id+')">تأیید</button>':x.status==='pending'?'<button class="btn ghost" onclick="objectReport('+x.id+')">اعتراض</button>':ownerMode&&['approved','closed'].includes(x.status)&&x.settlement_status!=='paid'?'<button class="btn mint" onclick="settleReport('+x.id+','+Number(x.owner_share)-Number(x.settled_amount)+')">ثبت تسویه</button>':'—']));const eligible=d.filter(x=>['approved','closed','disputed'].includes(x.status));$('adjustmentReport').innerHTML=eligible.map(x=>'<option value="'+x.id+'" data-currency="'+esc(x.currency)+'">'+esc(x.period)+' · '+esc(x.company_name||company)+' · #'+x.id+'</option>').join('');if(eligible.length)$('adjCurrency').value=eligible[0].currency}catch(e){$('reportsTable').textContent=e.message}}
+window.approveReport=async id=>{try{await api('/api/finance/reports/'+id+'/approve','POST',{});await loadReports();await loadOwner()}catch(e){alert(e.message)}};
+window.objectReport=async id=>{const reason=prompt('دلیل اعتراض را بنویسید (حداقل ۵ نویسه):');if(!reason)return;try{await api('/api/finance/reports/'+id+'/objection','POST',{reason});await loadReports()}catch(e){alert(e.message)}};
+window.settleReport=async(id,due)=>{const raw=prompt('مبلغ پرداخت‌شده را وارد کنید. مانده فعلی: '+faNum(due));if(raw===null)return;const amount=Number(raw);if(!Number.isFinite(amount)||amount<=0){alert('مبلغ باید عددی مثبت باشد.');return}const note=prompt('شرح یا شناسه رسید (اختیاری):')||'';try{await api('/api/finance/reports/'+id+'/settlement','POST',{amount,note});await loadReports();await loadOwner()}catch(e){alert(e.message)}};
+$('loadReports').onclick=loadReports;
+$('adjustmentPeriod').value=currentPeriod();
+$('adjustmentForm').onsubmit=async e=>{e.preventDefault();const id=$('adjustmentReport').value;if(!id){status('adjustmentStatus','ابتدا یک گزارش تأییدشده انتخاب کنید.','error');return}const body={adjustment_period:$('adjustmentPeriod').value,sales_adjustment:$('adjSales').value||'0',discounts_adjustment:$('adjDiscounts').value||'0',returns_adjustment:$('adjReturns').value||'0',cogs_adjustment:$('adjCogs').value||'0',direct_costs_adjustment:$('adjDirect').value||'0',currency:$('adjCurrency').value,reason:$('adjReason').value};try{const d=await api('/api/finance/reports/'+id+'/adjustments','POST',body);status('adjustmentStatus','درخواست اصلاحیه شماره '+d.id+' ثبت شد و تا تأیید مالک اعمال نمی‌شود.','success');await loadReports()}catch(e){status('adjustmentStatus',e.message,'error')}};
+window.reviewAdjustment=async(id,decision)=>{if(!confirm(decision==='approve'?'اصلاحیه را تأیید و برای دوره مشخص‌شده قابل اعمال می‌کنید؟':'درخواست اصلاحیه رد شود؟'))return;try{await api('/api/finance/adjustments/'+id+'/review?decision='+decision,'POST',{});await loadOwner();await loadReports()}catch(e){alert(e.message)}};
+let ownerMode=false;
+async function loadOwner(){try{const d=await api('/api/finance/owner/overview');ownerMode=true;$('ownerTab').classList.remove('hidden');$('ownerMetrics').innerHTML=[['قراردادها',d.counts.contracts],['قراردادهای در انتظار',d.counts.pending_contracts],['گزارش‌های نیازمند بررسی',d.counts.pending_reports],['سهم تأییدشده پرداخت‌نشده',faNum(d.counts.unpaid_share)]].map(x=>'<div class="metric"><small>'+esc(x[0])+'</small><b>'+esc(x[1])+'</b></div>').join('');$('ownerContracts').innerHTML=table([['شناسه شرکت'],['شرکت'],['وضعیت قرارداد'],['درصد'],['هدف'],['وضعیت هدف'],['اتصال'],['عملیات']],d.companies.map(x=>[esc(x.tenant_id),esc(x.company_name),pill(x.contract_status||'بدون قرارداد'),esc(x.share_percent||'—'),esc(x.goal_name||'—'),x.goal_achieved?'تأیید شده':'در انتظار',pill(x.integration_status||'بدون تنظیم'),'<button class="btn ghost" onclick="fillTenant('+x.tenant_id+')">انتخاب</button>']));const contracts=await api('/api/finance/contracts');$('ownerContracts').innerHTML+=table([['شناسه قرارداد'],['شرکت'],['هدف'],['وضعیت'],['عملیات']],contracts.map(x=>[esc(x.id),esc(x.company_name||x.tenant_id),esc(x.goal_name),pill(x.status),'<button class="btn ghost" onclick="activateContract('+x.id+')">فعال‌سازی</button> <button class="btn mint" onclick="decideGoal('+x.id+')">ثبت نتیجه هدف</button>']));const adj=await api('/api/finance/adjustments');$('adjustmentsTable').innerHTML=table([['شناسه'],['شرکت'],['دوره اعمال'],['دلیل'],['وضعیت'],['عملیات']],adj.map(x=>[esc(x.id),esc(x.company_name||x.tenant_id),esc(x.adjustment_period),esc(x.reason),pill(x.status),x.status==='pending'?'<button class="btn primary" onclick="reviewAdjustment('+x.id+',\'approve\')">تأیید</button> <button class="btn ghost" onclick="reviewAdjustment('+x.id+',\'reject\')">رد</button>':'—']));const a=await api('/api/finance/owner/audit?limit=100');$('auditTable').innerHTML=table([['زمان'],['شرکت'],['کاربر'],['عملیات'],['جزئیات']],a.map(x=>[esc(x.created_at),esc(x.tenant_id),esc(x.actor_email),esc(x.action),esc(x.details_json)]));status('ownerStatus','پنل مالک فعال است. برای فعال‌سازی این دسترسی، ایمیل مالک باید در متغیر امن LEADORA_OWNER_EMAILS ثبت شده باشد.','success');await loadReports()}catch(e){ownerMode=false;$('ownerTab').classList.add('hidden');$('ownerMetrics').innerHTML='';status('ownerStatus',e.message,'error')}}
+window.fillTenant=id=>{$('contractTenant').value=id;document.querySelector('[data-view="owner"]').click();$('contractTenant').focus()};
+window.activateContract=async id=>{if(!confirm('آیا قرارداد پس از بررسی شرایط فعال شود؟'))return;try{await api('/api/finance/contracts/'+id+'/activate','POST',{});await loadOwner();await loadContracts()}catch(e){alert(e.message)}};
+window.decideGoal=async id=>{const yes=confirm('آیا تحقق هدف با اسناد بررسی شده و تأیید می‌شود؟');const evidence=prompt('شرح مستندات و دلیل تصمیم (حداقل ۵ نویسه):');if(!evidence)return;try{await api('/api/finance/contracts/'+id+'/goal','POST',{achieved:yes,evidence});await loadOwner();await loadContracts()}catch(e){alert(e.message)}};
+$('contractForm').onsubmit=async e=>{e.preventDefault();const body={tenant_id:Number($('contractTenant').value),share_percent:$('sharePercent').value,trial_start:$('trialStart').value,trial_end:$('trialEnd').value,contract_start:$('contractStart').value,contract_end:$('contractEnd').value||null,goal_name:$('goalName').value,baseline:$('baseline').value,target:$('target').value,direct_costs:['direct_costs'],notes:$('contractNotes').value};try{const d=await api('/api/finance/contracts','POST',body);status('contractStatus','قرارداد شماره '+d.id+' با وضعیت «در انتظار تأیید» ثبت شد.','success');await loadOwner();await loadContracts()}catch(e){status('contractStatus',e.message,'error')}};
+$('loadOwner').onclick=loadOwner;
+async function init(){if(!token){status('globalStatus','برای استفاده از بخش مالی ابتدا از صفحه اصلی وارد شوید؛ سپس همین صفحه را باز کنید.','error');return}status('globalStatus','ورود فعال برای '+(company||email)+'؛ اطلاعات مالی فقط برای شرکت احراز هویت‌شده بارگیری می‌شود.','success');try{await loadSettings();await loadContracts();await loadEntries();await loadReports();await loadOwner()}catch(e){status('globalStatus',e.message,'error')}}
+$('refresh').onclick=()=>init();
+init();
+</script></body></html>

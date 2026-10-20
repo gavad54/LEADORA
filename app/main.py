@@ -152,7 +152,7 @@ def register(body: RegisterIn):
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"tenant.registered"))
         except sqlite3.IntegrityError:
             raise HTTPException(409,"این ایمیل قبلاً برای این شرکت ثبت شده است.")
-    return {"token":token(uid,tid),"tenant":{"id":tid,"name":company_name,"industry":industry},"user":{"email":email}}
+    return {"token":token(uid,tid),"tenant":{"id":tid,"name":company_name,"industry":industry},"user":{"id":uid,"email":email}}
 
 @app.post("/api/login")
 def login(body: LoginIn):
@@ -1467,3 +1467,12 @@ def export_business_leads(user=Depends(user_from_header)):
     for row in rows: writer.writerow(dict(row))
     return StreamingResponse(iter([output.getvalue()]),media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition":"attachment; filename=leadora-business-leads.csv"})
+
+
+# Financial participation API and responsive browser/PWA page.
+from app.participation import create_router
+app.include_router(create_router(db, user_from_header))
+
+@app.get("/finance")
+def finance_page():
+    return FileResponse(ROOT / "static" / "finance.html")
