@@ -255,6 +255,26 @@ def create_router(db,user_dep):
    c.execute("INSERT INTO dist_cash_moves(tenant_id,account_id,txn_date,direction,amount_minor,reference,memo) VALUES(?,?,?,?,?,?,?)",(t,acc["id"],b.txn_date,"IN",a,b.reference,"وصول فاکتور "+o["order_no"]))
    post(c,t,b.txn_date,"وصول فاکتور "+o["order_no"],"RECEIPT",b.order_id,[{"code":"1000","d":a},{"code":"1100","c":a}],u.get("id"));audit(c,t,"distribution.receipt:"+o["order_no"])
   return {"status":"POSTED","received":money(a),"remaining":money(o["total_minor"]-received-a)}
+ @r.get("/reports/receivables")
+ def receivables(u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   opening=c.execute("SELECT code,name,SUM(amount_minor) amount FROM dist_opening_balances WHERE tenant_id=? AND kind='CUSTOMER' GROUP BY code,name",(t,)).fetchall()
+   rows=c.execute("SELECT cu.id,cu.name,COALESCE(cc.code,'#'||cu.id) code,COALESCE(SUM(s.total_minor),0) total FROM customers cu LEFT JOIN dist_customer_codes cc ON cc.customer_id=cu.id AND cc.tenant_id=cu.tenant_id LEFT JOIN dist_sales s ON s.customer_id=cu.id AND s.tenant_id=cu.tenant_id AND s.status IN ('POSTED','DELIVERED') WHERE cu.tenant_id=? GROUP BY cu.id,cu.name,cc.code",(t,)).fetchall()
+   rr=c.execute("SELECT s.customer_id,SUM(r.amount_minor) amount FROM dist_customer_receipts r JOIN dist_sales s ON s.id=r.order_id AND s.tenant_id=r.tenant_id WHERE r.tenant_id=? GROUP BY s.customer_id",(t,)).fetchall()
+  paid={x["customer_id"]:x["amount"] for x in rr};items=[{"code":x["code"],"name":x["name"],"opening":money(x["amount"]),"sales":"0.00","received":"0.00","outstanding":money(x["amount"])} for x in opening]
+  for x in rows:
+   if x["total"] or x["id"] in paid:items.append({"code":x["code"],"name":x["name"],"opening":"0.00","sales":money(x["total"]),"received":money(paid.get(x["id"],0)),"outstanding":money(x["total"]-paid.get(x["id"],0))})
+  return {"items":items,"total_outstanding":money(sum(minor(x["outstanding"]) for x in items))}
+ @r.get("/reports/payables")
+ def payables(u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   opening=c.execute("SELECT code,name,SUM(amount_minor) amount FROM dist_opening_balances WHERE tenant_id=? AND kind='SUPPLIER' GROUP BY code,name",(t,)).fetchall()
+   rows=c.execute("SELECT s.code,s.name,COALESCE(SUM(p.total_minor),0) total FROM dist_suppliers s LEFT JOIN dist_purchases p ON p.supplier_id=s.id AND p.tenant_id=s.tenant_id AND p.status='RECEIVED' WHERE s.tenant_id=? GROUP BY s.id",(t,)).fetchall()
+  items=[{"code":x["code"],"name":x["name"],"opening":money(x["amount"]),"purchases":"0.00","outstanding":money(x["amount"])} for x in opening]
+  items.extend({"code":x["code"],"name":x["name"],"opening":"0.00","purchases":money(x["total"]),"outstanding":money(x["total"])} for x in rows if x["total"])
+  return {"items":items,"total_outstanding":money(sum(minor(x["outstanding"]) for x in items))}
  @r.get("/reports/trial-balance")
  def trial(u=Depends(user_dep)):
   with db() as c:
