@@ -125,6 +125,11 @@ def pwa_service_worker():
 def pwa_icon():
     return FileResponse(ROOT / "static" / "icon.svg", media_type="image/svg+xml")
 
+@app.get("/favicon.ico")
+def favicon():
+    # Serve the existing vector icon to browsers that request the conventional favicon path.
+    return FileResponse(ROOT / "static" / "icon.svg", media_type="image/svg+xml")
+
 @app.get("/api/health")
 def health():
     with db() as c: c.execute("SELECT 1")
