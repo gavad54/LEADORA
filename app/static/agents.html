@@ -27,6 +27,18 @@
 <div class="actions full"><button id="startProspecting">شروع از موقعیت من</button><button id="expandProspecting" class="secondary">گسترش جست‌وجو</button><button id="loadProspects" class="secondary">نمایش بانک ذخیره‌شده</button></div></div>
 <div id="prosStatus" class="status"></div><div id="prosSummary" class="muted"></div>
 <div class="tablewrap section"><table><thead><tr><th>نام</th><th>دسته</th><th>نشانی/محدوده</th><th>تماس</th><th>وضعیت</th><th>منبع</th></tr></thead><tbody id="prosRows"><tr><td colspan="6">جست‌وجو را شروع کنید یا بانک ذخیره‌شده را نمایش دهید.</td></tr></tbody></table></div></section>
+<section class="panel section" id="businessLeadPanel"><h2>بانک جامع سرنخ‌های کسب‌وکار و پایش زمان‌بندی‌شده</h2>
+<p class="muted">ورود CSV از دایرکتوری‌های مجاز، حذف تکرار، فیلتر بانک و تنظیم کشف زمان‌بندی‌شده در سرور. بلد، نشان و اسنپ تا زمان فراهم‌شدن API/خروجی مجاز به‌عنوان منبع متصل نمایش داده نمی‌شوند.</p>
+<div class="grid">
+<form id="leadImportForm"><h3>ورود بانک کسب‌وکار از CSV</h3><label>نام منبع<input id="leadSource" value="licensed-directory" maxlength="100" required></label><label>فایل CSV کسب‌وکارها<input id="leadFile" type="file" accept=".csv,text/csv" required></label><p class="muted">ستون‌های پیشنهادی: name, category, phone, website, address, city, region, latitude, longitude, source_record_id, source_url</p><button type="submit">اعتبارسنجی و ورود به بانک</button><div id="leadImportMsg" class="status"></div></form>
+<form id="leadSettingsForm"><h3>تنظیم کشف خودکار سرنخ‌ها</h3><div class="formgrid"><label>عرض جغرافیایی<input id="leadLat" type="number" step="any" min="-90" max="90" required placeholder="Latitude"></label><label>طول جغرافیایی<input id="leadLon" type="number" step="any" min="-180" max="180" required placeholder="Longitude"></label><label>شعاع<select id="leadRadius"><option value="1000">۱ کیلومتر</option><option value="5000">۵ کیلومتر</option><option value="15000">۱۵ کیلومتر</option><option value="25000">۲۵ کیلومتر</option></select></label><label>دسته<select id="leadCategory"><option value="all">همه</option><option value="shop">فروشگاه</option><option value="office">دفتر</option><option value="food">غذا و کافه</option><option value="health">سلامت</option><option value="service">خدمات</option><option value="tourism">گردشگری</option><option value="craft">حرفه و تولید</option></select></label><label>فاصله اجرای مجدد<select id="leadInterval"><option value="900">۱۵ دقیقه (حداقل)</option><option value="1800">۳۰ دقیقه</option><option value="3600" selected>۱ ساعت</option><option value="21600">۶ ساعت</option><option value="86400">روزانه</option></select></label><label><input id="leadEnabled" type="checkbox"> فعال‌سازی جست‌وجوی زمان‌بندی‌شده</label></div><button type="submit">ذخیره تنظیمات سرور</button><div id="leadSettingsMsg" class="status"></div></form>
+</div>
+<div class="actions section"><button id="leadRefresh" class="secondary">به‌روزرسانی بانک و سلامت worker</button><button id="leadExport" class="secondary">خروجی CSV بانک</button></div>
+<div id="leadWorkerStatus" class="note" style="white-space:pre-wrap;overflow-wrap:anywhere"></div>
+<div class="formgrid"><label>جست‌وجو<input id="leadQuery" placeholder="نام، تلفن، وب‌سایت یا نشانی"></label><label>صنف<input id="leadFilterCategory" placeholder="مثلاً retail"></label><label>شهر<input id="leadFilterCity" placeholder="نام شهر"></label><div><button id="leadSearch" type="button">جست‌وجو در بانک</button></div></div>
+<div id="leadBankSummary" class="muted"></div><div class="tablewrap section"><table><thead><tr><th>کسب‌وکار</th><th>صنف</th><th>تماس/وب‌سایت</th><th>محدوده</th><th>منبع</th><th>آخرین مشاهده</th></tr></thead><tbody id="leadBankRows"><tr><td colspan="6">بانک هنوز بارگذاری نشده است.</td></tr></tbody></table></div>
+<div id="leadSources" class="note" style="white-space:pre-wrap"></div>
+</section>
 <section class="panel section"><h2>ذخیره‌سازی و پشتیبانی</h2><div class="actions"><button id="storageCheck" class="secondary">بررسی سلامت پایگاه داده</button><button id="backupSnapshot">ساخت نسخه پشتیبان روی سرور</button><button id="downloadBackup" class="secondary">دانلود پشتیبان کامل</button></div><pre id="storageInfo" class="note" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><div id="backupMsg" class="status"></div></section>
 <section class="panel section" id="workflowPanel"><h2>پیگیری فرایند سفارش‌ها و فاکتورها</h2>
 <p class="muted">یک سند واحد برای شرکت شما و طرف معامله ثبت کنید؛ وضعیت جاری و تاریخچه هر تغییر برای پیگیری داخلی نگهداری می‌شود. برای مشتری/فروشنده/تأمین‌کننده، وضعیت فقط زمانی قابل مشاهده است که در آینده دسترسی یا اعلان جداگانه برای او فعال شود.</p>
@@ -87,5 +99,44 @@ $('wfRefresh').onclick=wfLoad;$('wfFollowups').onclick=async()=>{try{const d=awa
 $('wfFilterType').onchange=wfLoad;$('wfFilterStatus').onchange=wfLoad;$('wfQuery').addEventListener('keydown',e=>{if(e.key==='Enter')wfLoad()});
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.wfSave){const id=b.dataset.wfSave,sel=document.querySelector('[data-wf-status="'+id+'"]'),note=document.querySelector('[data-wf-note="'+id+'"]');await api('/api/workflow/documents/'+id+'/status','PATCH',{status:sel.value,note:note.value});msg('wfStatusMsg','وضعیت و تاریخچه به‌روزرسانی شد.',true);await wfLoad()}else if(b.dataset.wfHistory){const d=await api('/api/workflow/documents/'+b.dataset.wfHistory);$('wfTimeline').textContent=d.timeline.map(x=>x.created_at+' | '+(wfLabels[x.new_status]||x.new_status)+' | '+x.event_type+' | '+x.note).join('\n')||'تاریخچه‌ای ثبت نشده است.'}else if(b.dataset.wfEventSave){const id=b.dataset.wfEventSave,inp=document.querySelector('[data-wf-event="'+id+'"]');if(!inp.value.trim())throw Error('متن رویداد پیگیری را وارد کنید.');await api('/api/workflow/documents/'+id+'/events','POST',{event_type:'note',note:inp.value.trim()});inp.value='';msg('wfStatusMsg','رویداد پیگیری ثبت شد.',true)}}catch(err){msg('wfStatusMsg',err.message)}});
 
-if(token){showApp();load()}else showAuth();
+
+function parseCsvText(text){
+ const rows=[];let row=[],field='',quoted=false;
+ for(let i=0;i<text.length;i++){const ch=text[i];
+  if(quoted){if(ch==='"'&&text[i+1]==='"'){field+='"';i++}else if(ch==='"')quoted=false;else field+=ch}
+  else if(ch==='"')quoted=true;
+  else if(ch===','){row.push(field);field=''}
+  else if(ch==='\\n'){row.push(field.replace(/\\r$/,''));if(row.some(v=>v.trim()!==''))rows.push(row);row=[];field=''}
+  else field+=ch;
+ }
+ if(quoted)throw Error('فایل CSV دارای کوتیشن بسته‌نشده است.');
+ if(field!==''||row.length){row.push(field.replace(/\\r$/,''));if(row.some(v=>v.trim()!==''))rows.push(row)}
+ if(rows.length<2)throw Error('فایل باید حداقل یک ردیف داده و ردیف عنوان داشته باشد.');
+ const headers=rows.shift().map(x=>x.trim().replace(/^\\uFEFF/,''));
+ return rows.map(cols=>Object.fromEntries(headers.map((k,i)=>[k,(cols[i]||'').trim()])));
+}
+async function leadLoadSettings(){
+ try{const d=await api('/api/prospecting/settings');if(d.configured!==false){$('leadLat').value=d.latitude;$('leadLon').value=d.longitude;$('leadRadius').value=String(d.radius_m);$('leadCategory').value=d.category;$('leadInterval').value=String(d.interval_seconds);$('leadEnabled').checked=!!d.enabled}}catch(e){msg('leadSettingsMsg',e.message)}
+}
+async function leadLoadBank(){
+ try{
+  const q=new URLSearchParams({q:$('leadQuery').value,category:$('leadFilterCategory').value,city:$('leadFilterCity').value,limit:'200'});
+  const d=await api('/api/prospecting/business-leads?'+q.toString());
+  $('leadBankSummary').textContent='تعداد مطابق فیلتر: '+num(d.total)+' · نمایش '+num(d.items.length)+' رکورد';
+  $('leadBankRows').innerHTML=d.items.map(x=>'<tr><td><b>'+esc(x.name)+'</b><div class="muted">'+esc(x.address||'—')+'</div></td><td>'+esc(x.category||'—')+'</td><td>'+esc(x.phone||'—')+(x.website?'<div><a href="'+esc(x.website)+'" target="_blank" rel="noopener noreferrer">وب‌سایت</a></div>':'')+'</td><td>'+esc([x.city,x.region].filter(Boolean).join('، ')||'—')+'</td><td>'+esc(x.source)+(x.source_url?'<div><a href="'+esc(x.source_url)+'" target="_blank" rel="noopener noreferrer">رکورد منبع</a></div>':'')+'</td><td>'+esc(x.last_seen_at||'—')+'</td></tr>').join('')||'<tr><td colspan="6">رکوردی پیدا نشد.</td></tr>';
+ }catch(e){msg('leadImportMsg',e.message)}
+}
+async function leadLoadStatus(){
+ try{const d=await api('/api/prospecting/worker/status');$('leadWorkerStatus').textContent='وضعیت تنظیمات: '+(d.configured?'ثبت‌شده':'تنظیم نشده')+'\nفعال: '+(d.settings&&d.settings.enabled?'بله':'خیر')+'\nآخرین تلاش: '+(d.settings?.last_attempt_at||'—')+'\nآخرین موفقیت: '+(d.settings?.last_success_at||'—')+'\nخطای اخیر: '+(d.settings?.last_error||'—')+'\nتعداد خطاهای پی‌درپی: '+(d.settings?.consecutive_failures??0)+'\n\nتوجه: API وضعیت تنظیمات را گزارش می‌کند و به‌تنهایی زنده‌بودن فرایند worker را اثبات نمی‌کند. رویدادهای اخیر:\n'+(d.recent_events||[]).map(x=>x.created_at+' | '+x.event_type+' | '+x.message).join('\n');}
+ catch(e){$('leadWorkerStatus').textContent=e.message}
+}
+async function leadLoadSources(){
+ try{const d=await api('/api/prospecting/sources');$('leadSources').textContent='وضعیت منابع (وضعیت دسترسی، نه ادعای اتصال):\n'+d.sources.map(x=>x.name+' — '+x.mode+'\n'+x.limits).join('\n\n')}catch(e){}
+}
+$('leadImportForm').addEventListener('submit',async e=>{e.preventDefault();try{const file=$('leadFile').files[0];if(!file)throw Error('فایل CSV را انتخاب کنید.');const records=parseCsvText(await file.text());if(records.length>2000)throw Error('هر بار حداکثر ۲۰۰۰ ردیف وارد کنید.');const d=await api('/api/prospecting/import','POST',{source:$('leadSource').value.trim(),records});msg('leadImportMsg','دریافت '+num(d.received)+' ردیف؛ جدید '+num(d.imported)+'؛ به‌روزشده '+num(d.updated)+'؛ ردشده '+num(d.rejected),true);await leadLoadBank();await leadLoadSources()}catch(err){msg('leadImportMsg',err.message)}});
+$('leadSettingsForm').addEventListener('submit',async e=>{e.preventDefault();try{const d=await api('/api/prospecting/settings','PUT',{latitude:Number($('leadLat').value),longitude:Number($('leadLon').value),radius_m:Number($('leadRadius').value),category:$('leadCategory').value,interval_seconds:Number($('leadInterval').value),enabled:$('leadEnabled').checked});msg('leadSettingsMsg',d.message,true);await leadLoadStatus()}catch(err){msg('leadSettingsMsg',err.message)}});
+$('leadRefresh').onclick=async()=>{await leadLoadSettings();await leadLoadBank();await leadLoadStatus();await leadLoadSources()};
+$('leadSearch').onclick=leadLoadBank;$('leadQuery').addEventListener('keydown',e=>{if(e.key==='Enter')leadLoadBank()});
+$('leadExport').onclick=async()=>{try{const r=await fetch('/api/prospecting/business-leads/export.csv',{headers:{Authorization:'Bearer '+token}});if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.detail||'خروجی دریافت نشد.')}const blob=await r.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='leadora-business-leads.csv';a.click();URL.revokeObjectURL(url)}catch(e){msg('leadImportMsg',e.message)}};
+\nif(token){showApp();load();leadLoadSettings();leadLoadBank();leadLoadStatus();leadLoadSources()}else showAuth();
 </script></body></html>
