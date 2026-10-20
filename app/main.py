@@ -1467,3 +1467,12 @@ def export_business_leads(user=Depends(user_from_header)):
     for row in rows: writer.writerow(dict(row))
     return StreamingResponse(iter([output.getvalue()]),media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition":"attachment; filename=leadora-business-leads.csv"})
+
+
+# Financial participation API and responsive browser/PWA page.
+from app.participation import create_router
+app.include_router(create_router(db, user_from_header))
+
+@app.get("/finance")
+def finance_page():
+    return FileResponse(ROOT / "static" / "finance.html")
