@@ -91,9 +91,10 @@ def create_router(db,user_from_header):
    active=c.execute("SELECT COUNT(*) n FROM ai_workflows WHERE tenant_id=? AND status='active'",(tid,)).fetchone()["n"]
    pending=c.execute("SELECT COUNT(*) n FROM ai_approvals WHERE tenant_id=? AND status='pending'",(tid,)).fetchone()["n"]
    conv=c.execute("SELECT COUNT(*) n FROM ai_conversations WHERE tenant_id=? AND status='open'",(tid,)).fetchone()["n"]
+   task_count=c.execute("SELECT COUNT(*) n FROM ai_agent_tasks WHERE tenant_id=? AND status IN ('queued','blocked','needs_human')",(tid,)).fetchone()["n"]
    stages=[dict(r) for r in c.execute("SELECT stage,COUNT(*) count FROM ai_workflows WHERE tenant_id=? AND status='active' GROUP BY stage",(tid,)).fetchall()]
    recent=[dict(r) for r in c.execute("SELECT id,customer_name,stage,status,human_required,next_action,updated_at FROM ai_workflows WHERE tenant_id=? ORDER BY id DESC LIMIT 10",(tid,)).fetchall()]
-  return {"summary":{"workflows_total":total,"workflows_active":active,"approvals_pending":pending,"open_conversations":conv},"stages":[{**r,"label":LABELS.get(r["stage"],r["stage"])} for r in stages],"recent_workflows":recent,"automation_policy":{"routine_actions":"only after verified data, permissions and policy checks","human_approval_gates":GATES,"live_llm_connected":False,"external_channels_connected":False,"payment_execution_connected":False}}
+  return {"summary":{"workflows_total":total,"workflows_active":active,"approvals_pending":pending,"open_conversations":conv,"agent_tasks_pending":task_count},"stages":[{**r,"label":LABELS.get(r["stage"],r["stage"])} for r in stages],"recent_workflows":recent,"automation_policy":{"routine_actions":"only after verified data, permissions and policy checks","human_approval_gates":GATES,"live_llm_connected":False,"external_channels_connected":False,"payment_execution_connected":False}}
  @router.post("/api/ai/workflows")
  def create_workflow(body:WorkflowIn,user=Depends(user_from_header)):
   tid=user["tenant_id"]
