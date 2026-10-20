@@ -64,3 +64,30 @@ def test_import_preview_reports_missing_columns(tmp_path):
     w=Workbook();w.active.append(['نام اشتباه']);b=io.BytesIO();w.save(b);b.seek(0)
     r=c.post('/api/distribution/import/items/preview',files={'file':('items.xlsx',b.getvalue(),'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')})
     assert r.status_code==422
+
+
+def test_jalali_fiscal_year_close_and_carry_forward(tmp_path):
+    db=factory(tmp_path/'fiscal.sqlite');c=client(db,1)
+    y=c.post('/api/distribution/fiscal-years',json={'jalali_year':1405})
+    assert y.status_code==200,y.text
+    fy=y.json()
+    assert fy['start_date']=='2026-03-21'
+    assert fy['end_date']=='2027-03-20'
+    assert c.post('/api/distribution/fiscal-years',json={'jalali_year':1405}).status_code==409
+    nxt=c.post('/api/distribution/fiscal-years',json={'jalali_year':1406})
+    assert nxt.status_code==200,nxt.text
+    closed=c.post('/api/distribution/fiscal-years/'+str(fy['id'])+'/close')
+    assert closed.status_code==200,closed.text
+    carried=c.post('/api/distribution/fiscal-years/'+str(fy['id'])+'/carry-forward')
+    assert carried.status_code==200,carried.text
+    assert carried.json()['to_year']==1406
+    assert c.post('/api/distribution/fiscal-years/'+str(fy['id'])+'/carry-forward').status_code==409
+
+def test_fiscal_year_close_blocks_new_journals_in_closed_year(tmp_path):
+    db=factory(tmp_path/'fiscal-lock.sqlite');c=client(db,1)
+    fy=c.post('/api/distribution/fiscal-years',json={'jalali_year':1405}).json()
+    assert c.post('/api/distribution/fiscal-years/'+str(fy['id'])+'/close').status_code==200
+    order=c.post('/api/distribution/sales',json={'order_no':'SO-LOCK','customer_id':1,'order_date':'2026-04-01','lines':[{'product_id':1,'quantity':1,'unit_price':'10'}]})
+    assert order.status_code==200,order.text
+    posted=c.post('/api/distribution/sales/'+str(order.json()['id'])+'/post')
+    assert posted.status_code==409
