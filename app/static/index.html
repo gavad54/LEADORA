@@ -49,6 +49,65 @@ a{color:#526de8}
 .dot{box-shadow:0 0 12px #65dfbd}
 @media(max-width:850px){.shell{grid-template-columns:1fr}.side{padding:14px;gap:12px;border-left:0;border-bottom:1px solid #ffffff25}.brand{justify-content:center}.side .navlabel,.sidefoot{display:none}.nav{display:flex;overflow-x:auto;gap:5px;padding-bottom:3px}.nav button{white-space:nowrap;flex:0 0 auto;padding:10px 12px}.main{padding:14px 12px 28px}.top{margin-bottom:14px;padding:11px}.hero{padding:23px 20px}.actions{flex-wrap:wrap}.card,.panel,.stat,.tile{border-radius:16px!important}}
 
+
+/* LEADORA Studio 2026 — refined premium interface */
+:root{--navy:#10142c;--blue:#6d5dfc;--mint:#5cebd1;--muted:#727b98;--line:#e5e7f4;--shadow:0 18px 50px #25205b12}
+body{background:#f7f7fc;color:#202442}
+.shell{grid-template-columns:258px minmax(0,1fr);gap:0}
+.side{background:linear-gradient(165deg,#171331 0%,#201b4b 48%,#142d49 100%);padding:27px 18px;gap:32px;border-left:1px solid #ffffff16;box-shadow:10px 0 50px #19143b12}
+.mark{background:linear-gradient(135deg,#5cebd1,#8170ff 65%,#d8a3ff);color:#171634;box-shadow:0 8px 28px #8b7dff50;border:1px solid #ffffff80}
+.brand strong{letter-spacing:2px;font-size:20px}
+.brand small{color:#b5b5d8;letter-spacing:.3px}
+.nav button{padding:13px 14px;border:1px solid transparent;border-radius:14px;transition:background .2s,border-color .2s,transform .2s}
+.nav button:hover{transform:translateX(-2px);background:#ffffff0d;border-color:#ffffff13}
+.nav button.active{background:linear-gradient(100deg,#7869ff38,#5cebd114);border:1px solid #a59aff30;box-shadow:inset -3px 0 #5cebd1,0 8px 22px #08051c25}
+.sidefoot{background:#ffffff09;border-color:#ffffff20;backdrop-filter:blur(16px);border-radius:16px}
+.main{padding:30px clamp(16px,3.4vw,48px) 48px;max-width:1800px;width:100%;margin:0 auto}
+.top{padding:14px 18px;border-radius:18px;background:#fff;border:1px solid #ececf7;box-shadow:0 8px 30px #1f1a5310;margin-bottom:24px}
+.eyebrow{color:#8586a5}
+h1{letter-spacing:-.5px}
+.profile{background:#f7f6ff;border-color:#e7e3ff}
+.hero{border-radius:28px;padding:clamp(25px,3.2vw,42px);background:radial-gradient(circle at 80% 5%,#7f70ff66,transparent 30%),radial-gradient(circle at 12% 95%,#52e9d733,transparent 30%),linear-gradient(120deg,#191633 0%,#302866 52%,#234e68 100%);border:1px solid #ffffff30;box-shadow:0 22px 55px #28205c2b,inset 0 1px #ffffff28}
+.hero:after{left:7%;top:-110px;width:260px;height:260px;border-color:#ffffff25;box-shadow:0 0 0 30px #ffffff0b,0 0 0 60px #ffffff07}
+.hero .kicker{color:#76f6df;letter-spacing:.7px}
+.hero h2{max-width:740px;font-size:clamp(25px,3vw,38px);line-height:1.55;letter-spacing:-.6px}
+.hero p{font-size:13px;max-width:620px;color:#e0e4fa}
+.btn{border-radius:13px;padding:12px 17px;transition:transform .18s,box-shadow .18s,filter .18s}
+.btn:hover{filter:brightness(1.04);transform:translateY(-2px)}
+.primary{background:linear-gradient(120deg,#7665ff,#5c72ed);box-shadow:0 9px 24px #7165ff45;border:1px solid #ffffff30}
+.mint{background:linear-gradient(120deg,#5cebd1,#a4f8e7);box-shadow:0 8px 24px #5cebd122}
+.ghost{background:#ffffff15;border-color:#ffffff30}
+.stats{gap:15px}
+.stat,.panel{border:1px solid #e8e8f5;border-radius:21px;box-shadow:0 12px 34px #26204f09;transition:transform .2s,box-shadow .2s,border-color .2s}
+.stat:hover{transform:translateY(-3px);box-shadow:0 18px 40px #26204f12;border-color:#d8d4ff}
+.stat{padding:20px;background:linear-gradient(145deg,#fff,#fdfcff)}
+.staticon{border:1px solid #e5e2ff;background:linear-gradient(135deg,#f0edff,#e6fbf7);color:#6453e8;border-radius:12px}
+.stat:nth-child(2) .staticon{background:#e4faf3;border-color:#d4f4e9}
+.stat:nth-child(3) .staticon{background:#fff4e7;border-color:#ffebd2}
+.stat:nth-child(4) .staticon{background:#f5eaff;border-color:#eee0ff}
+.columns{gap:18px}
+.panel{padding:22px;background:linear-gradient(145deg,#fff,#fdfcff)}
+.panel h3{font-size:14px;letter-spacing:-.1px}
+.quickgrid{gap:11px}
+.quick{border-radius:15px;padding:14px;border-color:#ececf7;background:linear-gradient(140deg,#fff,#fafaff);transition:all .2s}
+.quick:hover{transform:translateY(-2px);border-color:#d4ceff;background:#f8f7ff;box-shadow:0 8px 22px #5342d00b}
+.qicon{border:1px solid #e7e3ff;background:linear-gradient(135deg,#f0edff,#e5faf5);color:#6858e9;border-radius:12px}
+.empty{border-color:#dedcf1;background:linear-gradient(145deg,#fcfbff,#f7f8ff);border-radius:15px}
+table{border-spacing:0 5px;border-collapse:separate}
+th{color:#777d9c}
+td,th{padding:13px 11px}
+tbody tr{background:#f8f8fe}
+tbody tr:hover{background:#f0efff}
+tbody tr td{border-top:1px solid #eeeeF8;border-bottom:1px solid #eeeeF8}
+tbody tr td:first-child{border-right:1px solid #eeeeF8;border-radius:0 12px 12px 0}
+tbody tr td:last-child{border-left:1px solid #eeeeF8;border-radius:12px 0 0 12px}
+input,select,textarea{border-radius:13px!important;border:1px solid #e2e2f1!important;background:#fff!important;transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus,textarea:focus{border-color:#9a8eff!important;box-shadow:0 0 0 4px #7766ff14}
+.badge{border:1px solid #d8f3e7}
+@media(min-width:1200px){.stats{gap:17px}.stat{padding:22px}.panel{padding:24px}}
+@media(max-width:850px){.shell{grid-template-columns:minmax(0,1fr)}.side{padding:14px 12px;gap:14px}.brand{padding:0 5px}.brand strong{font-size:18px}.nav button{padding:11px 13px;border-radius:12px}.main{padding:14px 12px 30px}.top{padding:12px 13px;border-radius:15px}.hero{border-radius:21px;padding:24px 20px}.hero h2{font-size:25px}.stats{gap:9px}.stat{padding:13px;border-radius:16px}.statvalue{font-size:23px}.panel{padding:15px;border-radius:17px}.columns{gap:10px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;scroll-behavior:auto!important}}
+
 </style></head><body>
 <div class="shell"><aside class="side"><div class="brand"><div class="mark">L</div><div><strong>LEADORA</strong><small>BUSINESS OPERATIONS</small></div></div>
 <div><div class="navlabel">فضای کاری</div><nav class="nav"><button class="active" data-view="dashboard">◫　نمای کلی</button><button data-view="products">▦　مدیریت کالاها</button><button data-view="customers">♙　مشتریان</button><button data-view="insights">✧　بینش و هشدارها</button><button data-view="settings">⚙　تنظیمات و وضعیت</button></nav></div>
