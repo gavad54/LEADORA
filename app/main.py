@@ -1340,3 +1340,80 @@ def list_business_source_runs(limit: int = 100, user=Depends(user_from_header)):
     with db() as c:
         rows = c.execute("SELECT id,source,status,imported,updated,rejected,message,created_at FROM business_source_runs WHERE tenant_id=? ORDER BY id DESC LIMIT ?",(user["tenant_id"],limit)).fetchall()
     return [dict(r) for r in rows]
+
+
+# Persistent, tenant-scoped settings for scheduled business discovery.
+def init_scheduled_prospecting():
+    with db() as c:
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS prospecting_settings(
+          tenant_id INTEGER PRIMARY KEY REFERENCES tenants(id),
+          latitude REAL NOT NULL, longitude REAL NOT NULL,
+          radius_m INTEGER NOT NULL DEFAULT 1000,
+          category TEXT NOT NULL DEFAULT 'all',
+          enabled INTEGER NOT NULL DEFAULT 0,
+          interval_seconds INTEGER NOT NULL DEFAULT 3600,
+          next_run_at REAL NOT NULL DEFAULT 0,
+          last_attempt_at TEXT NOT NULL DEFAULT '',
+          last_success_at TEXT NOT NULL DEFAULT '',
+          last_error TEXT NOT NULL DEFAULT '',
+          consecutive_failures INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS prospecting_worker_events(
+          id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+          event_type TEXT NOT NULL, message TEXT NOT NULL DEFAULT '',
+          found INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_prospecting_settings_due
+          ON prospecting_settings(enabled,next_run_at);
+        """)
+init_scheduled_prospecting()
+
+class ProspectingSettingsIn(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    radius_m: int = Field(default=1000, ge=100, le=25000)
+    category: str = Field(default="all", pattern="^(all|shop|office|food|health|service|tourism|craft)$")
+    enabled: bool = False
+    interval_seconds: int = Field(default=3600, ge=900, le=86400)
+
+@app.get("/api/prospecting/settings")
+def get_prospecting_settings(user=Depends(user_from_header)):
+    with db() as c:
+        row=c.execute("SELECT latitude,longitude,radius_m,category,enabled,interval_seconds,last_attempt_at,last_success_at,last_error,consecutive_failures,next_run_at,updated_at FROM prospecting_settings WHERE tenant_id=?",(user["tenant_id"],)).fetchone()
+    return dict(row) if row else {"configured":False,"enabled":False,"message":"ابتدا محدوده مشتری‌یابی را تنظیم کنید."}
+
+@app.put("/api/prospecting/settings")
+def put_prospecting_settings(body: ProspectingSettingsIn, user=Depends(user_from_header)):
+    with db() as c:
+        c.execute("""INSERT INTO prospecting_settings
+          (tenant_id,latitude,longitude,radius_m,category,enabled,interval_seconds,next_run_at,last_error,consecutive_failures,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+          ON CONFLICT(tenant_id) DO UPDATE SET latitude=excluded.latitude,longitude=excluded.longitude,
+          radius_m=excluded.radius_m,category=excluded.category,enabled=excluded.enabled,
+          interval_seconds=excluded.interval_seconds,next_run_at=CASE WHEN excluded.enabled=1 THEN 0 ELSE excluded.next_run_at END,
+          last_error='',consecutive_failures=0,updated_at=CURRENT_TIMESTAMP""",
+          (user["tenant_id"],body.latitude,body.longitude,body.radius_m,body.category,int(body.enabled),body.interval_seconds,0 if body.enabled else 0,""))
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],"prospecting.settings.updated"))
+        row=c.execute("SELECT latitude,longitude,radius_m,category,enabled,interval_seconds,next_run_at,updated_at FROM prospecting_settings WHERE tenant_id=?",(user["tenant_id"],)).fetchone()
+    return {"configured":True,**dict(row),"message":"تنظیمات ذخیره شد؛ اجرای زمان‌بندی‌شده فقط روی سروری فعال است که worker آن اجرا شده باشد."}
+
+@app.get("/api/prospecting/worker/status")
+def prospecting_worker_status(user=Depends(user_from_header)):
+    with db() as c:
+        settings=c.execute("SELECT enabled,last_attempt_at,last_success_at,last_error,consecutive_failures,next_run_at,interval_seconds FROM prospecting_settings WHERE tenant_id=?",(user["tenant_id"],)).fetchone()
+        events=c.execute("SELECT event_type,message,found,created_at FROM prospecting_worker_events WHERE tenant_id=? ORDER BY id DESC LIMIT 20",(user["tenant_id"],)).fetchall()
+    return {"configured":settings is not None,"settings":dict(settings) if settings else None,"recent_events":[dict(x) for x in events],
+            "worker_process":"separate server process required; this API cannot prove that process is alive"}
+
+@app.get("/api/prospecting/business-leads/export.csv")
+def export_business_leads(user=Depends(user_from_header)):
+    with db() as c:
+        rows=c.execute("SELECT source,source_record_id,name,category,phone,website,address,city,region,latitude,longitude,source_url,status,first_seen_at,last_seen_at FROM business_leads WHERE tenant_id=? ORDER BY name",(user["tenant_id"],)).fetchall()
+    output=io.StringIO(newline="")
+    fields=["source","source_record_id","name","category","phone","website","address","city","region","latitude","longitude","source_url","status","first_seen_at","last_seen_at"]
+    writer=csv.DictWriter(output,fieldnames=fields);writer.writeheader()
+    for row in rows: writer.writerow(dict(row))
+    return StreamingResponse(iter([output.getvalue()]),media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":"attachment; filename=leadora-business-leads.csv"})
