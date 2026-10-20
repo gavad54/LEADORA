@@ -88,7 +88,7 @@ def create_router(db,user_from_header):
           "Never claim you sent a message, created an order, dispatched goods or received money. "
           "Respect consent; for complaints, disputes, refunds, credit or sensitive exceptions recommend human handoff. "
           "Respond in Persian unless the customer clearly writes in another language.")
-  prompt="Customer name: "+customer_name+"\\nIntent classification: "+intent+"\\nRecent conversation context (oldest first):\\n"+json.dumps(history or [],ensure_ascii=False)+"\\nLatest customer message: "+message
+  prompt="Customer name: "+customer_name+"\nIntent classification: "+intent+"\nRecent conversation context (oldest first):\n"+json.dumps(history or [],ensure_ascii=False)+"\nLatest customer message: "+message
   try:
    if provider=="ollama":
     host=os.getenv("OLLAMA_HOST","http://127.0.0.1:11434").rstrip("/")
@@ -114,7 +114,7 @@ def create_router(db,user_from_header):
     if item.get("type")=="message":
      for part in item.get("content",[]):
       if part.get("type")=="output_text" and part.get("text"): parts.append(part["text"])
-   answer="\\n".join(parts).strip()
+   answer="\n".join(parts).strip()
    return answer[:5000] if answer else None
   except Exception:
    return None
