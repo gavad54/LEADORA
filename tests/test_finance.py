@@ -77,9 +77,9 @@ def test_csv_import_reports_duplicate_rows():
 def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
     client = TestClient(app)
     owner_email = f"leadora-owner-{uuid.uuid4().hex[:8]}@example.com"
-    owner_headers, _ = register(client, "LEADORA Owner", owner_email)
+    owner_headers, owner = register(client, "LEADORA Owner", owner_email)
     company_headers, company = register(client, "Profit Share Company")
-    monkeypatch.setenv("LEADORA_OWNER_EMAILS", owner_email)
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
 
     contract = client.post("/api/finance/contracts", headers=owner_headers, json={
         "tenant_id": company["tenant"]["id"],
@@ -125,9 +125,9 @@ def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatc
 def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(monkeypatch):
     client = TestClient(app)
     owner_email = f"adjustment-owner-{uuid.uuid4().hex[:8]}@example.com"
-    owner_headers, _ = register(client, "Adjustment Owner", owner_email)
+    owner_headers, owner = register(client, "Adjustment Owner", owner_email)
     company_headers, _ = register(client, "Adjustment Company")
-    monkeypatch.setenv("LEADORA_OWNER_EMAILS", owner_email)
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
 
     entry = client.post("/api/finance/entries", headers=company_headers, json={
         "period": "2026-05", "document_ref": "ADJ-BASE", "sales": "1000",
