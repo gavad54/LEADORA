@@ -4,7 +4,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Keep only the newest CI run for each branch to avoid stale queued runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -27,13 +26,18 @@ jobs:
           python - <<'PYCODE'
           import re
           from pathlib import Path
-          page = Path('app/static/index.html').read_text()
-          Path('/tmp/leadora.js').write_text('\n'.join(re.findall(r'<script>(.*?)</script>', page, re.S)))
+          for source, output in [
+              ('app/static/index.html', '/tmp/leadora-main.js'),
+              ('app/static/agents.html', '/tmp/leadora-agents.js'),
+          ]:
+              page = Path(source).read_text(encoding='utf-8')
+              Path(output).write_text('\\n'.join(re.findall(r'<script>(.*?)</script>', page, re.S)), encoding='utf-8')
           PYCODE
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
-      - run: node --check /tmp/leadora.js
+      - run: node --check /tmp/leadora-main.js
+      - run: node --check /tmp/leadora-agents.js
       - run: node --check app/static/service-worker.js
       - name: Validate PWA manifest
         run: python -c "import json; json.load(open('app/static/manifest.webmanifest', encoding='utf-8'))"
