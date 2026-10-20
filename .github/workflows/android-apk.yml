@@ -24,18 +24,32 @@ jobs:
           java-version: "17"
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Install stable Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -n 1)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
       - name: Build installable APK
         working-directory: android
-        run: gradle --no-daemon assembleDebug
-      - name: Prepare APK
+        run: gradle --no-daemon --stacktrace assembleDebug
+      - name: Verify and prepare APK
+        shell: bash
         run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
           mkdir -p release
-          cp android/app/build/outputs/apk/debug/app-debug.apk release/LEADORA-Android.apk
+          cp "$APK" release/LEADORA-Android.apk
           sha256sum release/LEADORA-Android.apk > release/LEADORA-Android.apk.sha256
+          file release/LEADORA-Android.apk
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -48,9 +62,9 @@ jobs:
           tag_name: android-v1.0.${{ github.run_number }}
           name: LEADORA Android v1.0.${{ github.run_number }}
           body: |
-            LEADORA Android app for the live LEADORA business platform.
-            This APK is CI-built and debug-signed for direct installation/testing.
-            Internet connection is required; business data remains on the LEADORA production server.
+            LEADORA Android WebView client for the LEADORA business platform.
+            CI-built debug-signed APK for direct installation and testing.
+            Internet connection is required for live business data.
           files: |
             release/LEADORA-Android.apk
             release/LEADORA-Android.apk.sha256
