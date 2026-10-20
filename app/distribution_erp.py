@@ -44,6 +44,8 @@ def init_db(db):
   CREATE TABLE IF NOT EXISTS dist_deliveries(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,order_id INTEGER NOT NULL,reference TEXT NOT NULL DEFAULT '',note TEXT NOT NULL DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP,UNIQUE(tenant_id,order_id));
   CREATE TABLE IF NOT EXISTS dist_cash_accounts(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,code TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,opening_minor INTEGER NOT NULL DEFAULT 0,UNIQUE(tenant_id,code));
   CREATE TABLE IF NOT EXISTS dist_cash_moves(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,account_id INTEGER NOT NULL,txn_date TEXT NOT NULL,direction TEXT NOT NULL,amount_minor INTEGER NOT NULL,reference TEXT NOT NULL DEFAULT '',memo TEXT NOT NULL DEFAULT '');
+  CREATE TABLE IF NOT EXISTS dist_customer_receipts(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,order_id INTEGER NOT NULL,account_id INTEGER NOT NULL,txn_date TEXT NOT NULL,amount_minor INTEGER NOT NULL,reference TEXT NOT NULL DEFAULT '');
+  CREATE TABLE IF NOT EXISTS dist_supplier_payments(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,purchase_id INTEGER NOT NULL,account_id INTEGER NOT NULL,txn_date TEXT NOT NULL,amount_minor INTEGER NOT NULL,reference TEXT NOT NULL DEFAULT '');
   CREATE TABLE IF NOT EXISTS dist_import_batches(id TEXT PRIMARY KEY,tenant_id INTEGER NOT NULL,dataset TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PREVIEW',rows_json TEXT NOT NULL,report_json TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,committed_at TEXT);
   CREATE TABLE IF NOT EXISTS dist_opening_balances(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,kind TEXT NOT NULL,code TEXT NOT NULL,name TEXT NOT NULL,amount_minor INTEGER NOT NULL,due_date TEXT NOT NULL DEFAULT '',description TEXT NOT NULL DEFAULT '',batch_id TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS dist_period_locks(tenant_id INTEGER NOT NULL,period TEXT NOT NULL,PRIMARY KEY(tenant_id,period));
@@ -81,6 +83,14 @@ class CashAccount(BaseModel):
  code:str; name:str; kind:str=Field(pattern="^(CASH|BANK)$"); opening_balance:Decimal=Decimal("0")
 class CashMove(BaseModel):
  code:str; txn_date:str=Field(min_length=10,max_length=10); direction:str=Field(pattern="^(IN|OUT)$"); amount:Decimal=Field(gt=0); reference:str=""; memo:str=""
+class ReceiptIn(BaseModel):
+ order_id:int; cash_code:str; txn_date:str=Field(min_length=10,max_length=10); amount:Decimal=Field(gt=0); reference:str=""
+class AccountIn(BaseModel):
+ code:str=Field(min_length=1,max_length=30); name:str=Field(min_length=1,max_length=160); nature:str=Field(pattern="^(asset|liability|equity|income|expense)$"); parent_code:str=""
+class JournalLineIn(BaseModel):
+ account_code:str; debit:Decimal=Decimal("0"); credit:Decimal=Decimal("0")
+class JournalIn(BaseModel):
+ entry_date:str=Field(min_length=10,max_length=10); description:str=Field(min_length=1,max_length=240); lines:list[JournalLineIn]=Field(min_length=2,max_length=200)
 
 def create_router(db,user_dep):
  init_db(db); r=APIRouter(prefix="/api/distribution",tags=["distribution-erp"])
