@@ -167,6 +167,7 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
     monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", bootstrap)
     owner_headers, owner = register(client, "Bootstrap Owner")
     other_headers, other = register(client, "Bootstrap Other")
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", owner["user"]["email"])
 
     wrong = client.post("/api/finance/owner/claim", headers=owner_headers, json={"token": "wrong-token-that-is-long-enough-123"})
     assert wrong.status_code == 403
@@ -179,7 +180,7 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
     assert identity.json()["is_platform_owner"] is True
 
     duplicate = client.post("/api/finance/owner/claim", headers=other_headers, json={"token": bootstrap})
-    assert duplicate.status_code == 409
+    assert duplicate.status_code == 403
     denied = client.get("/api/finance/owner/overview", headers=other_headers)
     assert denied.status_code == 403
     allowed = client.get("/api/finance/owner/overview", headers=owner_headers)
