@@ -402,7 +402,7 @@ def create_router(db_factory, user_dependency):
                 if existing["status"] in ("approved", "closed", "adjusted"):
                     raise HTTPException(409, "گزارش تأییدشده قابل بازنویسی نیست؛ اصلاحیه جداگانه لازم است.")
                 c.execute("""UPDATE finance_reports SET currency=?,gross_sales=?,discounts=?,returns=?,net_sales=?,cogs=?,direct_costs=?,eligible_profit=?,share_percent=?,owner_share=?,contract_id=?,status='pending'
-                  WHERE id=?""", (next(iter(currencies)), *values, contract_id, existing["id"])
+                  WHERE id=?""", (next(iter(currencies)), *values, contract_id, existing["id"]))
             report = c.execute("SELECT * FROM finance_reports WHERE tenant_id=? AND period=?", (user["tenant_id"], period)).fetchone()
             audit(c, user, "finance.report.calculated", {"period": period, "report_id": report["id"], "eligible_profit": report["eligible_profit"]})
         return dict(report)
