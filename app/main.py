@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import FileResponse, StreamingResponse
 import csv, io, json
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, AliasChoices
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = os.getenv("LEADORA_DB", str(ROOT.parent / "data" / "leadora.db"))
@@ -382,11 +382,12 @@ class PaymentIn(BaseModel):
     method: str = Field(default="", max_length=80)
     reference: str = Field(default="", max_length=120)
 class ExpenseIn(BaseModel):
-    title: str = Field(min_length=1, max_length=180)
+    title: str = Field(min_length=1, max_length=180, validation_alias=AliasChoices("title", "description"))
     category: str = Field(default="عمومی", max_length=100)
     amount: float = Field(gt=0, le=1_000_000_000_000)
     due_date: str = Field(min_length=10, max_length=10)
-    status: str = Field(default="pending", pattern="^(pending|paid)$")
+    status: str = Field(default="pending", pattern="^(pending|paid|planned)$")
+    vendor: str = Field(default="", max_length=180)
 class OpportunityIn(BaseModel):
     title: str = Field(min_length=1, max_length=180)
     customer_id: int | None = None
@@ -594,7 +595,7 @@ def import_rows(body: ImportRowsIn, user=Depends(user_from_header)):
             elif body.dataset=="expenses":
                 x=ExpenseIn(**row)
                 if not _date_ok(x.due_date): raise ValueError("تاریخ سررسید نامعتبر است.")
-                with db() as c: c.execute("INSERT INTO expenses(tenant_id,title,category,amount,due_date,status) VALUES(?,?,?,?,?,?)",(tid,x.title.strip(),x.category.strip(),x.amount,x.due_date,x.status))
+                with db() as c: c.execute("INSERT INTO expenses(tenant_id,title,category,amount,due_date,status) VALUES(?,?,?,?,?,?)",(tid,x.title.strip(),x.category.strip(),x.amount,x.due_date,"pending" if x.status=="planned" else x.status))
             elif body.dataset=="opportunities":
                 x=OpportunityIn(**row)
                 with db() as c: c.execute("INSERT INTO opportunities(tenant_id,title,customer_id,source,stage,estimated_value,expected_close_date,last_contact_date,lost_reason) VALUES(?,?,?,?,?,?,?,?,?)",(tid,x.title.strip(),x.customer_id,x.source,x.stage,x.estimated_value,x.expected_close_date,x.last_contact_date,x.lost_reason))
