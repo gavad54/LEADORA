@@ -1472,6 +1472,12 @@ def export_business_leads(user=Depends(user_from_header)):
 # Financial participation API and responsive browser/PWA page.
 from app.participation import create_router
 app.include_router(create_router(db, user_from_header))
+from app.distribution_erp import create_router as create_distribution_router
+app.include_router(create_distribution_router(db, user_from_header))
+
+@app.get("/distribution")
+def distribution_page():
+    return FileResponse(ROOT / "static" / "distribution.html")
 
 @app.get("/finance")
 def finance_page():
