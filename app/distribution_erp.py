@@ -236,9 +236,9 @@ def create_router(db,user_dep):
  @r.get("/reports/balance-sheet")
  def balance_sheet(u=Depends(user_dep)):
   with db() as c:
-   rows=c.execute("SELECT a.nature,COALESCE(SUM(l.debit_minor-l.credit_minor),0) bal FROM dist_accounts a LEFT JOIN dist_journal_lines l ON l.tenant_id=a.tenant_id AND l.account_code=a.code WHERE a.tenant_id=? AND a.nature IN ('asset','liability','equity') GROUP BY a.nature",(tenant(u),)).fetchall()
-  vals={x["nature"]:x["bal"] for x in rows};a=vals.get("asset",0);liab=-vals.get("liability",0);eq=-vals.get("equity",0)
-  return {"assets":money(a),"liabilities":money(liab),"equity":money(eq),"balanced":a-liab-eq==0}
+   rows=c.execute("SELECT a.nature,COALESCE(SUM(l.debit_minor-l.credit_minor),0) bal FROM dist_accounts a LEFT JOIN dist_journal_lines l ON l.tenant_id=a.tenant_id AND l.account_code=a.code WHERE a.tenant_id=? AND a.nature IN ('asset','liability','equity','income','expense') GROUP BY a.nature",(tenant(u),)).fetchall()
+  vals={x["nature"]:x["bal"] for x in rows};a=vals.get("asset",0);liab=-vals.get("liability",0);eq=-vals.get("equity",0);profit=-(vals.get("income",0))-vals.get("expense",0);eq+=profit
+  return {"assets":money(a),"liabilities":money(liab),"equity_including_current_profit":money(eq),"current_profit":money(profit),"balanced":a-liab-eq==0}
  @r.post("/sales/receipt")
  def sale_receipt(b:ReceiptIn,u=Depends(user_dep)):
   t=tenant(u);a=minor(b.amount)
