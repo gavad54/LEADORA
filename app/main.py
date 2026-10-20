@@ -12,7 +12,7 @@ ENV = os.getenv("LEADORA_ENV", "development")
 if ENV == "production" and (len(SECRET) < 32 or SECRET == "development-only-change-me"):
     raise RuntimeError("Set a random LEADORA_SECRET of at least 32 characters")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-app = FastAPI(title="LEADORA MVP", version="0.3.2", description="Persian-first business operations MVP")
+app = FastAPI(title="LEADORA MVP", version="0.4.0", description="Persian-first business operations MVP")
 
 @app.middleware("http")
 async def security_headers(request, call_next):
@@ -127,7 +127,7 @@ def pwa_icon():
 @app.get("/api/health")
 def health():
     with db() as c: c.execute("SELECT 1")
-    return {"status":"ok","database":"ok","product":"LEADORA","version":"0.3.2","mode":"mvp"}
+    return {"status":"ok","database":"ok","product":"LEADORA","version":"0.4.0","mode":"mvp"}
 
 @app.post("/api/register")
 def register(body: RegisterIn):
@@ -183,6 +183,39 @@ def add_product(body: ProductIn,user=Depends(user_from_header)):
         except sqlite3.IntegrityError: raise HTTPException(409,"کد کالا تکراری است.")
     return {"id":cur.lastrowid,"message":"کالا ثبت شد."}
 
+
+
+@app.put("/api/products/{product_id}")
+def update_product(product_id: int, body: ProductIn, user=Depends(user_from_header)):
+    sku, name = body.sku.strip(), body.name.strip()
+    if not sku or not name:
+        raise HTTPException(422, "کد و نام کالا نباید خالی باشد.")
+    with db() as c:
+        try:
+            cur = c.execute(
+                "UPDATE products SET sku=?,name=?,price=?,stock=? WHERE id=? AND tenant_id=?",
+                (sku, name, body.price, body.stock, product_id, user["tenant_id"]),
+            )
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "کد کالا تکراری است.")
+        if cur.rowcount == 0:
+            raise HTTPException(404, "کالا یافت نشد.")
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                  (user["tenant_id"], "product.updated"))
+    return {"message": "اطلاعات کالا به‌روزرسانی شد."}
+
+
+@app.delete("/api/products/{product_id}")
+def delete_product(product_id: int, user=Depends(user_from_header)):
+    with db() as c:
+        cur = c.execute("DELETE FROM products WHERE id=? AND tenant_id=?",
+                        (product_id, user["tenant_id"]))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "کالا یافت نشد.")
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                  (user["tenant_id"], "product.deleted"))
+    return {"message": "کالا حذف شد."}
+
 @app.get("/api/customers")
 def customers(user=Depends(user_from_header)):
     with db() as c: rows=c.execute("SELECT id,name,phone FROM customers WHERE tenant_id=? ORDER BY id DESC",(user["tenant_id"],)).fetchall()
@@ -196,6 +229,36 @@ def add_customer(body: CustomerIn,user=Depends(user_from_header)):
         cur=c.execute("INSERT INTO customers(tenant_id,name,phone) VALUES(?,?,?)",(user["tenant_id"],body.name.strip(),body.phone.strip()))
         c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(user["tenant_id"],"customer.created"))
     return {"id":cur.lastrowid,"message":"مشتری ثبت شد."}
+
+
+
+@app.put("/api/customers/{customer_id}")
+def update_customer(customer_id: int, body: CustomerIn, user=Depends(user_from_header)):
+    name, phone = body.name.strip(), body.phone.strip()
+    if not name:
+        raise HTTPException(422, "نام مشتری نباید خالی باشد.")
+    with db() as c:
+        cur = c.execute(
+            "UPDATE customers SET name=?,phone=? WHERE id=? AND tenant_id=?",
+            (name, phone, customer_id, user["tenant_id"]),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "مشتری یافت نشد.")
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                  (user["tenant_id"], "customer.updated"))
+    return {"message": "اطلاعات مشتری به‌روزرسانی شد."}
+
+
+@app.delete("/api/customers/{customer_id}")
+def delete_customer(customer_id: int, user=Depends(user_from_header)):
+    with db() as c:
+        cur = c.execute("DELETE FROM customers WHERE id=? AND tenant_id=?",
+                        (customer_id, user["tenant_id"]))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "مشتری یافت نشد.")
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                  (user["tenant_id"], "customer.deleted"))
+    return {"message": "مشتری حذف شد."}
 
 @app.get("/api/insights")
 def insights(user=Depends(user_from_header)):
