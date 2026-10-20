@@ -191,3 +191,35 @@ def test_followup_queue_requires_consent_and_generates_draft_not_fake_send():
     assert item["status"] == "draft_ready"
     assert item["sent"] is False
     assert "draft" in item and item["draft"]
+
+
+def test_discovery_ingest_preserves_omitted_consent_and_allows_explicit_withdrawal():
+    c = TestClient(app)
+    h = _workspace(c, str(os.getpid()) + "-consent-withdrawal")
+    initial = c.post("/api/ai/discovery/ingest", headers=h, json={
+        "customer_name": "Consent Buyer", "phone": "+49 170 7654321",
+        "need": "bulk packaging", "source": "website", "consent_to_follow_up": True
+    })
+    assert initial.status_code == 200, initial.text
+    wid = initial.json()["id"]
+    assert initial.json()["consent_to_follow_up"] is True
+
+    # Omitting the field means "no new consent information", not a withdrawal.
+    omitted = c.post("/api/ai/discovery/ingest", headers=h, json={
+        "customer_name": "Consent Buyer", "phone": "+49 170 7654321",
+        "need": "bulk packaging", "source": "website"
+    })
+    assert omitted.status_code == 200, omitted.text
+    assert omitted.json()["consent_to_follow_up"] is True
+
+    # An explicit false value is a withdrawal and must stop future follow-ups.
+    withdrawn = c.post("/api/ai/discovery/ingest", headers=h, json={
+        "customer_name": "Consent Buyer", "phone": "+49 170 7654321",
+        "need": "bulk packaging", "source": "website", "consent_to_follow_up": False
+    })
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert withdrawn.json()["consent_to_follow_up"] is False
+    denied = c.post("/api/ai/followups", headers=h, json={
+        "workflow_id": wid, "due_in_minutes": 0, "channel": "email"
+    })
+    assert denied.status_code == 409
