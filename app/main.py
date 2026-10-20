@@ -37,6 +37,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id), sku TEXT NOT NULL, name TEXT NOT NULL, price REAL NOT NULL DEFAULT 0 CHECK(price>=0), stock REAL NOT NULL DEFAULT 0 CHECK(stock>=0), UNIQUE(tenant_id,sku));
         CREATE TABLE IF NOT EXISTS customers(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id), name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '');
         CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, action TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS login_attempts(attempt_key TEXT PRIMARY KEY, attempts INTEGER NOT NULL, window_start INTEGER NOT NULL);
         """)
 init_db()
 
