@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 CENT = Decimal("0.01")
-PERIOD_RE = re.compile(r"^\\d{4}-(0[1-9]|1[0-2])$")
+PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 METHODS = {"manual", "csv", "integration"}
 
 
