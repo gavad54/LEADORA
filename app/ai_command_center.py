@@ -54,6 +54,8 @@ def create_router(db,user_from_header):
   CREATE INDEX IF NOT EXISTS idx_aimsg_conversation ON ai_messages(tenant_id,conversation_id,id);
   CREATE TABLE IF NOT EXISTS ai_approvals(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,workflow_id INTEGER,action TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',requested_by TEXT NOT NULL DEFAULT 'ai',decided_by INTEGER,note TEXT NOT NULL DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP,decided_at TEXT);
   CREATE TABLE IF NOT EXISTS ai_audit_events(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,actor_type TEXT NOT NULL,actor_id INTEGER,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id INTEGER,detail_json TEXT NOT NULL DEFAULT '{}',created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS ai_agent_tasks(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,workflow_id INTEGER NOT NULL,agent_id TEXT NOT NULL,task_type TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',priority INTEGER NOT NULL DEFAULT 50,input_json TEXT NOT NULL DEFAULT '{}',output_json TEXT NOT NULL DEFAULT '{}',created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+  CREATE INDEX IF NOT EXISTS idx_ai_tasks_tenant_status ON ai_agent_tasks(tenant_id,status,priority);
   """)
  def audit(c,tid,actor,actor_id,event,entity,eid,detail):
   c.execute("INSERT INTO ai_audit_events(tenant_id,actor_type,actor_id,event_type,entity_type,entity_id,detail_json) VALUES(?,?,?,?,?,?,?)",(tid,actor,actor_id,event,entity,eid,json.dumps(detail,ensure_ascii=False)))
@@ -167,6 +169,80 @@ def create_router(db,user_from_header):
    if not conv: raise HTTPException(404,"گفت‌وگو یافت نشد.")
    messages=[dict(r) for r in c.execute("SELECT id,role,content,intent,agent_id,created_at FROM ai_messages WHERE conversation_id=? AND tenant_id=? ORDER BY id",(conversation_id,user["tenant_id"])).fetchall()]
   return {"conversation":dict(conv),"messages":messages}
+ @router.get("/api/ai/tasks")
+ def tasks(status:Optional[str]=None,user=Depends(user_from_header)):
+  allowed=("queued","completed","blocked","needs_human","failed")
+  if status and status not in allowed: raise HTTPException(422,"وضعیت وظیفه نامعتبر است.")
+  with db() as c:
+   rows=c.execute("SELECT * FROM ai_agent_tasks WHERE tenant_id=?"+(" AND status=?" if status else "")+" ORDER BY priority ASC,id DESC LIMIT 200",(user["tenant_id"],status) if status else (user["tenant_id"],)).fetchall()
+  return [{"id":r["id"],"workflow_id":r["workflow_id"],"agent_id":r["agent_id"],"task_type":r["task_type"],"status":r["status"],"priority":r["priority"],"input":json.loads(r["input_json"] or "{}"),"output":json.loads(r["output_json"] or "{}"),"created_at":r["created_at"],"updated_at":r["updated_at"]} for r in rows]
+ @router.post("/api/ai/orchestrate")
+ def orchestrate(user=Depends(user_from_header)):
+  tid=user["tenant_id"]
+  plan={"lead":("qualification","qualify",10),"qualified":("outreach","draft_contact",20),"contact_drafted":("sales_chat","discover_need",20),"need_discovered":("offer","draft_offer",25),"offer_drafted":("order_guard","request_order_confirmation",20),"order_pending_confirmation":("order_guard","await_customer_confirmation",15),"order_confirmed":("warehouse","prepare_picklist",20),"picking":("warehouse","human_pick_pack",10),"ready_to_ship":("delivery","dispatch_order",20),"in_delivery":("delivery","verify_delivery",20),"delivered":("settlement","reconcile_payment",20),"settlement_pending":("settlement","reconcile_payment",15),"settled":("retention","retention_followup",40)}
+  created=[]; ran=[]
+  with db() as c:
+   rows=c.execute("SELECT * FROM ai_workflows WHERE tenant_id=? AND status='active' ORDER BY id",(tid,)).fetchall()
+   for w in rows:
+    spec=plan.get(w["stage"])
+    if not spec: continue
+    agent,task_type,priority=spec
+    exists=c.execute("SELECT id FROM ai_agent_tasks WHERE tenant_id=? AND workflow_id=? AND task_type=? AND status IN ('queued','blocked','needs_human')",(tid,w["id"],task_type)).fetchone()
+    if exists: continue
+    cur=c.execute("INSERT INTO ai_agent_tasks(tenant_id,workflow_id,agent_id,task_type,priority,input_json) VALUES(?,?,?,?,?,?)",(tid,w["id"],agent,task_type,priority,json.dumps({"stage":w["stage"],"customer_name":w["customer_name"],"need":w["need"],"consent_to_follow_up":bool(w["consent_to_follow_up"])},ensure_ascii=False)))
+    created.append(cur.lastrowid)
+   audit(c,tid,"ai",None,"orchestrator.dispatched","tenant",tid,{"created_tasks":len(created),"active_workflows":len(rows)})
+  for task_id in created:
+   result=execute_task(task_id,tid)
+   ran.append({"task_id":task_id,**result})
+  return {"created_tasks":len(created),"processed":len(ran),"results":ran,"note":"وظایف امن به‌صورت محدود اجرا شدند؛ ارسال بیرونی، پرداخت، اعزام و عملیات فیزیکی بدون اتصال و تأیید اجرا نمی‌شوند."}
+ def execute_task(task_id,tid):
+  with db() as c:
+   t=c.execute("SELECT * FROM ai_agent_tasks WHERE id=? AND tenant_id=?",(task_id,tid)).fetchone()
+   if not t: raise HTTPException(404,"وظیفه پیدا نشد.")
+   if t["status"]!="queued": return {"status":t["status"],"message":"این وظیفه در صف اجرا نیست."}
+   w=c.execute("SELECT * FROM ai_workflows WHERE id=? AND tenant_id=?",(t["workflow_id"],tid)).fetchone()
+   if not w: raise HTTPException(404,"فرایند مرتبط پیدا نشد.")
+   kind=t["task_type"]; status="completed"; output={}; new_stage=None; next_action=w["next_action"]
+   if kind=="qualify":
+    score=75 if w["need"].strip() else 35
+    output={"lead_score":score,"reason":"نیاز ثبت شده" if score==75 else "اطلاعات نیاز ناقص است","evidence":["customer_name","need"]}
+    new_stage="qualified"; next_action="ثبت رضایت پیگیری و آماده‌سازی ارتباط" if not w["consent_to_follow_up"] else "تهیه پیش‌نویس ارتباط"
+   elif kind=="draft_contact":
+    if not w["consent_to_follow_up"]:
+     status="blocked"; output={"reason":"رضایت پیگیری ثبت نشده است"}
+    else:
+     output={"draft":"سلام، برای بررسی دقیق نیاز شما آماده‌ایم. لطفاً کالا/خدمت، مقدار و زمان تحویل موردنظر را تأیید کنید.","sent":False}
+     new_stage="contact_drafted"; next_action="تکمیل نیاز مشتری از طریق کانال مجاز"
+   elif kind=="discover_need":
+    if not w["need"].strip():
+     status="blocked"; output={"reason":"نیاز مشتری هنوز ثبت نشده است"}
+    else:
+     output={"need_summary":w["need"],"source":"workflow_record"}; new_stage="need_discovered"; next_action="اتصال کاتالوگ و قیمت معتبر برای تهیه پیشنهاد"
+   elif kind=="draft_offer":
+    status="blocked"; output={"reason":"کاتالوگ، قیمت‌نامه و موجودی معتبر به موتور پیشنهاد متصل نیستند؛ قیمت‌سازی ممنوع است"}
+   elif kind in ("request_order_confirmation","await_customer_confirmation"):
+    status="blocked"; output={"reason":"منتظر تعامل واقعی مشتری و ثبت تأیید صریح سفارش هستیم","sent":False}
+   elif kind in ("prepare_picklist","human_pick_pack"):
+    status="needs_human"; output={"reason":"برداشت، شمارش و بسته‌بندی فیزیکی باید توسط نیروی انبار انجام و ثبت شود"}
+   elif kind in ("dispatch_order","verify_delivery"):
+    status="blocked"; output={"reason":"اتصال شرکت حمل و مدرک تحویل هنوز پیکربندی نشده است"}
+   elif kind=="reconcile_payment":
+    status="blocked"; output={"reason":"برای تطبیق تسویه، فاکتور معتبر و رسید پرداخت یا اتصال درگاه/بانک لازم است"}
+   elif kind=="retention_followup":
+    if not w["consent_to_follow_up"]:
+     status="blocked"; output={"reason":"رضایت برای پیگیری بعدی ثبت نشده است"}
+    else:
+     output={"draft":"سلام، امیدواریم تجربه خوبی داشته باشید. آیا برای سفارش بعدی یا رفع نیاز جدید کمکی لازم دارید؟","sent":False}
+   c.execute("UPDATE ai_agent_tasks SET status=?,output_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",(status,json.dumps(output,ensure_ascii=False),task_id,tid))
+   if new_stage:
+    c.execute("UPDATE ai_workflows SET stage=?,next_action=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",(new_stage,next_action,w["id"],tid))
+   audit(c,tid,"ai",None,"agent.task."+status,"task",task_id,{"agent":t["agent_id"],"task_type":kind,"workflow_id":w["id"],"output":output})
+  return {"status":status,"task_type":kind,"output":output}
+ @router.post("/api/ai/tasks/{task_id}/run")
+ def run_task(task_id:int,user=Depends(user_from_header)):
+  return execute_task(task_id,user["tenant_id"])
+
  @router.get("/api/ai/health")
  def health(user=Depends(user_from_header)):
   with db() as c: c.execute("SELECT 1").fetchone()
