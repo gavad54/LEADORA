@@ -83,6 +83,8 @@ def post(c,t,dt,desc,source,source_id,lines,uid=None):
  try: date.fromisoformat(dt)
  except (ValueError,TypeError): raise HTTPException(422,"تاریخ باید YYYY-MM-DD باشد.")
  if c.execute("SELECT 1 FROM dist_period_locks WHERE tenant_id=? AND period=?",(t,dt[:7])).fetchone(): raise HTTPException(409,"دوره مالی بسته است.")
+ fy=c.execute("SELECT status FROM dist_fiscal_years WHERE tenant_id=? AND start_date<=? AND end_date>=?",(t,dt,dt)).fetchone()
+ if fy and fy["status"]=="CLOSED":raise HTTPException(409,"سال مالی بسته شده است؛ ثبت سند در این سال مجاز نیست.")
  clean=[]
  for x in lines:
   code=str(x["code"]); d=int(x.get("d",0)); cr=int(x.get("c",0))
