@@ -7,6 +7,30 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 LIMIT_BYTES=10*1024*1024
+
+def jalali_to_gregorian(jy,jm,jd):
+ jy=int(jy);jm=int(jm);jd=int(jd)
+ if jy<1200 or jy>1600 or jm<1 or jm>12 or jd<1 or jd>(31 if jm<=6 else 30 if jm<=11 else 30):
+  raise HTTPException(422,"سال یا تاریخ شمسی نامعتبر است.")
+ jy+=1595
+ days=-355668+365*jy+(jy//33)*8+((jy%33+3)//4)+jd
+ if jm<7: days+=(jm-1)*31
+ else: days+=(jm-7)*30+186
+ gy=400*(days//146097);days%=146097
+ if days>36524:
+  gy+=100*((days-1)//36524);days=(days-1)%36524
+  if days>=365: days+=1
+ gy+=4*(days//1461);days%=1461
+ if days>365:
+  gy+=(days-1)//365;days=(days-1)%365
+ gd=days+1;leap=(gy%4==0 and gy%100!=0) or gy%400==0
+ md=[31,29 if leap else 28,31,30,31,30,31,31,30,31,30,31];gm=1
+ while gm<=12 and gd>md[gm-1]:gd-=md[gm-1];gm+=1
+ return date(gy,gm,gd).isoformat()
+
+def jalali_year_range(jy):
+ return jalali_to_gregorian(jy,1,1),jalali_to_gregorian(jy+1,1,1)
+
 SCHEMAS={
  "customers":{"title":"مشتریان","required":["کد مشتری","نام مشتری"],"columns":["کد مشتری","نام مشتری","موبایل","تلفن","آدرس","مانده طلب افتتاحیه","توضیحات"]},
  "suppliers":{"title":"تأمین‌کنندگان","required":["کد تأمین‌کننده","نام تأمین‌کننده"],"columns":["کد تأمین‌کننده","نام تأمین‌کننده","موبایل","تلفن","آدرس","مانده بدهی افتتاحیه","توضیحات"]},
@@ -49,6 +73,8 @@ def init_db(db):
   CREATE TABLE IF NOT EXISTS dist_import_batches(id TEXT PRIMARY KEY,tenant_id INTEGER NOT NULL,dataset TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PREVIEW',rows_json TEXT NOT NULL,report_json TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,committed_at TEXT);
   CREATE TABLE IF NOT EXISTS dist_opening_balances(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,kind TEXT NOT NULL,code TEXT NOT NULL,name TEXT NOT NULL,amount_minor INTEGER NOT NULL,due_date TEXT NOT NULL DEFAULT '',description TEXT NOT NULL DEFAULT '',batch_id TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS dist_period_locks(tenant_id INTEGER NOT NULL,period TEXT NOT NULL,PRIMARY KEY(tenant_id,period));
+  CREATE TABLE IF NOT EXISTS dist_fiscal_years(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,jalali_year INTEGER NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'OPEN',carry_forward_done INTEGER NOT NULL DEFAULT 0,created_at TEXT DEFAULT CURRENT_TIMESTAMP,closed_at TEXT,UNIQUE(tenant_id,jalali_year));
+  CREATE TABLE IF NOT EXISTS dist_fiscal_carryovers(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,from_year_id INTEGER NOT NULL,to_year_id INTEGER NOT NULL,account_code TEXT NOT NULL,amount_minor INTEGER NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,UNIQUE(tenant_id,from_year_id,to_year_id,account_code));
   """)
   cols={x["name"] for x in c.execute("PRAGMA table_info(dist_purchases)").fetchall()}
   if "warehouse_code" not in cols: c.execute("ALTER TABLE dist_purchases ADD COLUMN warehouse_code TEXT NOT NULL DEFAULT 'DEFAULT'")
