@@ -158,3 +158,29 @@ def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(m
     assert report_next.json()["gross_sales"] == "-100.00"
     assert report_next.json()["cogs"] == "-50.00"
     assert report_next.json()["eligible_profit"] == "-50.00"
+
+
+def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
+    client = TestClient(app)
+    monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
+    bootstrap = "test-owner-bootstrap-token-0123456789-abcdef"
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", bootstrap)
+    owner_headers, owner = register(client, "Bootstrap Owner")
+    other_headers, other = register(client, "Bootstrap Other")
+
+    wrong = client.post("/api/finance/owner/claim", headers=owner_headers, json={"token": "wrong-token-that-is-long-enough-123"})
+    assert wrong.status_code == 403
+
+    claimed = client.post("/api/finance/owner/claim", headers=owner_headers, json={"token": bootstrap})
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["is_platform_owner"] is True
+    identity = client.get("/api/finance/identity", headers=owner_headers)
+    assert identity.status_code == 200
+    assert identity.json()["is_platform_owner"] is True
+
+    duplicate = client.post("/api/finance/owner/claim", headers=other_headers, json={"token": bootstrap})
+    assert duplicate.status_code == 409
+    denied = client.get("/api/finance/owner/overview", headers=other_headers)
+    assert denied.status_code == 403
+    allowed = client.get("/api/finance/owner/overview", headers=owner_headers)
+    assert allowed.status_code == 200
