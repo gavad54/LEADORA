@@ -1,7 +1,8 @@
 import os, sqlite3, secrets, hashlib, hmac, time, re
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Depends, Header
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+import csv, io, json
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -259,6 +260,62 @@ def delete_customer(customer_id: int, user=Depends(user_from_header)):
         c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
                   (user["tenant_id"], "customer.deleted"))
     return {"message": "مشتری حذف شد."}
+
+
+@app.get("/api/audit-log")
+def audit_log(limit: int = 100, user=Depends(user_from_header)):
+    limit = max(1, min(limit, 500))
+    with db() as c:
+        rows = c.execute(
+            "SELECT id,action,created_at FROM audit_log WHERE tenant_id=? ORDER BY id DESC LIMIT ?",
+            (user["tenant_id"], limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.get("/api/export/{dataset}.csv")
+def export_csv(dataset: str, user=Depends(user_from_header)):
+    queries = {
+        "products": ("SELECT sku,name,price,stock FROM products WHERE tenant_id=? ORDER BY id", ["sku", "name", "price", "stock"]),
+        "customers": ("SELECT name,phone FROM customers WHERE tenant_id=? ORDER BY id", ["name", "phone"]),
+    }
+    if dataset not in queries:
+        raise HTTPException(404, "نوع خروجی پشتیبانی نمی‌شود.")
+    query, columns = queries[dataset]
+    with db() as c:
+        rows = c.execute(query, (user["tenant_id"],)).fetchall()
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream)
+    writer.writerow(columns)
+    writer.writerows([[row[col] for col in columns] for row in rows])
+    return StreamingResponse(
+        iter(["\ufeff" + stream.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="leadora-{dataset}.csv"', "Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/backup.json")
+def export_tenant_backup(user=Depends(user_from_header)):
+    # Business-data backup only: credentials and password hashes are deliberately excluded.
+    with db() as c:
+        tenant = c.execute("SELECT id,name,industry FROM tenants WHERE id=?", (user["tenant_id"],)).fetchone()
+        products = c.execute("SELECT id,sku,name,price,stock FROM products WHERE tenant_id=? ORDER BY id", (user["tenant_id"],)).fetchall()
+        customers = c.execute("SELECT id,name,phone FROM customers WHERE tenant_id=? ORDER BY id", (user["tenant_id"],)).fetchall()
+        audit = c.execute("SELECT action,created_at FROM audit_log WHERE tenant_id=? ORDER BY id", (user["tenant_id"],)).fetchall()
+    payload = json.dumps({
+        "format": "leadora-tenant-backup-v1",
+        "tenant": dict(tenant),
+        "products": [dict(row) for row in products],
+        "customers": [dict(row) for row in customers],
+        "audit_log": [dict(row) for row in audit],
+    }, ensure_ascii=False, indent=2)
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="leadora-backup.json"', "Cache-Control": "no-store"},
+    )
+
 
 @app.get("/api/insights")
 def insights(user=Depends(user_from_header)):
