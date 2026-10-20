@@ -99,3 +99,43 @@ def test_orchestrator_runs_safe_tasks_and_blocks_missing_consent():
     draft = next(x for x in tasks if x["task_type"] == "draft_contact")
     assert draft["status"] == "blocked"
     assert "رضایت" in draft["output"]["reason"]
+
+
+def test_lead_scoring_is_explainable_and_returns_targeted_questions():
+    c = TestClient(app)
+    h = _workspace(c, str(os.getpid()) + "-lead-score")
+    wf = c.post("/api/ai/workflows", headers=h, json={
+        "customer_name": "Prospect", "phone": "", "need": "", "source": "manual",
+        "consent_to_follow_up": False
+    })
+    assert wf.status_code == 200, wf.text
+    run = c.post("/api/ai/orchestrate", headers=h)
+    assert run.status_code == 200, run.text
+    tasks = c.get("/api/ai/tasks", headers=h).json()
+    qualification = next(x for x in tasks if x["task_type"] == "qualify")
+    out = qualification["output"]
+    assert out["score_method"] == "explainable_rules_v1"
+    assert out["lead_score"] == 10
+    assert out["tier"] == "needs_enrichment"
+    assert any("چه کالا" in q for q in out["targeted_questions"])
+    assert any("رضایت" in q for q in out["targeted_questions"])
+    assert qualification["status"] == "completed"
+
+
+def test_complete_lead_gets_high_score_with_factor_breakdown():
+    c = TestClient(app)
+    h = _workspace(c, str(os.getpid()) + "-lead-score-full")
+    wf = c.post("/api/ai/workflows", headers=h, json={
+        "customer_name": "Qualified Buyer", "phone": "+49123456789",
+        "need": "Bulk order of packaging materials for next month",
+        "source": "referral", "consent_to_follow_up": True
+    })
+    assert wf.status_code == 200, wf.text
+    run = c.post("/api/ai/orchestrate", headers=h)
+    assert run.status_code == 200, run.text
+    tasks = c.get("/api/ai/tasks", headers=h).json()
+    out = next(x for x in tasks if x["task_type"] == "qualify")["output"]
+    assert out["lead_score"] == 100
+    assert out["tier"] == "hot"
+    assert len(out["factors"]) >= 5
+    assert out["targeted_questions"] == []
