@@ -223,3 +223,25 @@ def test_discovery_ingest_preserves_omitted_consent_and_allows_explicit_withdraw
         "workflow_id": wid, "due_in_minutes": 0, "channel": "email"
     })
     assert denied.status_code == 409
+
+
+def test_observability_is_authenticated_and_tenant_isolated():
+    c = TestClient(app)
+    assert c.get("/api/ai/observability").status_code == 401
+    suffix = str(os.getpid()) + "-observability"
+    a = _workspace(c, suffix + "a")
+    b = _workspace(c, suffix + "b")
+    created = c.post("/api/ai/workflows", headers=a, json={
+        "customer_name": "Observed buyer", "need": "bulk supplies",
+        "source": "manual", "consent_to_follow_up": False
+    })
+    assert created.status_code == 200, created.text
+    own = c.get("/api/ai/observability", headers=a)
+    other = c.get("/api/ai/observability", headers=b)
+    assert own.status_code == 200, own.text
+    assert other.status_code == 200, other.text
+    assert own.json()["scope"] == "tenant"
+    assert own.json()["workflows"]["total"] == 1
+    assert other.json()["workflows"]["total"] == 0
+    assert "shipping" in own.json()["integrations"]
+    assert own.json()["integrations"]["shipping"] == "not_connected"
