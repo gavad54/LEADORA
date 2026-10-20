@@ -1,5 +1,7 @@
 """Tenant-isolated AI command center and lead-to-cash workflow foundation for LEADORA."""
 import json
+import os
+import urllib.request
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -59,6 +61,32 @@ def create_router(db,user_from_header):
   """)
  def audit(c,tid,actor,actor_id,event,entity,eid,detail):
   c.execute("INSERT INTO ai_audit_events(tenant_id,actor_type,actor_id,event_type,entity_type,entity_id,detail_json) VALUES(?,?,?,?,?,?,?)",(tid,actor,actor_id,event,entity,eid,json.dumps(detail,ensure_ascii=False)))
+ def call_live_llm(message,intent,customer_name):
+  api_key=os.getenv("OPENAI_API_KEY","").strip()
+  if not api_key: return None
+  system=("You are LEADORA's Persian-first B2B sales assistant. Be concise, polite, useful and ask targeted questions. "
+          "Never invent product facts, stock, prices, delivery status, invoices, payment status, discounts or promises. "
+          "No catalog, inventory, order, courier or payment data was supplied, so ask for missing details or say that a connected system or employee must verify them. "
+          "Never claim you sent a message, created an order, dispatched goods or received money. "
+          "Respect consent; for complaints, disputes, refunds, credit or sensitive exceptions recommend human handoff. "
+          "Respond in Persian unless the customer clearly writes in another language.")
+  payload={"model":os.getenv("OPENAI_MODEL","gpt-4.1-mini"),"instructions":system,
+           "input":"Customer name: "+customer_name+"\nIntent classification: "+intent+"\nCustomer message: "+message,
+           "max_output_tokens":300}
+  request=urllib.request.Request("https://api.openai.com/v1/responses",data=json.dumps(payload).encode("utf-8"),
+          headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
+  try:
+   with urllib.request.urlopen(request,timeout=8) as response:
+    data=json.loads(response.read().decode("utf-8"))
+   parts=[]
+   for item in data.get("output",[]):
+    if item.get("type")=="message":
+     for part in item.get("content",[]):
+      if part.get("type")=="output_text" and part.get("text"): parts.append(part["text"])
+   answer="\n".join(parts).strip()
+   return answer[:5000] if answer else None
+  except Exception:
+   return None
  def classify(msg):
   m=msg.casefold()
   if any(x in m for x in ["قیمت","هزینه","چنده","تخفیف","price","cost"]): return "pricing"
@@ -94,7 +122,7 @@ def create_router(db,user_from_header):
    task_count=c.execute("SELECT COUNT(*) n FROM ai_agent_tasks WHERE tenant_id=? AND status IN ('queued','blocked','needs_human')",(tid,)).fetchone()["n"]
    stages=[dict(r) for r in c.execute("SELECT stage,COUNT(*) count FROM ai_workflows WHERE tenant_id=? AND status='active' GROUP BY stage",(tid,)).fetchall()]
    recent=[dict(r) for r in c.execute("SELECT id,customer_name,stage,status,human_required,next_action,updated_at FROM ai_workflows WHERE tenant_id=? ORDER BY id DESC LIMIT 10",(tid,)).fetchall()]
-  return {"summary":{"workflows_total":total,"workflows_active":active,"approvals_pending":pending,"open_conversations":conv,"agent_tasks_pending":task_count},"stages":[{**r,"label":LABELS.get(r["stage"],r["stage"])} for r in stages],"recent_workflows":recent,"automation_policy":{"routine_actions":"only after verified data, permissions and policy checks","human_approval_gates":GATES,"live_llm_connected":False,"external_channels_connected":False,"payment_execution_connected":False}}
+  return {"summary":{"workflows_total":total,"workflows_active":active,"approvals_pending":pending,"open_conversations":conv,"agent_tasks_pending":task_count},"stages":[{**r,"label":LABELS.get(r["stage"],r["stage"])} for r in stages],"recent_workflows":recent,"automation_policy":{"routine_actions":"only after verified data, permissions and policy checks","human_approval_gates":GATES,"live_llm_configured":bool(os.getenv("OPENAI_API_KEY","").strip()),"external_channels_connected":False,"payment_execution_connected":False}}
  @router.post("/api/ai/workflows")
  def create_workflow(body:WorkflowIn,user=Depends(user_from_header)):
   tid=user["tenant_id"]
@@ -158,11 +186,13 @@ def create_router(db,user_from_header):
     if not exists: raise HTTPException(404,"گفت‌وگو یافت نشد.")
     if body.consent_to_follow_up: c.execute("UPDATE ai_conversations SET consent_to_follow_up=1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",(cid,tid))
    c.execute("INSERT INTO ai_messages(tenant_id,conversation_id,role,content,intent,agent_id) VALUES(?,?, 'customer', ?, ?, 'sales_chat')",(tid,cid,msg,intent))
-   answer=reply(msg,intent,body.customer_name)
+   answer=call_live_llm(msg,intent,body.customer_name)
+   llm_used=bool(answer)
+   if not answer: answer=reply(msg,intent,body.customer_name)
    c.execute("INSERT INTO ai_messages(tenant_id,conversation_id,role,content,intent,agent_id) VALUES(?,?, 'assistant', ?, ?, 'sales_chat')",(tid,cid,answer,intent))
    audit(c,tid,"ai",None,"chat.responded","conversation",cid,{"intent":intent,"channel":body.channel})
    if handoff: c.execute("INSERT INTO ai_approvals(tenant_id,action,status,requested_by,note) VALUES(?,?,'pending','ai',?)",(tid,"human_handoff",f"گفت‌وگوی {cid}: ارجاع انسانی، قصد={intent}"))
-  return {"conversation_id":cid,"intent":intent,"agent":"sales_chat","reply":answer,"handoff_required":handoff,"automation":{"live_llm":False,"external_message_sent":False,"consent_to_follow_up":body.consent_to_follow_up}}
+  return {"conversation_id":cid,"intent":intent,"agent":"sales_chat","reply":answer,"handoff_required":handoff,"automation":{"live_llm":llm_used,"external_message_sent":False,"consent_to_follow_up":body.consent_to_follow_up}}
  @router.get("/api/ai/chat/{conversation_id}")
  def history(conversation_id:int,user=Depends(user_from_header)):
   with db() as c:
