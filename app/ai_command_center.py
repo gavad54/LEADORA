@@ -61,7 +61,7 @@ def create_router(db,user_from_header):
   """)
  def audit(c,tid,actor,actor_id,event,entity,eid,detail):
   c.execute("INSERT INTO ai_audit_events(tenant_id,actor_type,actor_id,event_type,entity_type,entity_id,detail_json) VALUES(?,?,?,?,?,?,?)",(tid,actor,actor_id,event,entity,eid,json.dumps(detail,ensure_ascii=False)))
- def call_live_llm(message,intent,customer_name):
+ def call_live_llm(message,intent,customer_name,history=None):
   api_key=os.getenv("OPENAI_API_KEY","").strip()
   if not api_key: return None
   system=("You are LEADORA's Persian-first B2B sales assistant. Be concise, polite, useful and ask targeted questions. "
@@ -71,7 +71,7 @@ def create_router(db,user_from_header):
           "Respect consent; for complaints, disputes, refunds, credit or sensitive exceptions recommend human handoff. "
           "Respond in Persian unless the customer clearly writes in another language.")
   payload={"model":os.getenv("OPENAI_MODEL","gpt-4.1-mini"),"instructions":system,
-           "input":"Customer name: "+customer_name+"\nIntent classification: "+intent+"\nCustomer message: "+message,
+           "input":"Customer name: "+customer_name+"\nIntent classification: "+intent+"\nRecent conversation context (oldest first):\n"+json.dumps(history or [],ensure_ascii=False)+"\nLatest customer message: "+message,
            "max_output_tokens":300}
   request=urllib.request.Request("https://api.openai.com/v1/responses",data=json.dumps(payload).encode("utf-8"),
           headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
@@ -185,8 +185,9 @@ def create_router(db,user_from_header):
     exists=c.execute("SELECT id FROM ai_conversations WHERE id=? AND tenant_id=?",(cid,tid)).fetchone()
     if not exists: raise HTTPException(404,"گفت‌وگو یافت نشد.")
     if body.consent_to_follow_up: c.execute("UPDATE ai_conversations SET consent_to_follow_up=1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",(cid,tid))
+   prior=[{"role":r["role"],"content":r["content"]} for r in c.execute("SELECT role,content FROM ai_messages WHERE tenant_id=? AND conversation_id=? ORDER BY id DESC LIMIT 8",(tid,cid)).fetchall()][::-1]
    c.execute("INSERT INTO ai_messages(tenant_id,conversation_id,role,content,intent,agent_id) VALUES(?,?, 'customer', ?, ?, 'sales_chat')",(tid,cid,msg,intent))
-   answer=call_live_llm(msg,intent,body.customer_name)
+   answer=call_live_llm(msg,intent,body.customer_name,prior)
    llm_used=bool(answer)
    if not answer: answer=reply(msg,intent,body.customer_name)
    c.execute("INSERT INTO ai_messages(tenant_id,conversation_id,role,content,intent,agent_id) VALUES(?,?, 'assistant', ?, ?, 'sales_chat')",(tid,cid,answer,intent))
@@ -236,9 +237,42 @@ def create_router(db,user_from_header):
    if not w: raise HTTPException(404,"فرایند مرتبط پیدا نشد.")
    kind=t["task_type"]; status="completed"; output={}; new_stage=None; next_action=w["next_action"]
    if kind=="qualify":
-    score=75 if w["need"].strip() else 35
-    output={"lead_score":score,"reason":"نیاز ثبت شده" if score==75 else "اطلاعات نیاز ناقص است","evidence":["customer_name","need"]}
-    new_stage="qualified"; next_action="ثبت رضایت پیگیری و آماده‌سازی ارتباط" if not w["consent_to_follow_up"] else "تهیه پیش‌نویس ارتباط"
+    # Explainable first-pass score; never infer buying intent from missing data.
+    factors=[]
+    score=0
+    if w["customer_name"].strip():
+     score+=10; factors.append({"factor":"نام مشتری","points":10,"reason":"نام ثبت شده"})
+    else:
+     factors.append({"factor":"نام مشتری","points":0,"reason":"نام تکمیل نشده"})
+    if w["need"].strip():
+     score+=35; factors.append({"factor":"نیاز مشخص","points":35,"reason":"نیاز در پرونده ثبت شده"})
+    else:
+     factors.append({"factor":"نیاز مشخص","points":0,"reason":"نیاز باید با پرسش هدفمند کشف شود"})
+    if w["phone"].strip():
+     score+=15; factors.append({"factor":"راه تماس","points":15,"reason":"شماره تماس ثبت شده"})
+    else:
+     factors.append({"factor":"راه تماس","points":0,"reason":"راه تماس ثبت نشده"})
+    if w["source"].strip() and w["source"].strip().lower() not in ("manual","unknown","نامشخص"):
+     score+=10; factors.append({"factor":"منبع سرنخ","points":10,"reason":"منبع سرنخ مشخص است"})
+    else:
+     factors.append({"factor":"منبع سرنخ","points":0,"reason":"منبع سرنخ نیازمند ثبت است"})
+    if w["consent_to_follow_up"]:
+     score+=20; factors.append({"factor":"رضایت پیگیری","points":20,"reason":"رضایت ثبت شده"})
+    else:
+     factors.append({"factor":"رضایت پیگیری","points":0,"reason":"ارتباط تبلیغاتی/پیگیری بیرونی مجاز نیست"})
+    if w["need"].strip() and len(w["need"].strip())>=25:
+     score+=10; factors.append({"factor":"جزئیات نیاز","points":10,"reason":"شرح نیاز جزئیات کافی دارد"})
+    else:
+     factors.append({"factor":"جزئیات نیاز","points":0,"reason":"مقدار، زمان یا شرایط خرید را روشن کنید"})
+    tier="hot" if score>=75 else ("warm" if score>=45 else "needs_enrichment")
+    missing=[f["factor"] for f in factors if f["points"]==0]
+    questions=[]
+    if not w["need"].strip(): questions.append("دقیقاً چه کالا یا خدمتی و برای چه کاربردی نیاز دارید؟")
+    if w["need"].strip() and len(w["need"].strip())<25: questions.append("چه مقدار، چه زمان تحویل و چه مشخصاتی مدنظر است؟")
+    if not w["phone"].strip(): questions.append("در صورت تمایل، راه تماس مناسب برای پیگیری چیست؟")
+    if not w["consent_to_follow_up"]: questions.append("آیا با پیگیری بعدی از طریق کانال انتخابی خود موافق هستید؟")
+    output={"lead_score":score,"tier":tier,"score_method":"explainable_rules_v1","factors":factors,"missing_fields":missing,"targeted_questions":questions,"reason":"امتیاز بر اساس داده‌های ثبت‌شده محاسبه شده؛ این امتیاز تضمین خرید نیست."}
+    new_stage="qualified"; next_action=("تکمیل داده‌های ناقص سرنخ: "+ "؛ ".join(questions[:2])) if questions else "تهیه پیش‌نویس ارتباط متناسب با نیاز و کانال مجاز"
    elif kind=="draft_contact":
     if not w["consent_to_follow_up"]:
      status="blocked"; output={"reason":"رضایت پیگیری ثبت نشده است"}
