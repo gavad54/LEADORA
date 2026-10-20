@@ -277,5 +277,5 @@ def create_router(db,user_from_header):
  @router.get("/api/ai/health")
  def health(user=Depends(user_from_header)):
   with db() as c: c.execute("SELECT 1").fetchone()
-  return {"status":"ok","tenant_isolated":True,"persistence":"sqlite","registered_agents":len(AGENTS),"live_llm_connected":False,"external_channels_connected":False,"payment_execution_connected":False}
+  return {"status":"ok","tenant_isolated":True,"persistence":"sqlite","registered_agents":len(AGENTS),"live_llm_configured":bool(os.getenv("OPENAI_API_KEY","").strip()),"external_channels_connected":False,"payment_execution_connected":False}
  return router
