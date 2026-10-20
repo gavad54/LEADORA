@@ -1,1 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#c7fbff"/><stop offset=".45" stop-color="#21c8ff"/><stop offset="1" stop-color="#2461ff"/></linearGradient><filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><g filter="url(#glow)" stroke="url(#g)" stroke-width="5" stroke-linejoin="round" fill="#0b2448"><path d="M54 28 105 10 72 76 49 121 84 139 159 134 227 83Q251 62 219 47L153 53 177 37 235 42Q290 59 252 99L180 155Q159 169 121 167L48 162Q12 156 22 123Z"/><path d="M68 119Q119 76 202 77" fill="none"/><path d="M191 76l15 1-10 12" fill="none"/><path d="M137 72c-14-20 4-43 20-43s33 23 19 43l-19 24z" fill="#087bcb"/><circle cx="157" cy="49" r="8" fill="#e8ffff" stroke="none"/><path d="M96 101h35l12 13h18v18H87v-18z" fill="#dffbff" stroke="#55dfff" stroke-width="3"/><path d="M131 103v12h12" fill="none" stroke="#2765a8" stroke-width="3"/><circle cx="104" cy="133" r="7" fill="#071b3b" stroke="#d8faff" stroke-width="3"/><circle cx="146" cy="133" r="7" fill="#071b3b" stroke="#d8faff" stroke-width="3"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" role="img" aria-labelledby="t d">
+<title id="t">LEADORA distribution mark</title><desc id="d">Glass-blue location pin, delivery truck and forward motion inside a crystalline L.</desc>
+<defs>
+ <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#efffff"/><stop offset=".18" stop-color="#69eaff"/><stop offset=".48" stop-color="#119cf5"/><stop offset=".75" stop-color="#175bda"/><stop offset="1" stop-color="#74f4ff"/></linearGradient>
+ <linearGradient id="face" x1="0" y1="0" x2="0.9" y2="1"><stop stop-color="#123f7c" stop-opacity=".92"/><stop offset=".52" stop-color="#071b3b" stop-opacity=".96"/><stop offset="1" stop-color="#0a64a7" stop-opacity=".9"/></linearGradient>
+ <filter id="shine" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<ellipse cx="157" cy="158" rx="112" ry="8" fill="#19baff" opacity=".22"/>
+<g filter="url(#shine)" stroke="url(#glass)" stroke-width="3.5" stroke-linejoin="round">
+ <path d="M83 22 137 8 91 95 66 128 93 143 163 140 228 92Q249 75 226 60L166 62 189 45 240 50Q277 66 249 99L183 151Q164 164 126 162L59 158Q24 154 35 124Z" fill="url(#face)"/>
+ <path d="M83 22 105 29 68 116 45 126 66 128 91 95 137 8Z" fill="#20baff" fill-opacity=".48" stroke="#b7f8ff" stroke-width="1.6"/>
+ <path d="M91 95 137 8 125 52 99 103 66 128" fill="#65e7ff" fill-opacity=".28" stroke="#8ef4ff" stroke-width="1.2"/>
+ <path d="M66 128 93 143 163 140 183 151Q164 164 126 162L59 158Q24 154 35 124Z" fill="#1689ef" fill-opacity=".32"/>
+ <path d="M79 121Q130 82 208 83" fill="none" stroke="#2ddaff" stroke-width="4"/>
+ <path d="M198 75 214 83 201 94" fill="none" stroke="#9df8ff" stroke-width="3"/>
+ <path d="M152 70C135 48 151 25 169 25S203 49 185 72L169 91Z" fill="url(#glass)"/>
+ <circle cx="169" cy="49" r="8.5" fill="#062448" stroke="#c9fbff" stroke-width="3"/>
+ <path d="M91 111h39l13 13h22v17H83v-17z" fill="#dffaff" stroke="#68eaff" stroke-width="2.6"/>
+ <path d="M130 113v12h13" fill="none" stroke="#2b6ca5" stroke-width="2.5"/>
+ <path d="M84 120h10M78 127h10M72 134h10" stroke="#5de8ff" stroke-width="2.4" stroke-linecap="round"/>
+ <circle cx="101" cy="141" r="7" fill="#071b36" stroke="#d9fbff" stroke-width="3"/>
+ <circle cx="145" cy="141" r="7" fill="#071b36" stroke="#d9fbff" stroke-width="3"/>
+</g></svg>
