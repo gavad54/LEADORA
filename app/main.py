@@ -905,15 +905,18 @@ def _prospect_category(tags):
 
 def _overpass_query(lat, lon, radius, category):
     filters = {
-      "shop": '["shop"]', "office": '["office"]',
-      "food": '["amenity"~"restaurant|cafe|fast_food|bar|pub"]',
-      "health": '["amenity"~"doctors|clinic|dentist|pharmacy|hospital|veterinary"]',
-      "service": '["craft"]', "tourism": '["tourism"]', "craft": '["craft"]',
-      "all": '["name"]["(shop|office|amenity|craft|tourism)"]'
+      "shop": ['["shop"]'], "office": ['["office"]'],
+      "food": ['["amenity"~"restaurant|cafe|fast_food|bar|pub"]'],
+      "health": ['["amenity"~"doctors|clinic|dentist|pharmacy|hospital|veterinary"]'],
+      "service": ['["craft"]'], "tourism": ['["tourism"]'], "craft": ['["craft"]'],
+      "all": ['["shop"]','["office"]','["craft"]','["tourism"]','["amenity"~"restaurant|cafe|fast_food|bar|pub|doctors|clinic|dentist|pharmacy|hospital|veterinary|bank|car_repair|fuel|post_office|school|university"]']
     }
-    f=filters[category]
-    # Keep query bounded and only request public business/place features with coordinates and useful tags.
-    return f'[out:json][timeout:20];(node{f}(around:{radius},{lat},{lon});way{f}(around:{radius},{lat},{lon});relation{f}(around:{radius},{lat},{lon}););out center tags {int(500)};'
+    statements = []
+    for f in filters[category]:
+        statements.extend([f"node{f}(around:{radius},{lat},{lon});",
+                           f"way{f}(around:{radius},{lat},{lon});",
+                           f"relation{f}(around:{radius},{lat},{lon});"])
+    return "[out:json][timeout:20];(" + "".join(statements) + ");out center tags;"
 
 def _tag_text(tags, *keys):
     return next((str(tags.get(k,"")).strip() for k in keys if str(tags.get(k,"")).strip()), "")
