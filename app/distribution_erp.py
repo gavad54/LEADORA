@@ -265,6 +265,16 @@ def create_router(db,user_dep):
     if not any(v not in (None,"") for v in row.values()):continue
     for key in SCHEMAS[dataset]["required"]:
      if row.get(key) in (None,""):errors.append({"row":n,"field":key,"error":"مقدار ضروری خالی است."})
+    fields={"items":["قیمت خرید","قیمت فروش","موجودی اولیه","حداقل موجودی"],"banks":["مانده افتتاحیه"],"cash":["مانده افتتاحیه"],"receivables":["مبلغ طلب"],"payables":["مبلغ بدهی"],"opening_finance":["بدهکار افتتاحیه","بستانکار افتتاحیه"],"customers":["مانده طلب افتتاحیه"],"suppliers":["مانده بدهی افتتاحیه"]}.get(dataset,[])
+    for field in fields:
+     try:
+      if field in ("موجودی اولیه","حداقل موجودی"):
+       if float(row.get(field) or 0)<0:raise ValueError()
+      elif minor(row.get(field,0),field)<0:raise ValueError()
+     except (ValueError,TypeError,HTTPException):errors.append({"row":n,"field":field,"error":"مقدار باید عددی و نامنفی باشد."})
+    if dataset=="opening_finance":
+     d=minor(row.get("بدهکار افتتاحیه",0));cr=minor(row.get("بستانکار افتتاحیه",0))
+     if d and cr:errors.append({"row":n,"field":"بدهکار/بستانکار","error":"در یک ردیف فقط یکی از بدهکار یا بستانکار مجاز است."})
     rows.append(row)
    w.close()
    if dataset=="opening_finance" and not errors:
@@ -290,9 +300,13 @@ def create_router(db,user_dep):
      if ds=="customers":
       code=str(x["کد مشتری"]).strip();name=str(x["نام مشتری"]).strip();phone=str(x.get("موبایل") or x.get("تلفن") or "")
       cid=c.execute("INSERT INTO customers(tenant_id,name,phone) VALUES(?,?,?)",(t,name,phone)).lastrowid;c.execute("INSERT INTO dist_customer_codes(tenant_id,customer_id,code) VALUES(?,?,?)",(t,cid,code))
-      opening+=minor(x.get("مانده طلب افتتاحیه",0))
+      bal=minor(x.get("مانده طلب افتتاحیه",0));opening+=bal
+      if bal:c.execute("INSERT INTO dist_opening_balances(tenant_id,kind,code,name,amount_minor,batch_id) VALUES(?,?,?,?,?,?)",(t,"CUSTOMER",code,name,bal,bid))
      elif ds=="suppliers":
-      c.execute("INSERT INTO dist_suppliers(tenant_id,code,name,phone,address) VALUES(?,?,?,?,?)",(t,str(x["کد تأمین‌کننده"]).strip(),str(x["نام تأمین‌کننده"]).strip(),str(x.get("موبایل") or x.get("تلفن") or ""),str(x.get("آدرس") or "")));opening+=minor(x.get("مانده بدهی افتتاحیه",0))
+      code=str(x["کد تأمین‌کننده"]).strip();name=str(x["نام تأمین‌کننده"]).strip()
+      c.execute("INSERT INTO dist_suppliers(tenant_id,code,name,phone,address) VALUES(?,?,?,?,?)",(t,code,name,str(x.get("موبایل") or x.get("تلفن") or ""),str(x.get("آدرس") or "")))
+      bal=minor(x.get("مانده بدهی افتتاحیه",0));opening+=bal
+      if bal:c.execute("INSERT INTO dist_opening_balances(tenant_id,kind,code,name,amount_minor,batch_id) VALUES(?,?,?,?,?,?)",(t,"SUPPLIER",code,name,bal,bid))
      elif ds=="warehouses":c.execute("INSERT INTO dist_warehouses(tenant_id,code,name,location) VALUES(?,?,?,?)",(t,str(x["کد انبار"]).strip(),str(x["نام انبار"]).strip(),str(x.get("نام محل") or x.get("محل بالادست") or "")))
      elif ds=="items":
       sku=str(x["کد کالا"]).strip();price=minor(x.get("قیمت فروش",0));cost=minor(x.get("قیمت خرید",0));qty=float(x.get("موجودی اولیه") or 0)
@@ -310,6 +324,7 @@ def create_router(db,user_dep):
       kind="CUSTOMER" if ds=="receivables" else "SUPPLIER"
       if ds=="receivables" and not c.execute("SELECT 1 FROM dist_customer_codes WHERE tenant_id=? AND code=?",(t,code)).fetchone():raise ValueError(f"کد مشتری {code} ثبت نشده است.")
       if ds=="payables" and not c.execute("SELECT 1 FROM dist_suppliers WHERE tenant_id=? AND code=?",(t,code)).fetchone():raise ValueError(f"کد تأمین‌کننده {code} ثبت نشده است.")
+      if c.execute("SELECT 1 FROM dist_opening_balances WHERE tenant_id=? AND kind=? AND code=?",(t,kind,code)).fetchone():raise ValueError(f"مانده افتتاحیه برای {code} قبلاً وارد شده است؛ از واردسازی تکراری خودداری کنید.")
       c.execute("INSERT INTO dist_opening_balances(tenant_id,kind,code,name,amount_minor,due_date,description,batch_id) VALUES(?,?,?,?,?,?,?,?)",(t,kind,code,name,a,due,str(x.get("شرح") or ""),bid));opening+=a
      elif ds=="opening_finance":
       code=str(x["کد حساب"]).strip();name=str(x["نام حساب"]).strip();d=minor(x.get("بدهکار افتتاحیه"));cr=minor(x.get("بستانکار افتتاحیه"))
