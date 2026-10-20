@@ -11,7 +11,7 @@ services:
       LEADORA_SECRET: ${LEADORA_SECRET:?Set LEADORA_SECRET in .env before starting}
       LEADORA_DB: /data/leadora.db
       LEADORA_BACKUP_DIR: /data/backups
-      LEADORA_WORKER_ENABLED: ${LEADORA_WORKER_ENABLED:-1}
+      LEADORA_WORKER_ENABLED: "0"
       LEADORA_WORKER_POLL_SECONDS: ${LEADORA_WORKER_POLL_SECONDS:-15}
       LEADORA_SOURCE_MIN_INTERVAL_SECONDS: ${LEADORA_SOURCE_MIN_INTERVAL_SECONDS:-900}
     volumes:
@@ -22,5 +22,36 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  leadora-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.worker"]
+    user: "10001:10001"
+    restart: unless-stopped
+    depends_on:
+      leadora:
+        condition: service_healthy
+    environment:
+      LEADORA_ENV: production
+      LEADORA_SECRET: ${LEADORA_SECRET:?Set LEADORA_SECRET in .env before starting}
+      LEADORA_DB: /data/leadora.db
+      LEADORA_BACKUP_DIR: /data/backups
+      LEADORA_WORKER_POLL_SECONDS: ${LEADORA_WORKER_POLL_SECONDS:-15}
+      LEADORA_SOURCE_MIN_INTERVAL_SECONDS: ${LEADORA_SOURCE_MIN_INTERVAL_SECONDS:-900}
+    volumes:
+      - leadora_data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sqlite3,time; c=sqlite3.connect('/data/leadora.db',timeout=5); r=c.execute('SELECT heartbeat_at FROM prospecting_worker_lease WHERE id=1').fetchone(); raise SystemExit(0 if r and r[0] and time.time()-r[0] < 90 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
 volumes:
   leadora_data:
