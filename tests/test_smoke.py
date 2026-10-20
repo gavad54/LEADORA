@@ -31,3 +31,36 @@ def test_pwa_assets_are_served():
     assert "serviceWorker" not in worker.text
     assert icon.status_code == 200
     assert "<svg" in icon.text
+
+
+def test_tenant_isolation_for_products_and_customers():
+    c = TestClient(app)
+    suffix = str(os.getpid())
+    first = c.post("/api/register", json={
+        "company_name": "Isolation A " + suffix,
+        "industry": "retail",
+        "email": "isolation-a-" + suffix + "@example.com",
+        "password": "secure-test-password-A",
+    })
+    second = c.post("/api/register", json={
+        "company_name": "Isolation B " + suffix,
+        "industry": "retail",
+        "email": "isolation-b-" + suffix + "@example.com",
+        "password": "secure-test-password-B",
+    })
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    headers_a = {"Authorization": "Bearer " + first.json()["token"]}
+    headers_b = {"Authorization": "Bearer " + second.json()["token"]}
+
+    assert c.post("/api/products", headers=headers_a, json={
+        "sku": "PRIVATE-" + suffix, "name": "Private product", "price": 10, "stock": 3,
+    }).status_code == 200
+    assert c.post("/api/customers", headers=headers_a, json={
+        "name": "Private customer", "phone": "000",
+    }).status_code == 200
+
+    assert c.get("/api/products", headers=headers_a).json()
+    assert c.get("/api/customers", headers=headers_a).json()
+    assert c.get("/api/products", headers=headers_b).json() == []
+    assert c.get("/api/customers", headers=headers_b).json() == []
