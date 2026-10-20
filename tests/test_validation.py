@@ -54,3 +54,44 @@ def test_login_handles_duplicate_company_and_email_across_tenants():
     })
     assert response.status_code == 200, response.text
     assert response.json().get("token")
+
+
+
+def test_login_throttles_repeated_failures():
+    import os
+    suffix = str(os.getpid())
+    company = "Throttle Test " + suffix
+    email = "throttle-" + suffix + "@example.com"
+    registration = client.post("/api/register", json={
+        "company_name": company,
+        "industry": "retail",
+        "email": email,
+        "password": "correct-secure-password",
+    })
+    assert registration.status_code == 200, registration.text
+    payload = {"company_name": company, "email": email, "password": "wrong-password"}
+    for _ in range(5):
+        response = client.post("/api/login", json=payload)
+        assert response.status_code == 401, response.text
+    blocked = client.post("/api/login", json=payload)
+    assert blocked.status_code == 429
+    assert "۱۵ دقیقه" in blocked.text
+
+
+def test_blank_trimmed_product_and_customer_names_are_rejected():
+    import os
+    suffix = str(os.getpid())
+    registration = client.post("/api/register", json={
+        "company_name": "Blank Field Test " + suffix,
+        "industry": "retail",
+        "email": "blank-fields-" + suffix + "@example.com",
+        "password": "correct-secure-password",
+    })
+    assert registration.status_code == 200, registration.text
+    headers = {"Authorization": "Bearer " + registration.json()["token"]}
+    product = client.post("/api/products", headers=headers, json={
+        "sku": "   ", "name": "Valid name", "price": 0, "stock": 0,
+    })
+    customer = client.post("/api/customers", headers=headers, json={"name": "   ", "phone": ""})
+    assert product.status_code == 422
+    assert customer.status_code == 422
