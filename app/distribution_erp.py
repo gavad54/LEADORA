@@ -202,6 +202,59 @@ def create_router(db,user_dep):
     c.execute("INSERT INTO dist_stock_moves(tenant_id,product_id,warehouse_code,quantity,cost_minor,kind,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",(t,x["product_id"],o["warehouse_code"],x["quantity"],x["cost_minor"],"PURCHASE_IN",o["order_no"],u.get("id")))
    c.execute("UPDATE dist_purchases SET status='RECEIVED' WHERE tenant_id=? AND id=?",(t,oid));audit(c,t,"distribution.purchase.received:"+o["order_no"])
   return {"status":"RECEIVED","inventory_value":money(total)}
+ @r.post("/accounts")
+ def add_account(b:AccountIn,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   if b.parent_code and not c.execute("SELECT 1 FROM dist_accounts WHERE tenant_id=? AND code=?",(t,b.parent_code)).fetchone():raise HTTPException(422,"حساب والد یافت نشد.")
+   try:c.execute("INSERT INTO dist_accounts(tenant_id,code,name,nature,parent_code) VALUES(?,?,?,?,?)",(t,b.code.strip(),b.name.strip(),b.nature,b.parent_code))
+   except sqlite3.IntegrityError:raise HTTPException(409,"کد حساب تکراری است.")
+   audit(c,t,"distribution.account.created:"+b.code)
+  return {"status":"created","code":b.code}
+ @r.post("/journals")
+ def manual_journal(b:JournalIn,u=Depends(user_dep)):
+  t=tenant(u);lines=[]
+  for x in b.lines:lines.append({"code":x.account_code,"d":minor(x.debit),"c":minor(x.credit)})
+  with db() as c:
+   no=post(c,t,b.entry_date,b.description,"MANUAL",None,lines,u.get("id"));audit(c,t,"distribution.journal.posted:"+no)
+  return {"status":"POSTED","entry_no":no}
+ @r.get("/journals")
+ def journal_list(limit:int=Query(100,ge=1,le=1000),u=Depends(user_dep)):
+  with db() as c:
+   rows=c.execute("SELECT j.id,j.entry_no,j.entry_date,j.description,j.source_type,COALESCE(SUM(l.debit_minor),0) d,COALESCE(SUM(l.credit_minor),0) cr FROM dist_journals j LEFT JOIN dist_journal_lines l ON l.journal_id=j.id AND l.tenant_id=j.tenant_id WHERE j.tenant_id=? GROUP BY j.id ORDER BY j.id DESC LIMIT ?",(tenant(u),limit)).fetchall()
+  return [{"id":x["id"],"entry_no":x["entry_no"],"entry_date":x["entry_date"],"description":x["description"],"source_type":x["source_type"],"debit":money(x["d"]),"credit":money(x["cr"])} for x in rows]
+ @r.get("/reports/ledger/{code}")
+ def ledger(code:str,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   if not c.execute("SELECT 1 FROM dist_accounts WHERE tenant_id=? AND code=?",(t,code)).fetchone():raise HTTPException(404,"حساب یافت نشد.")
+   rows=c.execute("SELECT j.entry_no,j.entry_date,j.description,l.debit_minor,l.credit_minor FROM dist_journal_lines l JOIN dist_journals j ON j.id=l.journal_id AND j.tenant_id=l.tenant_id WHERE l.tenant_id=? AND l.account_code=? ORDER BY j.entry_date,j.id,l.id",(t,code)).fetchall()
+  balance=0;items=[]
+  for x in rows:
+   balance+=x["debit_minor"]-x["credit_minor"];items.append({"entry_no":x["entry_no"],"date":x["entry_date"],"description":x["description"],"debit":money(x["debit_minor"]),"credit":money(x["credit_minor"]),"balance":money(balance)})
+  return {"account_code":code,"items":items,"balance":money(balance)}
+ @r.get("/reports/balance-sheet")
+ def balance_sheet(u=Depends(user_dep)):
+  with db() as c:
+   rows=c.execute("SELECT a.nature,COALESCE(SUM(l.debit_minor-l.credit_minor),0) bal FROM dist_accounts a LEFT JOIN dist_journal_lines l ON l.tenant_id=a.tenant_id AND l.account_code=a.code WHERE a.tenant_id=? AND a.nature IN ('asset','liability','equity') GROUP BY a.nature",(tenant(u),)).fetchall()
+  vals={x["nature"]:x["bal"] for x in rows};a=vals.get("asset",0);liab=-vals.get("liability",0);eq=-vals.get("equity",0)
+  return {"assets":money(a),"liabilities":money(liab),"equity":money(eq),"balanced":a-liab-eq==0}
+ @r.post("/sales/receipt")
+ def sale_receipt(b:ReceiptIn,u=Depends(user_dep)):
+  t=tenant(u);a=minor(b.amount)
+  with db() as c:
+   o=c.execute("SELECT * FROM dist_sales WHERE tenant_id=? AND id=?",(t,b.order_id)).fetchone()
+   if not o or o["status"] not in ("POSTED","DELIVERED"):raise HTTPException(404,"فاکتور نهایی‌شده یافت نشد.")
+   acc=c.execute("SELECT * FROM dist_cash_accounts WHERE tenant_id=? AND code=?",(t,b.cash_code)).fetchone()
+   if not acc:raise HTTPException(404,"حساب صندوق/بانک یافت نشد.")
+   received=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_customer_receipts WHERE tenant_id=? AND order_id=?",(t,b.order_id)).fetchone()[0]
+   if a>o["total_minor"]-received:raise HTTPException(409,"دریافت از مانده فاکتور بیشتر است.")
+   try:date.fromisoformat(b.txn_date)
+   except ValueError:raise HTTPException(422,"تاریخ دریافت نامعتبر است.")
+   c.execute("INSERT INTO dist_customer_receipts(tenant_id,order_id,account_id,txn_date,amount_minor,reference) VALUES(?,?,?,?,?,?)",(t,b.order_id,acc["id"],b.txn_date,a,b.reference))
+   c.execute("INSERT INTO dist_cash_moves(tenant_id,account_id,txn_date,direction,amount_minor,reference,memo) VALUES(?,?,?,?,?,?,?)",(t,acc["id"],b.txn_date,"IN",a,b.reference,"وصول فاکتور "+o["order_no"]))
+   post(c,t,b.txn_date,"وصول فاکتور "+o["order_no"],"RECEIPT",b.order_id,[{"code":"1000","d":a},{"code":"1100","c":a}],u.get("id"));audit(c,t,"distribution.receipt:"+o["order_no"])
+  return {"status":"POSTED","received":money(a),"remaining":money(o["total_minor"]-received-a)}
  @r.get("/reports/trial-balance")
  def trial(u=Depends(user_dep)):
   with db() as c:
