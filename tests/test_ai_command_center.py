@@ -139,3 +139,55 @@ def test_complete_lead_gets_high_score_with_factor_breakdown():
     assert out["tier"] == "hot"
     assert len(out["factors"]) >= 5
     assert out["targeted_questions"] == []
+
+def test_discovery_ingest_deduplicates_same_phone_within_tenant():
+    c = TestClient(app)
+    h = _workspace(c, str(os.getpid()) + "-discovery-dedupe")
+    payload = {
+        "customer_name": "Buyer One", "phone": "+49 170 1234567",
+        "need": "bulk packaging", "source": "website", "consent_to_follow_up": True
+    }
+    first = c.post("/api/ai/discovery/ingest", headers=h, json=payload)
+    assert first.status_code == 200, first.text
+    second = c.post("/api/ai/discovery/ingest", headers=h, json={
+        **payload, "customer_name": "Buyer One Updated", "need": "bulk packaging for next month"
+    })
+    assert second.status_code == 200, second.text
+    assert first.json()["id"] == second.json()["id"]
+    assert second.json()["created"] is False
+    assert second.json()["duplicate_detected"] is True
+    workflows = c.get("/api/ai/workflows", headers=h).json()
+    assert len(workflows) == 1
+    assert workflows[0]["need"] == "bulk packaging for next month"
+
+
+def test_followup_queue_requires_consent_and_generates_draft_not_fake_send():
+    c = TestClient(app)
+    h = _workspace(c, str(os.getpid()) + "-followup")
+    wf = c.post("/api/ai/workflows", headers=h, json={
+        "customer_name": "Consent Buyer", "phone": "+4912345", "need": "packaging",
+        "source": "website", "consent_to_follow_up": False
+    })
+    wid = wf.json()["id"]
+    denied = c.post("/api/ai/followups", headers=h, json={
+        "workflow_id": wid, "due_in_minutes": 0, "channel": "email"
+    })
+    assert denied.status_code == 409
+    c.post(f"/api/ai/workflows/{wid}/advance", headers=h, json={
+        "action": "qualify", "approved": False, "note": ""
+    })
+    # Consent is captured on the workflow through the discovery ingestion contract.
+    c.post("/api/ai/discovery/ingest", headers=h, json={
+        "customer_name": "Consent Buyer", "phone": "+4912345", "need": "packaging",
+        "source": "website", "consent_to_follow_up": True
+    })
+    queued = c.post("/api/ai/followups", headers=h, json={
+        "workflow_id": wid, "due_in_minutes": 0, "channel": "email"
+    })
+    assert queued.status_code == 200, queued.text
+    run = c.post("/api/ai/followups/run", headers=h)
+    assert run.status_code == 200, run.text
+    item = c.get("/api/ai/followups", headers=h).json()[0]
+    assert item["status"] == "draft_ready"
+    assert item["sent"] is False
+    assert "draft" in item and item["draft"]
