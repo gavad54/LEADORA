@@ -17,7 +17,7 @@ Security reports for the LEADORA MVP repository are welcome. Do not publish expl
 4. Run a penetration test and privacy/legal review.
 
 ## Financial participation module
-- Owner-level routes are restricted to emails explicitly listed in the `LEADORA_OWNER_EMAILS` environment variable.
+- Owner-level routes are restricted to exact authenticated user IDs explicitly listed in the `LEADORA_OWNER_USER_IDS` environment variable. Email-only allowlisting is intentionally not used because the current registration flow does not verify email ownership.
 - Configure that allowlist as a protected deployment variable; do not commit real owner emails, credentials, or API tokens.
 - The financial participation module is new functionality and has not received an independent security audit. Review authorization, tenant isolation, backup/restore, legal basis, retention, and financial correctness before using it for real settlements.
 - External integrations are not live until a provider-specific authorized API is configured and tested.
