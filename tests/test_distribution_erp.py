@@ -248,3 +248,50 @@ def test_dispatch_collection_remittance_and_check_lifecycle(tmp_path):
     other = client(db, 2)
     assert other.get(f"/api/distribution/dispatch/manifests/{mid}/settlement").status_code == 404
     assert other.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/handoff-check").status_code == 404
+
+
+def test_sales_return_approval_restores_stock_and_reverses_receivable(tmp_path):
+    db = factory(tmp_path / "returns.sqlite")
+    c = client(db, 1)
+    created = c.post("/api/distribution/sales", json={
+        "order_no": "SO-RETURN", "customer_id": 1, "order_date": "2026-10-20",
+        "lines": [{"product_id": 1, "quantity": 2, "unit_price": "10.00"}],
+    })
+    assert created.status_code == 200, created.text
+    order_id = created.json()["id"]
+    assert c.post(f"/api/distribution/sales/{order_id}/post").status_code == 200
+    with db() as conn:
+        assert conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0] == 18
+    draft = c.post("/api/distribution/returns", json={
+        "order_id": order_id, "return_no": "RET-1", "return_date": "2026-10-21",
+        "reason": "damaged packaging", "lines": [{"product_id": 1, "quantity": "1"}],
+    })
+    assert draft.status_code == 200, draft.text
+    assert draft.json()["status"] == "DRAFT"
+    with db() as conn:
+        assert conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0] == 18
+    approved = c.post(f"/api/distribution/returns/{draft.json()['id']}/approve")
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["revenue_reversed"] == "10.00"
+    with db() as conn:
+        assert conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0] == 19
+        assert conn.execute("SELECT COUNT(*) FROM dist_stock_moves WHERE tenant_id=1 AND kind='RETURN_IN'").fetchone()[0] == 1
+    assert c.get("/api/distribution/reports/receivables").json()["total_outstanding"] == "10.00"
+    assert c.get("/api/distribution/reports/trial-balance").json()["balanced"] is True
+    assert c.post(f"/api/distribution/returns/{draft.json()['id']}/approve").status_code == 409
+
+
+def test_sales_return_cannot_exceed_sold_quantity_or_cross_tenant(tmp_path):
+    db = factory(tmp_path / "returns-tenant.sqlite")
+    c = client(db, 1)
+    order_id = _posted_invoice(c, "SO-RETURN-LIMIT")
+    invalid = c.post("/api/distribution/returns", json={
+        "order_id": order_id, "return_no": "RET-OVER", "return_date": "2026-10-21",
+        "lines": [{"product_id": 1, "quantity": "2"}],
+    })
+    assert invalid.status_code == 409
+    other = client(db, 2)
+    assert other.post("/api/distribution/returns", json={
+        "order_id": order_id, "return_no": "RET-CROSS", "return_date": "2026-10-21",
+        "lines": [{"product_id": 1, "quantity": "1"}],
+    }).status_code == 404
