@@ -619,6 +619,61 @@ def list_campaigns(user=Depends(user_from_header)):
     with db() as c: rows=c.execute("SELECT id,name,channel,spend,leads,conversions,revenue,start_date,end_date FROM campaigns WHERE tenant_id=? ORDER BY id DESC",(user["tenant_id"],)).fetchall()
     return [dict(x) for x in rows]
 
+@app.get("/api/operations/report")
+def operations_report(user=Depends(user_from_header)):
+    tid = user["tenant_id"]
+    with db() as c:
+        def table_exists(name):
+            return bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
+        report = {
+            "tenant_id": tid,
+            "distribution": {"sales_total": "0.00", "approved_returns": "0.00", "receipts": "0.00", "receivables_estimate": "0.00", "stock_units": 0, "stock_value_estimate": "0.00", "open_dispatch_manifests": 0},
+            "accounting": {"balanced": None, "posted_journals": 0},
+            "payroll": {"latest_period": None, "latest_status": None, "latest_total": "0.00"},
+            "marketing": {"campaign_count": 0, "spend": 0, "revenue": 0, "roi": None},
+            "ai": {"pending_actions": 0},
+            "limitations": ["گزارش قواعدمحور است؛ مانده واقعی بانک، انتقال وجه یا داده بیرونی زنده را تأیید نمی‌کند."]
+        }
+        if table_exists("dist_sales"):
+            sales = c.execute("SELECT COALESCE(SUM(total_minor),0) total FROM dist_sales WHERE tenant_id=? AND status IN ('POSTED','DELIVERED')", (tid,)).fetchone()["total"]
+            report["distribution"]["sales_total"] = f"{sales/100:.2f}"
+            receipts = c.execute("SELECT COALESCE(SUM(amount_minor),0) total FROM dist_customer_receipts WHERE tenant_id=?", (tid,)).fetchone()["total"] if table_exists("dist_customer_receipts") else 0
+            returns = c.execute("""SELECT COALESCE(SUM(l.revenue_minor),0) total FROM dist_sales_returns r
+                JOIN dist_sales_return_lines l ON l.return_id=r.id AND l.tenant_id=r.tenant_id
+                WHERE r.tenant_id=? AND r.status='APPROVED'""", (tid,)).fetchone()["total"] if table_exists("dist_sales_returns") and table_exists("dist_sales_return_lines") else 0
+            report["distribution"]["approved_returns"] = f"{returns/100:.2f}"
+            report["distribution"]["receipts"] = f"{receipts/100:.2f}"
+            report["distribution"]["receivables_estimate"] = f"{(sales-returns-receipts)/100:.2f}"
+        if table_exists("products"):
+            stock = c.execute("SELECT COALESCE(SUM(stock),0) units FROM products WHERE tenant_id=?", (tid,)).fetchone()["units"]
+            report["distribution"]["stock_units"] = round(float(stock or 0), 3)
+            if table_exists("dist_item_data"):
+                value = c.execute("""SELECT COALESCE(SUM(p.stock*COALESCE(d.cost_minor,0)),0) value FROM products p
+                    LEFT JOIN dist_item_data d ON d.tenant_id=p.tenant_id AND d.product_id=p.id WHERE p.tenant_id=?""", (tid,)).fetchone()["value"]
+                report["distribution"]["stock_value_estimate"] = f"{float(value or 0)/100:.2f}"
+        if table_exists("dist_dispatch_manifests"):
+            n = c.execute("SELECT COUNT(*) FROM dist_dispatch_manifests WHERE tenant_id=? AND status='OPEN'", (tid,)).fetchone()[0]
+            report["distribution"]["open_dispatch_manifests"] = n
+        if table_exists("dist_journals") and table_exists("dist_journal_lines"):
+            j = c.execute("SELECT COUNT(*) FROM dist_journals WHERE tenant_id=? AND status='POSTED'", (tid,)).fetchone()[0]
+            sums = c.execute("""SELECT COALESCE(SUM(l.debit_minor),0) debit,COALESCE(SUM(l.credit_minor),0) credit
+                FROM dist_journal_lines l JOIN dist_journals j ON j.id=l.journal_id AND j.tenant_id=l.tenant_id
+                WHERE l.tenant_id=? AND j.status='POSTED'""", (tid,)).fetchone()
+            report["accounting"] = {"balanced": sums["debit"] == sums["credit"], "posted_journals": j}
+        if table_exists("payroll_runs") and table_exists("payroll_lines"):
+            run = c.execute("""SELECT r.period,r.status,COALESCE(SUM(l.total_minor),0) total FROM payroll_runs r
+                LEFT JOIN payroll_lines l ON l.run_id=r.id AND l.tenant_id=r.tenant_id
+                WHERE r.tenant_id=? GROUP BY r.id ORDER BY r.period DESC LIMIT 1""", (tid,)).fetchone()
+            if run:
+                report["payroll"] = {"latest_period": run["period"], "latest_status": run["status"], "latest_total": f"{run['total']/100:.2f}"}
+        if table_exists("campaigns"):
+            camp = c.execute("SELECT COUNT(*) n,COALESCE(SUM(spend),0) spend,COALESCE(SUM(revenue),0) revenue FROM campaigns WHERE tenant_id=?", (tid,)).fetchone()
+            spend, revenue = float(camp["spend"] or 0), float(camp["revenue"] or 0)
+            report["marketing"] = {"campaign_count": camp["n"], "spend": round(spend,2), "revenue": round(revenue,2), "roi": round((revenue-spend)/spend,3) if spend else None}
+        if table_exists("agent_actions"):
+            report["ai"]["pending_actions"] = c.execute("SELECT COUNT(*) FROM agent_actions WHERE tenant_id=? AND lower(status) IN ('pending','needs_approval','awaiting_approval')", (tid,)).fetchone()[0]
+    return report
+
 @app.get("/api/agents/overview")
 def agents_overview(user=Depends(user_from_header)):
     from datetime import date, timedelta
