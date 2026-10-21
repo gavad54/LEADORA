@@ -38,11 +38,19 @@ def test_sales_posting_is_balanced_and_tenant_scoped(tmp_path):
     assert other.get('/api/distribution/overview').json()['sales_orders']==0
     assert other.post(f'/api/distribution/sales/{oid}/post').status_code==404
 
-def test_sale_rejects_insufficient_stock_without_posting(tmp_path):
+def test_insufficient_stock_is_rejected_at_dispatch_not_invoice_posting(tmp_path):
     db=factory(tmp_path/'db.sqlite');c=client(db,1)
     order=c.post('/api/distribution/sales',json={'order_no':'SO-2','customer_id':1,'order_date':'2026-10-20','lines':[{'product_id':1,'quantity':200,'unit_price':'1'}]}).json()
     r=c.post(f"/api/distribution/sales/{order['id']}/post")
-    assert r.status_code==409
+    assert r.status_code==200,r.text
+    with db() as conn:
+        assert conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0] == 20
+    dispatched=c.post(f"/api/distribution/sales/{order['id']}/deliver",json={"delivery_date":"2026-10-21"})
+    assert dispatched.status_code==409
+    with db() as conn:
+        assert conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0] == 20
+        assert conn.execute("SELECT status FROM dist_sales WHERE tenant_id=1 AND id=?",(order['id'],)).fetchone()[0] == "POSTED"
+        assert conn.execute("SELECT COUNT(*) FROM dist_deliveries WHERE tenant_id=1").fetchone()[0] == 0
     assert c.get('/api/distribution/reports/trial-balance').json()['balanced'] is True
 
 def test_xlsx_template_and_staged_import(tmp_path):
@@ -194,6 +202,9 @@ def test_dispatch_collection_remittance_and_check_lifecycle(tmp_path):
     })
     assert manifest.status_code == 200, manifest.text
     mid = manifest.json()["id"]
+    dispatched=c.post(f"/api/distribution/dispatch/manifests/{mid}/dispatch")
+    assert dispatched.status_code==200,dispatched.text
+    assert dispatched.json()["invoice_count"]==1
     cash = c.post(f"/api/distribution/dispatch/manifests/{mid}/collections", json={
         "order_id": order_id, "payment_type": "CASH", "amount": "6",
         "txn_date": "2026-10-21", "reference": "cash-001",
@@ -261,6 +272,10 @@ def test_sales_return_approval_restores_stock_and_reverses_receivable(tmp_path):
     order_id = created.json()["id"]
     assert c.post(f"/api/distribution/sales/{order_id}/post").status_code == 200
     with db() as conn:
+        assert conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0] == 20
+    delivered=c.post(f"/api/distribution/sales/{order_id}/deliver",json={"delivery_date":"2026-10-21"})
+    assert delivered.status_code==200,delivered.text
+    with db() as conn:
         assert conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0] == 18
     draft = c.post("/api/distribution/returns", json={
         "order_id": order_id, "return_no": "RET-1", "return_date": "2026-10-21",
@@ -285,6 +300,7 @@ def test_sales_return_cannot_exceed_sold_quantity_or_cross_tenant(tmp_path):
     db = factory(tmp_path / "returns-tenant.sqlite")
     c = client(db, 1)
     order_id = _posted_invoice(c, "SO-RETURN-LIMIT")
+    assert c.post(f"/api/distribution/sales/{order_id}/deliver",json={"delivery_date":"2026-10-21"}).status_code==200
     invalid = c.post("/api/distribution/returns", json={
         "order_id": order_id, "return_no": "RET-OVER", "return_date": "2026-10-21",
         "lines": [{"product_id": 1, "quantity": "2"}],
@@ -295,3 +311,37 @@ def test_sales_return_cannot_exceed_sold_quantity_or_cross_tenant(tmp_path):
         "order_id": order_id, "return_no": "RET-CROSS", "return_date": "2026-10-21",
         "lines": [{"product_id": 1, "quantity": "1"}],
     }).status_code == 404
+
+
+def test_manifest_dispatch_is_atomic_and_posts_cogs_only_after_stock_is_available(tmp_path):
+    db = factory(tmp_path / "dispatch-atomic.sqlite")
+    c = client(db, 1)
+    first = c.post("/api/distribution/sales", json={
+        "order_no": "SO-DISPATCH-OK", "customer_id": 1, "order_date": "2026-10-20",
+        "lines": [{"product_id": 1, "quantity": 1, "unit_price": "10"}],
+    }).json()
+    second = c.post("/api/distribution/sales", json={
+        "order_no": "SO-DISPATCH-FAIL", "customer_id": 1, "order_date": "2026-10-20",
+        "lines": [{"product_id": 1, "quantity": 200, "unit_price": "1"}],
+    }).json()
+    assert c.post(f"/api/distribution/sales/{first['id']}/post").status_code == 200
+    assert c.post(f"/api/distribution/sales/{second['id']}/post").status_code == 200
+    with db() as conn:
+        before_stock = conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0]
+        before_deliveries = conn.execute("SELECT COUNT(*) FROM dist_deliveries WHERE tenant_id=1").fetchone()[0]
+    manifest = c.post("/api/distribution/dispatch/manifests", json={
+        "manifest_no": "MAN-ATOMIC", "dispatch_date": "2026-10-21", "distributor_name": "Route A",
+        "invoices": [
+            {"order_id": first["id"], "cash_amount": "10", "check_amount": "0", "credit_amount": "0"},
+            {"order_id": second["id"], "cash_amount": "200", "check_amount": "0", "credit_amount": "0"},
+        ],
+    })
+    assert manifest.status_code == 200, manifest.text
+    failed = c.post(f"/api/distribution/dispatch/manifests/{manifest.json()['id']}/dispatch")
+    assert failed.status_code == 409
+    with db() as conn:
+        assert conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0] == before_stock
+        assert conn.execute("SELECT COUNT(*) FROM dist_deliveries WHERE tenant_id=1").fetchone()[0] == before_deliveries
+        statuses = conn.execute("SELECT status FROM dist_sales WHERE tenant_id=1 ORDER BY id").fetchall()
+        assert [x[0] for x in statuses] == ["POSTED", "POSTED"]
+    assert c.get("/api/distribution/reports/trial-balance").json()["balanced"] is True
