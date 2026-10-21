@@ -1,0 +1,44 @@
+import uuid
+from fastapi.testclient import TestClient
+from app.main import app
+
+def make_account():
+    c=TestClient(app); s=uuid.uuid4().hex[:10]
+    r=c.post("/api/register",json={"company_name":"Prospect "+s,"industry":"distribution","email":"prospect-"+s+"@example.com","password":"test-password-2026"})
+    assert r.status_code==200,r.text
+    return c,{"Authorization":"Bearer "+r.json()["token"]}
+
+def test_text_source_generates_customer_and_supplier_queries(monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY",raising=False)
+    c,h=make_account()
+    r=c.post("/api/lead-discovery/run",headers=h,json={
+        "sources":[{"kind":"text","label":"کاتالوگ","content":"We manufacture industrial pumps, valves and water treatment equipment for distributors."}],
+        "goal":"both","industry":"industrial equipment","markets":["Germany","Turkey"],"keywords":["pump","valve"],"limit":10
+    })
+    assert r.status_code==200,r.text
+    d=r.json()
+    assert d["provider"]=="query_generation_only"
+    assert d["search_configured"] is False
+    assert d["result_count"]==0
+    assert any(q["type"]=="customers" for q in d["queries"])
+    assert any(q["type"]=="suppliers" for q in d["queries"])
+    assert d["run_id"]>0
+
+def test_discovered_leads_are_tenant_isolated(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY","")
+    c,a=make_account(); _,b=make_account()
+    r=c.post("/api/lead-discovery/run",headers=a,json={
+        "sources":[{"kind":"text","label":"profile","content":"Wholesale coffee beans and espresso machines"}],
+        "goal":"customers","industry":"coffee wholesale","limit":5
+    })
+    assert r.status_code==200,r.text
+    assert c.get("/api/lead-discovery/leads",headers=a).status_code==200
+    assert c.get("/api/lead-discovery/leads",headers=b).json()==[]
+
+def test_public_url_validation_rejects_private_hosts(monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY",raising=False)
+    c,h=make_account()
+    r=c.post("/api/lead-discovery/run",headers=h,json={
+        "sources":[{"kind":"website","url":"http://127.0.0.1/admin"}],"goal":"both"
+    })
+    assert r.status_code==422,r.text
