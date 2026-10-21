@@ -1,6 +1,6 @@
 import os, sqlite3, secrets, hashlib, hmac, time, re
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.responses import FileResponse, StreamingResponse
 import csv, io, json
 from fastapi.staticfiles import StaticFiles
@@ -119,7 +119,7 @@ def token(uid, tid):
     sig = hmac.new(SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
     return raw + "." + sig
 
-def user_from_header(authorization: str | None = Header(default=None)):
+def user_from_header(request: Request, authorization: str | None = Header(default=None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "ابتدا وارد شوید.")
     try:
@@ -131,7 +131,15 @@ def user_from_header(authorization: str | None = Header(default=None)):
         with db() as c:
             u = c.execute("SELECT id,tenant_id,email FROM users WHERE id=? AND tenant_id=?", (int(uid),int(tid))).fetchone()
         if not u: raise ValueError()
-        return dict(u)
+        user = dict(u)
+        # Enforce trial/license state server-side for all tenant business routes.
+        allowed_owner_ids = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
+        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health"}
+        if request.url.path not in allowed_paths and str(user["id"]) not in allowed_owner_ids:
+            license_row = _license_for_tenant(user["tenant_id"])
+            if license_row["status"] in ("expired", "suspended"):
+                raise HTTPException(402, "دوره آزمایشی پایان یافته یا مجوز غیرفعال است؛ کلید مجوز معتبر را فعال کنید.")
+        return user
     except Exception:
         raise HTTPException(401, "نشست نامعتبر یا منقضی است.")
 
