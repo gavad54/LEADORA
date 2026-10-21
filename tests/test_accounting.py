@@ -79,7 +79,7 @@ def test_account_parent_must_exist_and_cannot_be_self():
 
 def test_csv_import_accepts_utf8_bom():
     c,h=account()
-    content="\\ufeffdate,document_ref,type,amount\n2026-10-21,BOM-S-1,sales,15\n"
+    content="\ufeffdate,document_ref,type,amount\n2026-10-21,BOM-S-1,sales,15\n"
     r=c.post("/api/accounting/import/csv",headers=h,json={"content":content})
     assert r.status_code==200,r.text
     assert r.json()["count"]==1
