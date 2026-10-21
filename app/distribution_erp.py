@@ -362,6 +362,8 @@ def create_router(db,user_dep):
    prior=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_dispatch_transactions WHERE tenant_id=? AND manifest_id=? AND order_id=? AND transaction_type=?",(t,manifest_id,b.order_id,kind)).fetchone()[0]
    if prior+amount>line["allocation"]:raise HTTPException(409,"مبلغ دریافت از سهم تعیین‌شده در مانیفست بیشتر است.")
    tid=c.execute("INSERT INTO dist_dispatch_transactions(tenant_id,manifest_id,order_id,transaction_type,amount_minor,txn_date,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",(t,manifest_id,b.order_id,kind,amount,b.txn_date,b.reference.strip(),u.get("id"))).lastrowid
+   # Record accepted customer payment for AR aging; account_id=0 denotes funds/checks still held by the distributor, not company treasury.
+   c.execute("INSERT INTO dist_customer_receipts(tenant_id,order_id,account_id,txn_date,amount_minor,reference) VALUES(?,?,?,?,?,?)",(t,b.order_id,0,b.txn_date,amount,b.reference.strip() or "DIST-"+str(tid)))
    post(c,t,b.txn_date,"دریافت توزیع‌کننده از فاکتور "+str(b.order_id),kind,tid,[{"code":gl_code,"d":amount},{"code":"1100","c":amount}],u.get("id"))
    audit(c,t,"distribution.dispatch.collection:"+str(tid))
   return {"id":tid,"manifest_id":manifest_id,"order_id":b.order_id,"payment_type":b.payment_type,"amount":money(amount),"status":"RECORDED","journal_posted":True}
