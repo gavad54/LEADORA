@@ -1486,6 +1486,10 @@ def distribution_page():
 def dispatch_settlement_page():
     return FileResponse(ROOT / "static" / "dispatch-settlement.html")
 
+@app.get("/returns")
+def returns_page():
+    return FileResponse(ROOT / "static" / "returns.html")
+
 @app.get("/finance")
 def finance_page():
     return FileResponse(ROOT / "static" / "finance.html")
