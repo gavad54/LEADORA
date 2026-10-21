@@ -157,9 +157,13 @@ def install_lead_discovery(app, db, user_from_header, ROOT):
                 "message":"بدون کلید جست‌وجوی وب، تحلیل منابع واردشده و ساخت عبارت‌های جست‌وجو فعال است؛ کشف آنلاین تا تنظیم TAVILY_API_KEY فعال نمی‌شود."}
     @app.post("/api/lead-discovery/run")
     def run_discovery(p:DiscoverIn,u=Depends(user_from_header)):
+        with db() as c:
+            recent=c.execute("SELECT COUNT(*) n FROM lead_discovery_runs WHERE tenant_id=? AND created_at>=datetime('now','-1 day')",(u["tenant_id"],)).fetchone()["n"]
+        if recent>=30:raise HTTPException(429,"سقف ۳۰ اجرای مشتریابی در ۲۴ ساعت برای این شرکت تکمیل شده است.")
         profiles=[]
         for source in p.sources:
             profiles.append(_source_profile(source))
+        public_profiles=[{k:v for k,v in item.items() if k!="text"} for item in profiles]
         all_text=" ".join(" ".join((x.get("label",""),x.get("title",""),x.get("description",""),x.get("text",""))) for x in profiles)
         # Keep only bounded, user-supplied business keywords; no personal-data inference.
         words=[]
@@ -192,7 +196,7 @@ def install_lead_discovery(app, db, user_from_header, ROOT):
         provider="tavily" if os.getenv("TAVILY_API_KEY","").strip() else "query_generation_only"
         with db() as c:
             cur=c.execute("INSERT INTO lead_discovery_runs(tenant_id,user_id,goal,profile_json,queries_json,provider) VALUES(?,?,?,?,?,?)",
-                (u["tenant_id"],u["id"],p.goal,json.dumps(profiles,ensure_ascii=False),json.dumps(queries,ensure_ascii=False),provider))
+                (u["tenant_id"],u["id"],p.goal,json.dumps(public_profiles,ensure_ascii=False),json.dumps(queries,ensure_ascii=False),provider))
             run_id=cur.lastrowid
             saved=[]
             for item in candidates[:p.limit]:
@@ -204,7 +208,7 @@ def install_lead_discovery(app, db, user_from_header, ROOT):
                     row=c.execute("SELECT id,name,url,summary,lead_type,source,status,confidence FROM discovered_leads WHERE tenant_id=? AND url=?",(u["tenant_id"],item["url"])).fetchone()
                     if row:saved.append(dict(row))
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(u["tenant_id"],"lead_discovery.run:"+str(run_id)))
-        return {"run_id":run_id,"profile":profiles,"keywords":keywords,"queries":queries,
+        return {"run_id":run_id,"profile":public_profiles,"keywords":keywords,"queries":queries,
                 "provider":provider,"search_configured":provider=="tavily","results":saved,
                 "result_count":len(saved),"message":("کشف آنلاین انجام شد؛ نتایج باید از نظر تناسب و اعتبار بررسی شوند." if provider=="tavily" else "منابع تحلیل و عبارت‌های جست‌وجو ساخته شدند؛ برای یافتن خودکار شرکت‌های واقعی، مدیر سامانه باید TAVILY_API_KEY را در متغیرهای امن Railway تنظیم کند.")}
     @app.get("/api/lead-discovery/leads")
