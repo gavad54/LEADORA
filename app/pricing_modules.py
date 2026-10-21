@@ -1,6 +1,7 @@
 """Owner-managed modular pricing and tenant module requests for LEADORA."""
 import hmac
 import os
+import sqlite3
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, StrictInt
 
@@ -42,11 +43,43 @@ def create_router(db, user_from_header):
         for key, name in MODULES.items():
             c.execute("INSERT OR IGNORE INTO leadora_module_prices(module_key,module_name,monthly_price,active) VALUES(?,?,0,1)", (key,name))
 
-    def require_owner(x_leadora_owner_key: str | None = Header(default=None)):
+    def require_owner(
+        x_leadora_owner_key: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        # Keep the legacy secret-key path for existing integrations, but prefer the
+        # same per-user owner authorization used by the financial participation module.
         expected = os.getenv("LEADORA_OWNER_KEY", "")
-        if len(expected) < 24 or not x_leadora_owner_key or not hmac.compare_digest(expected, x_leadora_owner_key):
-            raise HTTPException(403, "پنل مالک فعال نیست؛ کلید مالک باید در تنظیمات امن سرور تعیین شود.")
-        return True
+        if len(expected) >= 24 and x_leadora_owner_key and hmac.compare_digest(expected, x_leadora_owner_key):
+            return True
+
+        if authorization:
+            try:
+                user = user_from_header(authorization)
+            except HTTPException:
+                user = None
+            if user:
+                user_id = str(user.get("id", ""))
+                allowlist = {
+                    value.strip()
+                    for value in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",")
+                    if value.strip()
+                }
+                if user_id and user_id in allowlist:
+                    return True
+                # The finance router initializes this table before the pricing router.
+                # Fail closed if it is unavailable for any reason.
+                try:
+                    with db() as c:
+                        owner = c.execute(
+                            "SELECT user_id FROM finance_platform_owner WHERE singleton=1"
+                        ).fetchone()
+                    if owner and str(owner["user_id"]) == user_id:
+                        return True
+                except sqlite3.OperationalError:
+                    pass
+
+        raise HTTPException(403, "این عملیات فقط برای مالک سامانه مجاز است.")
 
     @router.get("/api/plans")
     def public_plans():
