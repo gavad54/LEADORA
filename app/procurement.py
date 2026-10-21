@@ -314,18 +314,31 @@ def install_procurement(app, db, user_from_header, ROOT):
         order = tenant_row("procurement_orders", order_id, u["tenant_id"])
         if not body.accepted:
             raise HTTPException(409, "برای ثبت ورود انبار، تأیید صریح پذیرش کالا لازم است.")
-        if body.quantity_received + order["received_qty"] > order["quantity"]:
-            raise HTTPException(422, "مقدار دریافتی از مقدار سفارش بیشتر است.")
         need = tenant_row("procurement_needs", order["need_id"], u["tenant_id"])
         # Procurement ledger amounts are currently native-currency values; only IRR can be
         # posted to the base ledger until a controlled FX-rate/valuation module exists.
         receipt_amount = round(body.quantity_received * order["unit_price"] +
                                 order["shipping_cost"] * body.quantity_received / order["quantity"], 2)
         with db() as c:
-            received = order["received_qty"] + body.quantity_received
-            status = "received" if received == order["quantity"] else "partially_received"
-            c.execute("UPDATE procurement_orders SET received_qty=?,status=?,receipt_note=? WHERE id=? AND tenant_id=?",
-                      (received,status,body.note.strip(),order_id,u["tenant_id"]))
+            # Conditional update makes over-receipt prevention atomic across concurrent requests.
+            # The previous received_qty is part of the predicate; stale readers cannot both win.
+            previous_received = order["received_qty"]
+            received = previous_received + body.quantity_received
+            status = "received" if received >= order["quantity"] else "partially_received"
+            updated = c.execute(
+                """UPDATE procurement_orders
+                   SET received_qty=received_qty+?,
+                       status=CASE WHEN received_qty+? >= quantity THEN 'received' ELSE 'partially_received' END,
+                       receipt_note=?
+                   WHERE id=? AND tenant_id=? AND received_qty=?
+                     AND received_qty+? <= quantity""",
+                (body.quantity_received,body.quantity_received,body.note.strip(),order_id,
+                 u["tenant_id"],previous_received,body.quantity_received))
+            if updated.rowcount != 1:
+                raise HTTPException(409, "مقدار دریافتی سفارش هم‌زمان تغییر کرده یا از باقیمانده بیشتر است؛ وضعیت سفارش را دوباره بررسی کنید.")
+            fresh = c.execute("SELECT received_qty,status FROM procurement_orders WHERE id=? AND tenant_id=?",
+                              (order_id,u["tenant_id"])).fetchone()
+            received, status = fresh["received_qty"], fresh["status"]
             c.execute("UPDATE procurement_needs SET status=? WHERE id=? AND tenant_id=?",
                       ("fulfilled" if status=="received" else "partially_received",order["need_id"],u["tenant_id"]))
             product = None
