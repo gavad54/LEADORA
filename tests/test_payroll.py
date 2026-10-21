@@ -1,10 +1,28 @@
-import sqlite3
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from app.distribution_erp import create_router as create_distribution_router
 from app.payroll import create_router as create_payroll_router
-from tests.test_distribution_erp import factory
 
+
+import sqlite3\n
+def factory(path):
+    def db():
+        c = sqlite3.connect(path, timeout=10)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA foreign_keys=ON")
+        return c
+    with db() as c:
+        c.executescript("""
+        CREATE TABLE tenants(id INTEGER PRIMARY KEY,name TEXT,industry TEXT);
+        CREATE TABLE users(id INTEGER PRIMARY KEY,tenant_id INTEGER,email TEXT,salt TEXT,password_hash TEXT);
+        CREATE TABLE products(id INTEGER PRIMARY KEY,tenant_id INTEGER,sku TEXT,name TEXT,price REAL,stock REAL,UNIQUE(tenant_id,sku));
+        CREATE TABLE customers(id INTEGER PRIMARY KEY,tenant_id INTEGER,name TEXT,phone TEXT);
+        CREATE TABLE audit_log(id INTEGER PRIMARY KEY,tenant_id INTEGER,action TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        INSERT INTO tenants VALUES(1,'One','distribution');INSERT INTO tenants VALUES(2,'Two','distribution');
+        INSERT INTO customers VALUES(1,1,'Customer One','111');INSERT INTO customers VALUES(2,2,'Customer Two','222');
+        INSERT INTO products VALUES(1,1,'SKU1','Item One',10,20);INSERT INTO products VALUES(2,2,'SKU1','Item Two',10,20);
+        """)
+    return db
 
 def payroll_client(db, tid):
     app = FastAPI()
