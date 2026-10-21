@@ -353,7 +353,7 @@ def install_procurement(app, db, user_from_header, ROOT):
                 journal_id = journal_cur.lastrowid
                 c.execute("""INSERT INTO gl_lines
                   (tenant_id,journal_id,line_no,account_code,memo,debit,credit,party_name)
-                  VALUES(?,?,?,?,?,?,?,?,?)""".replace("VALUES(?,?,?,?,?,?,?,?,?)","VALUES(?,?,?,?,?,?,?,?,?)"),
+                  VALUES(?,?,?,?,?,?,?,?)""",
                   (u["tenant_id"],journal_id,1,"1200","موجودی کالای دریافتی",f"{receipt_amount:.2f}","0.00",""))
                 c.execute("""INSERT INTO gl_lines
                   (tenant_id,journal_id,line_no,account_code,memo,debit,credit,party_name)
