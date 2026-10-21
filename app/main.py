@@ -156,6 +156,9 @@ class CustomerIn(BaseModel):
 @app.get("/")
 def home(): return FileResponse(ROOT / "static" / "index.html")
 
+@app.get("/bank-accounts")
+def bank_accounts_page(): return FileResponse(ROOT / "static" / "bank-accounts.html")
+
 @app.get("/manifest.webmanifest")
 def pwa_manifest():
     return FileResponse(ROOT / "static" / "manifest.webmanifest", media_type="application/manifest+json")
