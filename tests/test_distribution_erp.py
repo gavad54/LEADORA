@@ -209,16 +209,16 @@ def test_dispatch_collection_remittance_and_check_lifecycle(tmp_path):
         "txn_date": "2026-10-21",
     }).status_code == 409
 
-    assert c.post(f"/api/distribution/transactions/{check.json()['id']}/clear-check", json={
+    assert c.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/clear-check", json={
         "txn_date": "2026-10-22"
     }).status_code == 409
-    handed = c.post(f"/api/distribution/transactions/{check.json()['id']}/handoff-check")
+    handed = c.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/handoff-check")
     assert handed.status_code == 200, handed.text
-    cleared = c.post(f"/api/distribution/transactions/{check.json()['id']}/clear-check", json={
+    cleared = c.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/clear-check", json={
         "txn_date": "2026-10-22"
     })
     assert cleared.status_code == 200, cleared.text
-    assert c.post(f"/api/distribution/transactions/{check.json()['id']}/clear-check", json={
+    assert c.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/clear-check", json={
         "txn_date": "2026-10-22"
     }).status_code == 409
 
@@ -244,4 +244,4 @@ def test_dispatch_collection_remittance_and_check_lifecycle(tmp_path):
 
     other = client(db, 2)
     assert other.get(f"/api/distribution/dispatch/manifests/{mid}/settlement").status_code == 404
-    assert other.post(f"/api/distribution/transactions/{check.json()['id']}/handoff-check").status_code == 404
+    assert other.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/handoff-check").status_code == 404
