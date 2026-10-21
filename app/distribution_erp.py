@@ -147,6 +147,27 @@ def post(c,t,dt,desc,source,source_id,lines,uid=None):
  c.executemany("INSERT INTO dist_journal_lines(tenant_id,journal_id,account_code,debit_minor,credit_minor) VALUES(?,?,?,?,?)",[(t,jid,*x) for x in clean])
  return no
 
+def dispatch_sale(c,t,oid,dispatch_date,reference,note,uid=None):
+ try:date.fromisoformat(dispatch_date)
+ except (ValueError,TypeError):raise HTTPException(422,"تاریخ ارسال باید YYYY-MM-DD باشد.")
+ o=c.execute("SELECT order_no,order_date,status FROM dist_sales WHERE tenant_id=? AND id=?",(t,oid)).fetchone()
+ if not o:raise HTTPException(404,"فاکتور در شرکت شما یافت نشد.")
+ if o["status"]!="POSTED":raise HTTPException(409,"فقط فاکتور نهایی‌شده و ارسال‌نشده قابل حواله است.")
+ if c.execute("SELECT 1 FROM dist_deliveries WHERE tenant_id=? AND order_id=?",(t,oid)).fetchone():raise HTTPException(409,"برای این فاکتور قبلاً حواله ثبت شده است.")
+ lines=c.execute("SELECT l.*,p.stock,COALESCE(d.cost_minor,0) cost,COALESCE(d.warehouse_code,'DEFAULT') wh FROM dist_sale_lines l JOIN products p ON p.id=l.product_id AND p.tenant_id=l.tenant_id LEFT JOIN dist_item_data d ON d.tenant_id=p.tenant_id AND d.product_id=p.id WHERE l.tenant_id=? AND l.order_id=?",(t,oid)).fetchall()
+ for x in lines:
+  if x["stock"]<x["quantity"]:raise HTTPException(409,f"موجودی کالای {x['product_id']} برای ارسال کافی نیست.")
+ cost=sum(minor(Decimal(str(x["quantity"]))*Decimal(x["cost"])/100) for x in lines)
+ if cost:post(c,t,dispatch_date,"بهای تمام‌شده ارسال "+o["order_no"],"COGS",oid,[{"code":"5000","d":cost},{"code":"1200","c":cost}],uid)
+ for x in lines:
+  changed=c.execute("UPDATE products SET stock=stock-? WHERE tenant_id=? AND id=? AND stock>=?",(x["quantity"],t,x["product_id"],x["quantity"]))
+  if changed.rowcount!=1:raise HTTPException(409,f"موجودی کالای {x['product_id']} هم‌زمان تغییر کرده است؛ دوباره تلاش کنید.")
+  c.execute("INSERT INTO dist_stock_moves(tenant_id,product_id,warehouse_code,quantity,cost_minor,kind,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",(t,x["product_id"],x["wh"],x["quantity"],x["cost"],"SALE_OUT",o["order_no"],uid))
+ c.execute("INSERT INTO dist_deliveries(tenant_id,order_id,reference,note) VALUES(?,?,?,?)",(t,oid,reference,note))
+ c.execute("UPDATE dist_sales SET status='DELIVERED' WHERE tenant_id=? AND id=? AND status='POSTED'",(t,oid))
+ audit(c,t,"distribution.sale.dispatched:"+o["order_no"])
+ return {"status":"DELIVERED","order_no":o["order_no"],"dispatch_date":dispatch_date,"cost_of_goods":money(cost),"inventory_deducted":True}
+
 class Warehouse(BaseModel):
  code:str=Field(min_length=1,max_length=40); name:str=Field(min_length=1,max_length=160); location:str=""
 
@@ -303,7 +324,7 @@ def create_router(db,user_dep):
    for x in b.invoices:
     order=c.execute("SELECT id,order_no,customer_id,status,total_minor FROM dist_sales WHERE tenant_id=? AND id=?",(t,x.order_id)).fetchone()
     if not order:raise HTTPException(404,"فاکتور در شرکت شما یافت نشد.")
-    if order["status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"فقط فاکتور نهایی‌شده قابل درج در مانیفست است.")
+    if order["status"]!="POSTED":raise HTTPException(409,"فقط فاکتور نهایی‌شده و هنوز ارسال‌نشده قابل درج در مانیفست است.")
     received=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_customer_receipts WHERE tenant_id=? AND order_id=?",(t,x.order_id)).fetchone()[0]
     outstanding=order["total_minor"]-received
     if outstanding<0:raise HTTPException(409,"جمع دریافت‌های ثبت‌شده از مبلغ فاکتور بیشتر است.")
@@ -369,6 +390,20 @@ def create_router(db,user_dep):
       "invoice_total":money(x["invoice_total_minor"]),"cash_amount":money(x["cash_minor"]),
       "check_amount":money(x["check_minor"]),"credit_amount":money(x["credit_minor"])} for x in lines]}
 
+ @r.post("/dispatch/manifests/{manifest_id}/dispatch")
+ def dispatch_manifest(manifest_id:int,u=Depends(user_dep)):
+  t=tenant(u);results=[]
+  with db() as c:
+   m=c.execute("SELECT * FROM dist_dispatch_manifests WHERE tenant_id=? AND id=?",(t,manifest_id)).fetchone()
+   if not m:raise HTTPException(404,"مانیفست در شرکت شما یافت نشد.")
+   if m["status"]!="OPEN":raise HTTPException(409,"فقط مانیفست باز قابل ارسال است.")
+   lines=c.execute("SELECT order_id FROM dist_dispatch_manifest_lines WHERE tenant_id=? AND manifest_id=? ORDER BY id",(t,manifest_id)).fetchall()
+   if not lines:raise HTTPException(409,"مانیفست خالی قابل ارسال نیست.")
+   for line in lines:
+    results.append(dispatch_sale(c,t,line["order_id"],m["dispatch_date"],m["manifest_no"],"ارسال گروهی مانیفست "+m["manifest_no"],u.get("id")))
+   audit(c,t,"distribution.dispatch_manifest.dispatched:"+m["manifest_no"])
+  return {"manifest_id":manifest_id,"manifest_no":m["manifest_no"],"status":"DISPATCHED","invoice_count":len(results),"cost_of_goods":money(sum(minor(x["cost_of_goods"]) for x in results)),"invoices":results}
+
  @r.post("/dispatch/manifests/{manifest_id}/collections")
  def record_dispatch_collection(manifest_id:int,b:DispatchCollectionIn,u=Depends(user_dep)):
   t=tenant(u)
@@ -383,6 +418,7 @@ def create_router(db,user_dep):
    m=c.execute("SELECT id,status FROM dist_dispatch_manifests WHERE tenant_id=? AND id=?",(t,manifest_id)).fetchone()
    if not m:raise HTTPException(404,"مانیفست یافت نشد.")
    if m["status"]!="OPEN":raise HTTPException(409,"مانیفست بسته یا لغو شده است.")
+   if not c.execute("SELECT 1 FROM dist_deliveries WHERE tenant_id=? AND order_id=?",(t,b.order_id)).fetchone():raise HTTPException(409,"ابتدا مانیفست را از انبار ارسال کنید؛ سپس دریافت ثبت شود.")
    line=c.execute(f"SELECT {cap_col} allocation FROM dist_dispatch_manifest_lines WHERE tenant_id=? AND manifest_id=? AND order_id=?",(t,manifest_id,b.order_id)).fetchone()
    if not line:raise HTTPException(404,"فاکتور متعلق به این مانیفست نیست.")
    prior=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_dispatch_transactions WHERE tenant_id=? AND manifest_id=? AND order_id=? AND transaction_type=?",(t,manifest_id,b.order_id,kind)).fetchone()[0]
@@ -488,27 +524,21 @@ def create_router(db,user_dep):
    o=c.execute("SELECT * FROM dist_sales WHERE tenant_id=? AND id=?",(t,oid)).fetchone()
    if not o:raise HTTPException(404,"سفارش یافت نشد.")
    if o["status"]!="DRAFT":raise HTTPException(409,"فقط سفارش پیش‌نویس قابل نهایی‌سازی است.")
-   lines=c.execute("SELECT l.*,p.stock,COALESCE(d.cost_minor,0) cost,COALESCE(d.warehouse_code,'DEFAULT') wh FROM dist_sale_lines l JOIN products p ON p.id=l.product_id AND p.tenant_id=l.tenant_id LEFT JOIN dist_item_data d ON d.tenant_id=p.tenant_id AND d.product_id=p.id WHERE l.tenant_id=? AND l.order_id=?",(t,oid)).fetchall()
-   for x in lines:
-    if x["stock"]<x["quantity"]:raise HTTPException(409,f"موجودی کالای {x['product_id']} کافی نیست.")
+   lines=c.execute("SELECT l.*,COALESCE(d.cost_minor,0) cost,COALESCE(d.warehouse_code,'DEFAULT') wh FROM dist_sale_lines l JOIN products p ON p.id=l.product_id AND p.tenant_id=l.tenant_id LEFT JOIN dist_item_data d ON d.tenant_id=p.tenant_id AND d.product_id=p.id WHERE l.tenant_id=? AND l.order_id=?",(t,oid)).fetchall()
    revenue=sum(x["total_minor"] for x in lines); cost=sum(minor(Decimal(str(x["quantity"]))*Decimal(x["cost"])/100) for x in lines)
+   # Invoice posting recognizes revenue/receivable only. Inventory and COGS move at physical dispatch.
    post(c,t,o["order_date"],"فروش "+o["order_no"],"SALE",oid,[{"code":"1100","d":revenue},{"code":"4000","c":revenue}],u.get("id"))
-   if cost:post(c,t,o["order_date"],"بهای تمام‌شده "+o["order_no"],"COGS",oid,[{"code":"5000","d":cost},{"code":"1200","c":cost}],u.get("id"))
-   for x in lines:
-    c.execute("UPDATE products SET stock=stock-? WHERE tenant_id=? AND id=? AND stock>=?",(x["quantity"],t,x["product_id"],x["quantity"]))
-    c.execute("INSERT INTO dist_stock_moves(tenant_id,product_id,warehouse_code,quantity,cost_minor,kind,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",(t,x["product_id"],x["wh"],x["quantity"],x["cost"],"SALE_OUT",o["order_no"],u.get("id")))
    c.execute("UPDATE dist_sales SET status='POSTED' WHERE tenant_id=? AND id=?",(t,oid));audit(c,t,"distribution.sale.posted:"+o["order_no"])
-  return {"status":"POSTED","revenue":money(revenue),"cost_of_goods":money(cost),"gross_profit":money(revenue-cost)}
+  return {"status":"POSTED","revenue":money(revenue),"cost_of_goods":"0.00","pending_dispatch_cost":money(cost),"gross_profit":None}
+
  @r.post("/sales/{oid}/deliver")
  def deliver(oid:int,payload:dict,u=Depends(user_dep)):
   t=tenant(u)
+  dispatch_date=str(payload.get("delivery_date") or date.today().isoformat())
+  result={}
   with db() as c:
-   o=c.execute("SELECT order_no,status FROM dist_sales WHERE tenant_id=? AND id=?",(t,oid)).fetchone()
-   if not o:raise HTTPException(404,"سفارش یافت نشد.")
-   if o["status"]!="POSTED":raise HTTPException(409,"ابتدا سفارش را نهایی کنید.")
-   c.execute("INSERT INTO dist_deliveries(tenant_id,order_id,reference,note) VALUES(?,?,?,?)",(t,oid,str(payload.get("reference",""))[:120],str(payload.get("note",""))[:500]))
-   c.execute("UPDATE dist_sales SET status='DELIVERED' WHERE tenant_id=? AND id=?",(t,oid));audit(c,t,"distribution.sale.delivered:"+o["order_no"])
-  return {"status":"DELIVERED","order_no":o["order_no"]}
+   result=dispatch_sale(c,t,oid,dispatch_date,str(payload.get("reference",""))[:120],str(payload.get("note",""))[:500],u.get("id"))
+  return result
  @r.post("/purchases")
  def new_purchase(b:Purchase,u=Depends(user_dep)):
   t=tenant(u);total=0;lines=[]
@@ -611,7 +641,7 @@ def create_router(db,user_dep):
   with db() as c:
    order=c.execute("SELECT * FROM dist_sales WHERE tenant_id=? AND id=?",(t,b.order_id)).fetchone()
    if not order:raise HTTPException(404,"فاکتور در شرکت شما یافت نشد.")
-   if order["status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"فقط فاکتور نهایی‌شده قابل برگشت است.")
+   if order["status"]!="DELIVERED":raise HTTPException(409,"فقط کالای ارسال‌شده قابل برگشت است.")
    sold=c.execute("SELECT product_id,SUM(quantity) quantity FROM dist_sale_lines WHERE tenant_id=? AND order_id=? GROUP BY product_id",(t,b.order_id)).fetchall()
    sold_by={x["product_id"]:Decimal(str(x["quantity"])) for x in sold}
    for line in b.lines:
@@ -632,7 +662,7 @@ def create_router(db,user_dep):
    ret=c.execute("SELECT r.*,s.order_no,s.status order_status FROM dist_sales_returns r JOIN dist_sales s ON s.id=r.order_id AND s.tenant_id=r.tenant_id WHERE r.tenant_id=? AND r.id=?",(t,return_id)).fetchone()
    if not ret:raise HTTPException(404,"برگشت کالا یافت نشد.")
    if ret["status"]!="DRAFT":raise HTTPException(409,"فقط برگشت پیش‌نویس قابل تأیید است.")
-   if ret["order_status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"وضعیت فاکتور اجازه تأیید برگشت نمی‌دهد.")
+   if ret["order_status"]!="DELIVERED":raise HTTPException(409,"فقط کالای ارسال‌شده قابل تأیید برگشت است.")
    lines=c.execute("SELECT * FROM dist_sales_return_lines WHERE tenant_id=? AND return_id=? ORDER BY id",(t,return_id)).fetchall()
    revenue_total=0;cost_total=0;stock_updates=[]
    for line in lines:
