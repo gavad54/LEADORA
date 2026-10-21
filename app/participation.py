@@ -310,6 +310,45 @@ def create_router(db_factory, user_dependency):
             audit(c, user, "finance.owner.claimed", {"user_id": user_id})
         return {"ok": True, "is_platform_owner": True, "message": "مالک سامانه با موفقیت ثبت شد."}
 
+    @router.post("/owner/recover")
+    def recover_owner(body: OwnerClaimIn, user=Depends(user_dependency)):
+        # Recovery is deliberately separate from initial claim and requires two
+        # independent server-side controls: a dedicated token and exact email.
+        expected = os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "").strip()
+        expected_email = os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().casefold()
+        bootstrap_token = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "").strip()
+        if len(expected) < 32 or not expected_email or secrets_compare(expected, bootstrap_token):
+            raise HTTPException(503, "بازیابی امن مالک در تنظیمات سرور فعال نشده است.")
+        if owner_user_ids():
+            raise HTTPException(409, "مالک از طریق تنظیمات امن شناسه کاربر تعیین شده است؛ بازیابی از پنل مجاز نیست.")
+        if not secrets_compare(body.token, expected):
+            raise HTTPException(403, "کلید بازیابی مالک معتبر نیست.")
+        account_email = str(user.get("email", "")).strip().casefold()
+        if account_email != expected_email:
+            raise HTTPException(403, "ایمیل حساب با ایمیل مجاز بازیابی مالک مطابقت ندارد.")
+        user_id = str(user.get("id", ""))
+        if not user_id:
+            raise HTTPException(400, "شناسه حساب معتبر نیست.")
+        with db_factory() as c:
+            existing = c.execute("SELECT user_id,email FROM finance_platform_owner WHERE singleton=1").fetchone()
+            if not existing:
+                raise HTTPException(409, "مالک ثبت‌شده‌ای برای بازیابی وجود ندارد؛ از فرایند ثبت اولیه مالک استفاده کنید.")
+            previous_user_id = str(existing["user_id"])
+            if previous_user_id == user_id:
+                return {"ok": True, "is_platform_owner": True, "message": "این حساب از قبل مالک اصلی سامانه است."}
+            c.execute(
+                "UPDATE finance_platform_owner SET user_id=?,email=?,claimed_at=CURRENT_TIMESTAMP WHERE singleton=1",
+                (user_id, account_email),
+            )
+            audit(c, user, "finance.owner.recovered", {
+                "previous_user_id": previous_user_id,
+                "previous_email": str(existing["email"]),
+                "new_user_id": user_id,
+                "new_email": account_email,
+                "method": "server_configured_recovery",
+            })
+        return {"ok": True, "is_platform_owner": True, "message": "دسترسی مالک اصلی با تأیید امن بازیابی شد."}
+
     @router.get("/settings")
     def get_settings(user=Depends(user_dependency)):
         with db_factory() as c:
