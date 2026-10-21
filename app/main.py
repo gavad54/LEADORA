@@ -134,8 +134,16 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
         user = dict(u)
         # Enforce trial/license state server-side for all tenant business routes.
         allowed_owner_ids = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
+        is_platform_owner = str(user["id"]) in allowed_owner_ids
+        if not is_platform_owner:
+            try:
+                with db() as owner_conn:
+                    owner_row = owner_conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+                is_platform_owner = bool(owner_row and str(owner_row["user_id"]) == str(user["id"]))
+            except sqlite3.OperationalError:
+                is_platform_owner = False
         allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health"}
-        if (request.url.path if request is not None else "") not in allowed_paths and str(user["id"]) not in allowed_owner_ids:
+        if (request.url.path if request is not None else "") not in allowed_paths and not is_platform_owner:
             license_row = _license_for_tenant(user["tenant_id"])
             if license_row["status"] in ("expired", "suspended"):
                 raise HTTPException(402, "دوره آزمایشی پایان یافته یا مجوز غیرفعال است؛ کلید مجوز معتبر را فعال کنید.")
