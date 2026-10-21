@@ -215,7 +215,7 @@ def install_accounting(app, db, user_from_header, root:Path):
             return make_journal(c,u,q)
     @app.post("/api/accounting/import/csv")
     def import_csv(p:CSVImportIn,u=Depends(user_from_header)):
-        reader=csv.DictReader(io.StringIO(p.content.lstrip("\\ufeff")))
+        reader=csv.DictReader(io.StringIO(p.content.lstrip("\ufeff")))
         required={"date","document_ref","type","amount"}
         if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
             raise HTTPException(422,"ستون‌های لازم: date,document_ref,type,amount؛ ستون‌های اختیاری: party,account_code,description")
