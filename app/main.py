@@ -1482,6 +1482,10 @@ app.include_router(create_ai_command_center_router(db, user_from_header))
 def distribution_page():
     return FileResponse(ROOT / "static" / "distribution.html")
 
+@app.get("/dispatch-settlement")
+def dispatch_settlement_page():
+    return FileResponse(ROOT / "static" / "dispatch-settlement.html")
+
 @app.get("/finance")
 def finance_page():
     return FileResponse(ROOT / "static" / "finance.html")
