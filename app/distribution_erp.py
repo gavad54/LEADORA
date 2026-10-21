@@ -41,7 +41,7 @@ SCHEMAS={
  "receivables":{"title":"مطالبات افتتاحیه","required":["کد طرف حساب","نام مشتری","مبلغ طلب"],"columns":["کد طرف حساب","نام مشتری","مبلغ طلب","تاریخ سررسید","شرح"]},
  "payables":{"title":"بدهی‌های افتتاحیه","required":["کد طرف حساب","نام تأمین‌کننده","مبلغ بدهی"],"columns":["کد طرف حساب","نام تأمین‌کننده","مبلغ بدهی","تاریخ سررسید","شرح"]},
  "opening_finance":{"title":"مانده افتتاحیه مالی","required":["کد حساب","نام حساب","بدهکار افتتاحیه","بستانکار افتتاحیه"],"columns":["کد حساب","نام حساب","بدهکار افتتاحیه","بستانکار افتتاحیه","شرح"]}}
-DEFAULTS=[("1000","صندوق و بانک","asset"),("1100","حساب‌های دریافتنی","asset"),("1200","موجودی کالا","asset"),("2000","حساب‌های پرداختنی","liability"),("3000","سرمایه","equity"),("4000","فروش کالا","income"),("5000","بهای تمام‌شده کالای فروش‌رفته","expense"),("6000","هزینه‌های عملیاتی","expense")]
+DEFAULTS=[("1000","صندوق و بانک","asset"),("1010","وجه نقد نزد توزیع‌کننده","asset"),("1020","چک‌های دریافت‌شده در انتظار وصول","asset"),("1100","حساب‌های دریافتنی","asset"),("1200","موجودی کالا","asset"),("2000","حساب‌های پرداختنی","liability"),("3000","سرمایه","equity"),("4000","فروش کالا","income"),("5000","بهای تمام‌شده کالای فروش‌رفته","expense"),("6000","هزینه‌های عملیاتی","expense")]
 
 def minor(v, label="مبلغ"):
  try: d=Decimal(str(v if v not in (None,"") else "0")).quantize(Decimal(".01"),rounding=ROUND_HALF_UP)
@@ -101,6 +101,15 @@ def init_db(db):
   );
   CREATE INDEX IF NOT EXISTS idx_dispatch_manifests_tenant_date
     ON dist_dispatch_manifests(tenant_id,dispatch_date,id);
+  CREATE TABLE IF NOT EXISTS dist_dispatch_transactions(
+    id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, manifest_id INTEGER NOT NULL,
+    order_id INTEGER, transaction_type TEXT NOT NULL CHECK(transaction_type IN ('CASH_COLLECTION','CHECK_COLLECTION','CASH_REMITTANCE')),
+    amount_minor INTEGER NOT NULL CHECK(amount_minor>0), txn_date TEXT NOT NULL,
+    reference TEXT NOT NULL DEFAULT '', account_id INTEGER, status TEXT NOT NULL DEFAULT 'RECORDED',
+    created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_dispatch_transactions_tenant_manifest
+    ON dist_dispatch_transactions(tenant_id,manifest_id,transaction_type,status);
   """)
   cols={x["name"] for x in c.execute("PRAGMA table_info(dist_purchases)").fetchall()}
   if "warehouse_code" not in cols: c.execute("ALTER TABLE dist_purchases ADD COLUMN warehouse_code TEXT NOT NULL DEFAULT 'DEFAULT'")
@@ -154,6 +163,19 @@ class DispatchManifestIn(BaseModel):
  dispatch_date:str=Field(min_length=10,max_length=10)
  distributor_name:str=Field(min_length=1,max_length=160)
  invoices:list[DispatchAllocation]=Field(min_length=1,max_length=500)
+
+class DispatchCollectionIn(BaseModel):
+ order_id:int=Field(gt=0)
+ payment_type:str=Field(pattern="^(CASH|CHECK)$")
+ amount:Decimal=Field(gt=0)
+ txn_date:str=Field(min_length=10,max_length=10)
+ reference:str=Field(default="",max_length=160)
+
+class DispatchRemittanceIn(BaseModel):
+ cash_code:str=Field(min_length=1,max_length=40)
+ amount:Decimal=Field(gt=0)
+ txn_date:str=Field(min_length=10,max_length=10)
+ reference:str=Field(default="",max_length=160)
 
 class AccountIn(BaseModel):
  code:str=Field(min_length=1,max_length=30); name:str=Field(min_length=1,max_length=160); nature:str=Field(pattern="^(asset|liability|equity|income|expense)$"); parent_code:str=""
@@ -244,6 +266,7 @@ def create_router(db,user_dep):
  @r.post("/dispatch/manifests")
  def create_dispatch_manifest(b:DispatchManifestIn,u=Depends(user_dep)):
   t=tenant(u)
+  if not b.manifest_no.strip() or not b.distributor_name.strip():raise HTTPException(422,"شماره مانیفست و نام توزیع‌کننده الزامی است.")
   try:date.fromisoformat(b.dispatch_date)
   except (ValueError,TypeError):raise HTTPException(422,"تاریخ حواله باید YYYY-MM-DD باشد.")
   order_ids=[x.order_id for x in b.invoices]
@@ -270,8 +293,8 @@ def create_router(db,user_dep):
     mid=c.execute("INSERT INTO dist_dispatch_manifests(tenant_id,manifest_no,dispatch_date,distributor_name,created_by) VALUES(?,?,?,?,?)",
       (t,b.manifest_no.strip(),b.dispatch_date,b.distributor_name.strip(),u.get("id"))).lastrowid
    except sqlite3.IntegrityError:raise HTTPException(409,"شماره مانیفست تکراری است.")
-   c.executemany("INSERT INTO dist_dispatch_manifest_lines(tenant_id,manifest_id,order_id,invoice_total_minor,cash_minor,check_minor,credit_minor) VALUES(?,?,?,?,?,?,?)",
-     [(t,mid,*x) for x in allocations])
+   try:c.executemany("INSERT INTO dist_dispatch_manifest_lines(tenant_id,manifest_id,order_id,invoice_total_minor,cash_minor,check_minor,credit_minor) VALUES(?,?,?,?,?,?,?)",[(t,mid,*x) for x in allocations])
+   except sqlite3.IntegrityError:raise HTTPException(409,"یکی از فاکتورها هم‌زمان در مانیفست دیگری ثبت شده است.")
    audit(c,t,"distribution.dispatch_manifest.created:"+b.manifest_no.strip())
   return {"id":mid,"manifest_no":b.manifest_no.strip(),"dispatch_date":b.dispatch_date,"distributor_name":b.distributor_name.strip(),
           "status":"OPEN","invoice_count":len(allocations),"total":money(total),"cash_total":money(cash_total),
