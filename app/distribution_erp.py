@@ -77,6 +77,21 @@ def init_db(db):
   CREATE TABLE IF NOT EXISTS dist_fiscal_carryovers(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,from_year_id INTEGER NOT NULL,to_year_id INTEGER NOT NULL,account_code TEXT NOT NULL,amount_minor INTEGER NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,UNIQUE(tenant_id,from_year_id,to_year_id,account_code));
   """)
   c.executescript("""
+  CREATE TABLE IF NOT EXISTS dist_sales_returns(
+    id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, order_id INTEGER NOT NULL,
+    return_no TEXT NOT NULL, return_date TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','APPROVED','REJECTED')),
+    created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, approved_at TEXT,
+    UNIQUE(tenant_id,return_no)
+  );
+  CREATE TABLE IF NOT EXISTS dist_sales_return_lines(
+    id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL,
+    return_id INTEGER NOT NULL REFERENCES dist_sales_returns(id),
+    product_id INTEGER NOT NULL, quantity REAL NOT NULL CHECK(quantity>0),
+    revenue_minor INTEGER NOT NULL DEFAULT 0 CHECK(revenue_minor>=0),
+    cost_minor INTEGER NOT NULL DEFAULT 0 CHECK(cost_minor>=0),
+    UNIQUE(tenant_id,return_id,product_id)
+  );
   CREATE TABLE IF NOT EXISTS dist_dispatch_manifests(
     id INTEGER PRIMARY KEY,
     tenant_id INTEGER NOT NULL,
@@ -176,6 +191,17 @@ class DispatchRemittanceIn(BaseModel):
  amount:Decimal=Field(gt=0)
  txn_date:str=Field(min_length=10,max_length=10)
  reference:str=Field(default="",max_length=160)
+
+class SalesReturnLineIn(BaseModel):
+ product_id:int=Field(gt=0)
+ quantity:Decimal=Field(gt=0,le=Decimal("1000000000"))
+
+class SalesReturnIn(BaseModel):
+ order_id:int=Field(gt=0)
+ return_no:str=Field(min_length=1,max_length=80)
+ return_date:str=Field(min_length=10,max_length=10)
+ reason:str=Field(default="",max_length=500)
+ lines:list[SalesReturnLineIn]=Field(min_length=1,max_length=200)
 
 class AccountIn(BaseModel):
  code:str=Field(min_length=1,max_length=30); name:str=Field(min_length=1,max_length=160); nature:str=Field(pattern="^(asset|liability|equity|income|expense)$"); parent_code:str=""
@@ -557,12 +583,81 @@ def create_router(db,user_dep):
    c.execute("INSERT INTO dist_cash_moves(tenant_id,account_id,txn_date,direction,amount_minor,reference,memo) VALUES(?,?,?,?,?,?,?)",(t,acc["id"],b.txn_date,"IN",a,b.reference,"وصول فاکتور "+o["order_no"]))
    post(c,t,b.txn_date,"وصول فاکتور "+o["order_no"],"RECEIPT",b.order_id,[{"code":"1000","d":a},{"code":"1100","c":a}],u.get("id"));audit(c,t,"distribution.receipt:"+o["order_no"])
   return {"status":"POSTED","received":money(a),"remaining":money(o["total_minor"]-received-a)}
+ @r.get("/returns")
+ def list_returns(u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   rows=c.execute("SELECT r.*,s.order_no FROM dist_sales_returns r JOIN dist_sales s ON s.id=r.order_id AND s.tenant_id=r.tenant_id WHERE r.tenant_id=? ORDER BY r.id DESC LIMIT 200",(t,)).fetchall()
+   out=[]
+   for r0 in rows:
+    lines=c.execute("SELECT product_id,quantity,revenue_minor,cost_minor FROM dist_sales_return_lines WHERE tenant_id=? AND return_id=? ORDER BY id",(t,r0["id"])).fetchall()
+    out.append({"id":r0["id"],"return_no":r0["return_no"],"order_id":r0["order_id"],"order_no":r0["order_no"],"return_date":r0["return_date"],"reason":r0["reason"],"status":r0["status"],"lines":[{"product_id":x["product_id"],"quantity":x["quantity"],"revenue":money(x["revenue_minor"]),"cost":money(x["cost_minor"])} for x in lines]})
+  return out
+
+ @r.post("/returns")
+ def create_return(b:SalesReturnIn,u=Depends(user_dep)):
+  t=tenant(u)
+  try:date.fromisoformat(b.return_date)
+  except ValueError:raise HTTPException(422,"تاریخ برگشت نامعتبر است.")
+  if len({x.product_id for x in b.lines})!=len(b.lines):raise HTTPException(422,"هر کالا باید فقط یک بار در ردیف‌های برگشت درج شود.")
+  with db() as c:
+   order=c.execute("SELECT * FROM dist_sales WHERE tenant_id=? AND id=?",(t,b.order_id)).fetchone()
+   if not order:raise HTTPException(404,"فاکتور در شرکت شما یافت نشد.")
+   if order["status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"فقط فاکتور نهایی‌شده قابل برگشت است.")
+   sold=c.execute("SELECT product_id,SUM(quantity) quantity FROM dist_sale_lines WHERE tenant_id=? AND order_id=? GROUP BY product_id",(t,b.order_id)).fetchall()
+   sold_by={x["product_id"]:Decimal(str(x["quantity"])) for x in sold}
+   for line in b.lines:
+    if line.product_id not in sold_by:raise HTTPException(422,"کالای برگشتی در فاکتور اصلی وجود ندارد.")
+    previous=c.execute("SELECT COALESCE(SUM(l.quantity),0) FROM dist_sales_return_lines l JOIN dist_sales_returns r ON r.id=l.return_id AND r.tenant_id=l.tenant_id WHERE l.tenant_id=? AND r.order_id=? AND l.product_id=? AND r.status='APPROVED'",(t,b.order_id,line.product_id)).fetchone()[0]
+    if Decimal(str(previous))+line.quantity>sold_by[line.product_id]:raise HTTPException(409,"مقدار برگشتی از مقدار فروخته‌شده بیشتر است.")
+   try:
+    rid=c.execute("INSERT INTO dist_sales_returns(tenant_id,order_id,return_no,return_date,reason,created_by) VALUES(?,?,?,?,?,?)",(t,b.order_id,b.return_no.strip(),b.return_date,b.reason.strip(),u.get("id"))).lastrowid
+    c.executemany("INSERT INTO dist_sales_return_lines(tenant_id,return_id,product_id,quantity) VALUES(?,?,?,?)",[(t,rid,x.product_id,float(x.quantity)) for x in b.lines])
+   except sqlite3.IntegrityError:raise HTTPException(409,"شماره برگشت تکراری است یا ردیف برگشت نامعتبر است.")
+   audit(c,t,"distribution.return.draft:"+b.return_no.strip())
+  return {"id":rid,"return_no":b.return_no.strip(),"status":"DRAFT"}
+
+ @r.post("/returns/{return_id}/approve")
+ def approve_return(return_id:int,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   ret=c.execute("SELECT r.*,s.order_no,s.status order_status FROM dist_sales_returns r JOIN dist_sales s ON s.id=r.order_id AND s.tenant_id=r.tenant_id WHERE r.tenant_id=? AND r.id=?",(t,return_id)).fetchone()
+   if not ret:raise HTTPException(404,"برگشت کالا یافت نشد.")
+   if ret["status"]!="DRAFT":raise HTTPException(409,"فقط برگشت پیش‌نویس قابل تأیید است.")
+   if ret["order_status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"وضعیت فاکتور اجازه تأیید برگشت نمی‌دهد.")
+   lines=c.execute("SELECT * FROM dist_sales_return_lines WHERE tenant_id=? AND return_id=? ORDER BY id",(t,return_id)).fetchall()
+   revenue_total=0;cost_total=0;stock_updates=[]
+   for line in lines:
+    sale=c.execute("SELECT COALESCE(SUM(quantity),0) qty,COALESCE(SUM(total_minor),0) revenue FROM dist_sale_lines WHERE tenant_id=? AND order_id=? AND product_id=?",(t,ret["order_id"],line["product_id"])).fetchone()
+    if not sale or Decimal(str(sale["qty"]))<=0:raise HTTPException(409,"ردیف فاکتور اصلی یافت نشد.")
+    previous=c.execute("SELECT COALESCE(SUM(l.quantity),0) FROM dist_sales_return_lines l JOIN dist_sales_returns r ON r.id=l.return_id AND r.tenant_id=l.tenant_id WHERE l.tenant_id=? AND r.order_id=? AND l.product_id=? AND r.status='APPROVED'",(t,ret["order_id"],line["product_id"])).fetchone()[0]
+    if Decimal(str(previous))+Decimal(str(line["quantity"]))>Decimal(str(sale["qty"])):raise HTTPException(409,"مقدار برگشتی تأییدشده از مقدار فروش بیشتر می‌شود.")
+    revenue=minor(Decimal(str(sale["revenue"]))*Decimal(str(line["quantity"]))/Decimal(str(sale["qty"]))/100)
+    unit_cost=c.execute("SELECT cost_minor FROM dist_stock_moves WHERE tenant_id=? AND product_id=? AND reference=? AND kind='SALE_OUT' ORDER BY id LIMIT 1",(t,line["product_id"],ret["order_no"])).fetchone()
+    cost=minor(Decimal(str(unit_cost["cost_minor"] if unit_cost else 0))*Decimal(str(line["quantity"]))/100)
+    product=c.execute("SELECT stock FROM products WHERE tenant_id=? AND id=?",(t,line["product_id"])).fetchone()
+    if not product:raise HTTPException(404,"کالا در شرکت شما یافت نشد.")
+    revenue_total+=revenue;cost_total+=cost
+    stock_updates.append((line["product_id"],float(line["quantity"]),revenue,cost))
+   if revenue_total<=0:raise HTTPException(422,"مبلغ برگشت باید بیشتر از صفر باشد.")
+   post(c,t,ret["return_date"],"برگشت فروش "+ret["return_no"],"SALES_RETURN",return_id,[{"code":"4000","d":revenue_total},{"code":"1100","c":revenue_total}],u.get("id"))
+   if cost_total:
+    post(c,t,ret["return_date"],"برگشت بهای تمام‌شده "+ret["return_no"],"RETURN_COGS",return_id,[{"code":"1200","d":cost_total},{"code":"5000","c":cost_total}],u.get("id"))
+   for product_id,quantity,revenue,cost in stock_updates:
+    c.execute("UPDATE products SET stock=stock+? WHERE tenant_id=? AND id=?",(quantity,t,product_id))
+    wh=c.execute("SELECT warehouse_code FROM dist_item_data WHERE tenant_id=? AND product_id=?",(t,product_id)).fetchone()
+    c.execute("INSERT INTO dist_stock_moves(tenant_id,product_id,warehouse_code,quantity,cost_minor,kind,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",(t,product_id,wh["warehouse_code"] if wh else "DEFAULT",quantity,minor(Decimal(cost)/100/Decimal(str(quantity))) if quantity else 0,"RETURN_IN",ret["return_no"],u.get("id")))
+    c.execute("UPDATE dist_sales_return_lines SET revenue_minor=?,cost_minor=? WHERE tenant_id=? AND return_id=? AND product_id=?",(revenue,cost,t,return_id,product_id))
+   c.execute("UPDATE dist_sales_returns SET status='APPROVED',approved_at=CURRENT_TIMESTAMP WHERE tenant_id=? AND id=? AND status='DRAFT'",(t,return_id))
+   audit(c,t,"distribution.return.approved:"+ret["return_no"])
+  return {"status":"APPROVED","return_no":ret["return_no"],"revenue_reversed":money(revenue_total),"cost_reversed":money(cost_total),"inventory_restored":True,"settlement":"CUSTOMER_CREDIT_NOTE"}
+
  @r.get("/reports/receivables")
  def receivables(u=Depends(user_dep)):
   t=tenant(u)
   with db() as c:
    opening=c.execute("SELECT code,name,SUM(amount_minor) amount FROM dist_opening_balances WHERE tenant_id=? AND kind='CUSTOMER' GROUP BY code,name",(t,)).fetchall()
-   rows=c.execute("SELECT cu.id,cu.name,COALESCE(cc.code,'#'||cu.id) code,COALESCE(SUM(s.total_minor),0) total FROM customers cu LEFT JOIN dist_customer_codes cc ON cc.customer_id=cu.id AND cc.tenant_id=cu.tenant_id LEFT JOIN dist_sales s ON s.customer_id=cu.id AND s.tenant_id=cu.tenant_id AND s.status IN ('POSTED','DELIVERED') WHERE cu.tenant_id=? GROUP BY cu.id,cu.name,cc.code",(t,)).fetchall()
+   rows=c.execute("SELECT cu.id,cu.name,COALESCE(cc.code,'#'||cu.id) code,COALESCE(SUM(s.total_minor),0)-COALESCE((SELECT SUM(rl.revenue_minor) FROM dist_sales_returns r JOIN dist_sales_return_lines rl ON rl.return_id=r.id AND rl.tenant_id=r.tenant_id JOIN dist_sales rs ON rs.id=r.order_id AND rs.tenant_id=r.tenant_id WHERE r.tenant_id=cu.tenant_id AND rs.customer_id=cu.id AND r.status='APPROVED'),0) total FROM customers cu LEFT JOIN dist_customer_codes cc ON cc.customer_id=cu.id AND cc.tenant_id=cu.tenant_id LEFT JOIN dist_sales s ON s.customer_id=cu.id AND s.tenant_id=cu.tenant_id AND s.status IN ('POSTED','DELIVERED') WHERE cu.tenant_id=? GROUP BY cu.id,cu.name,cc.code",(t,)).fetchall()
    rr=c.execute("SELECT s.customer_id,SUM(r.amount_minor) amount FROM dist_customer_receipts r JOIN dist_sales s ON s.id=r.order_id AND s.tenant_id=r.tenant_id WHERE r.tenant_id=? GROUP BY s.customer_id",(t,)).fetchall()
   paid={x["customer_id"]:x["amount"] for x in rr};items=[{"code":x["code"],"name":x["name"],"opening":money(x["amount"]),"sales":"0.00","received":"0.00","outstanding":money(x["amount"])} for x in opening]
   for x in rows:
