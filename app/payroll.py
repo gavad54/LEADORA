@@ -49,7 +49,7 @@ class SaleAssignmentIn(BaseModel):
     employee_id: int = Field(gt=0)
 
 class PayrollRunIn(BaseModel):
-    period: str = Field(pattern=r"^\\d{4}-(0[1-9]|1[0-2])$")
+    period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
 
 def create_router(db, user_dep):
     r = APIRouter(prefix="/api/payroll", tags=["payroll"])
