@@ -186,6 +186,38 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
     allowed = client.get("/api/finance/owner/overview", headers=owner_headers)
     assert allowed.status_code == 200
 
+    # Recovery is an explicit, separately gated path for a wrongly claimed owner account.
+    recovery_headers, recovery = register(client, "Recovery Owner")
+    recovery_token = "test-owner-recovery-token-0123456789-abcdef"
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", recovery_token)
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", recovery["user"]["email"])
+
+    bad_token = client.post(
+        "/api/finance/owner/recover",
+        headers=recovery_headers,
+        json={"token": "wrong-owner-recovery-token-0123456789"},
+    )
+    assert bad_token.status_code == 403
+
+    wrong_account = client.post(
+        "/api/finance/owner/recover",
+        headers=other_headers,
+        json={"token": recovery_token},
+    )
+    assert wrong_account.status_code == 403
+
+    recovered = client.post(
+        "/api/finance/owner/recover",
+        headers=recovery_headers,
+        json={"token": recovery_token},
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["is_platform_owner"] is True
+    assert client.get("/api/finance/identity", headers=recovery_headers).json()["is_platform_owner"] is True
+    assert client.get("/api/finance/identity", headers=owner_headers).json()["is_platform_owner"] is False
+    assert client.get("/api/finance/owner/overview", headers=owner_headers).status_code == 403
+    assert client.get("/api/finance/owner/overview", headers=recovery_headers).status_code == 200
+
 
 def test_integration_webhook_key_rotation_ingest_and_tenant_isolation():
     client = TestClient(app)
