@@ -118,6 +118,12 @@ def install_accounting(app, db, user_from_header, root:Path):
         if p.normal_side!=("debit" if p.account_type in ("asset","expense") else "credit"):raise HTTPException(422,"ماهیت عادی با گروه حساب سازگار نیست.")
         with db() as c:
             seed(c,u["tenant_id"])
+            if p.parent_code:
+                if p.parent_code == p.code:
+                    raise HTTPException(422,"حساب نمی‌تواند والد خودش باشد.")
+                parent=c.execute("SELECT code FROM gl_accounts WHERE tenant_id=? AND code=? AND is_active=1",(u["tenant_id"],p.parent_code)).fetchone()
+                if not parent:
+                    raise HTTPException(422,"کد حساب والد معتبر نیست.")
             try:c.execute("INSERT INTO gl_accounts(tenant_id,code,name,account_type,normal_side,parent_code) VALUES(?,?,?,?,?,?)",(u["tenant_id"],p.code,p.name,p.account_type,p.normal_side,p.parent_code))
             except sqlite3.IntegrityError:raise HTTPException(409,"کد حساب تکراری است.")
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(u["tenant_id"],"accounting.account.create:"+p.code))
