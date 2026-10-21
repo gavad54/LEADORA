@@ -728,24 +728,24 @@ def add_payment(invoice_id: int, body: PaymentIn, user=Depends(user_from_header)
 @app.get("/api/agents/actions")
 def list_agent_actions(user=Depends(user_from_header)):
     with db() as c:
-        rows=c.execute("SELECT id,agent,severity,title,explanation,recommendation,status,approval_required,created_at FROM agent_actions WHERE tenant_id=? ORDER BY id DESC LIMIT 200",(user["tenant_id"],)).fetchall()
+        rows=c.execute("SELECT id,agent,severity,title,rationale,recommendation,status,sensitive,created_at FROM agent_actions WHERE tenant_id=? ORDER BY id DESC LIMIT 200",(user["tenant_id"],)).fetchall()
     return [dict(r) for r in rows]
 
 @app.post("/api/agents/actions/{action_id}/resolve")
 def resolve_agent_action(action_id: int, user=Depends(user_from_header)):
     tid=user["tenant_id"]
     with db() as c:
-        cur=c.execute("UPDATE agent_actions SET status='resolved',resolved_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=? AND status='open'",(action_id,tid))
-        if not cur.rowcount: raise HTTPException(404,"اقدام باز یافت نشد.")
-        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"agent_action.resolved"))
-    return {"message":"اقدام علامت‌گذاری شد."}
+        cur=c.execute("UPDATE agent_actions SET status='done' WHERE id=? AND tenant_id=? AND status='approved'",(action_id,tid))
+        if not cur.rowcount: raise HTTPException(409,"فقط اقدام تأییدشده و متعلق به این شرکت قابل تکمیل است.")
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"agent_action.done"))
+    return {"message":"اقدام تأییدشده تکمیل شد."}
 
 @app.get("/api/import/template/{dataset}.csv")
 def import_template(dataset: str, user=Depends(user_from_header)):
     templates={
       "invoices":["invoice_number","customer_id","issue_date(YYYY-MM-DD)","due_date(YYYY-MM-DD)","amount","note"],
-      "expenses":["category","description","amount","due_date(YYYY-MM-DD)","status(planned/paid/cancelled)","vendor"],
-      "opportunities":["title","source","stage(lead/qualified/proposal/negotiation/won/lost)","estimated_value","expected_close_date(YYYY-MM-DD)","last_contact_at(YYYY-MM-DD)","lost_reason"]
+      "expenses":["title","category","amount","due_date(YYYY-MM-DD)","status(pending/paid)"],
+      "opportunities":["title","customer_id","source","stage","estimated_value","expected_close_date(YYYY-MM-DD)","last_contact_date(YYYY-MM-DD)","lost_reason"]
     }
     if dataset not in templates: raise HTTPException(404,"قالب برای این نوع داده وجود ندارد.")
     stream=io.StringIO(newline=""); csv.writer(stream).writerow(templates[dataset])
