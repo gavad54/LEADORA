@@ -41,7 +41,7 @@ SCHEMAS={
  "receivables":{"title":"مطالبات افتتاحیه","required":["کد طرف حساب","نام مشتری","مبلغ طلب"],"columns":["کد طرف حساب","نام مشتری","مبلغ طلب","تاریخ سررسید","شرح"]},
  "payables":{"title":"بدهی‌های افتتاحیه","required":["کد طرف حساب","نام تأمین‌کننده","مبلغ بدهی"],"columns":["کد طرف حساب","نام تأمین‌کننده","مبلغ بدهی","تاریخ سررسید","شرح"]},
  "opening_finance":{"title":"مانده افتتاحیه مالی","required":["کد حساب","نام حساب","بدهکار افتتاحیه","بستانکار افتتاحیه"],"columns":["کد حساب","نام حساب","بدهکار افتتاحیه","بستانکار افتتاحیه","شرح"]}}
-DEFAULTS=[("1000","صندوق و بانک","asset"),("1100","حساب‌های دریافتنی","asset"),("1200","موجودی کالا","asset"),("2000","حساب‌های پرداختنی","liability"),("3000","سرمایه","equity"),("4000","فروش کالا","income"),("5000","بهای تمام‌شده کالای فروش‌رفته","expense"),("6000","هزینه‌های عملیاتی","expense")]
+DEFAULTS=[("1000","صندوق و بانک","asset"),("1010","وجه نقد نزد توزیع‌کننده","asset"),("1020","چک‌های دریافت‌شده در انتظار وصول","asset"),("1100","حساب‌های دریافتنی","asset"),("1200","موجودی کالا","asset"),("2000","حساب‌های پرداختنی","liability"),("3000","سرمایه","equity"),("4000","فروش کالا","income"),("5000","بهای تمام‌شده کالای فروش‌رفته","expense"),("6000","هزینه‌های عملیاتی","expense")]
 
 def minor(v, label="مبلغ"):
  try: d=Decimal(str(v if v not in (None,"") else "0")).quantize(Decimal(".01"),rounding=ROUND_HALF_UP)
@@ -75,6 +75,41 @@ def init_db(db):
   CREATE TABLE IF NOT EXISTS dist_period_locks(tenant_id INTEGER NOT NULL,period TEXT NOT NULL,PRIMARY KEY(tenant_id,period));
   CREATE TABLE IF NOT EXISTS dist_fiscal_years(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,jalali_year INTEGER NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'OPEN',carry_forward_done INTEGER NOT NULL DEFAULT 0,created_at TEXT DEFAULT CURRENT_TIMESTAMP,closed_at TEXT,UNIQUE(tenant_id,jalali_year));
   CREATE TABLE IF NOT EXISTS dist_fiscal_carryovers(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,from_year_id INTEGER NOT NULL,to_year_id INTEGER NOT NULL,account_code TEXT NOT NULL,amount_minor INTEGER NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,UNIQUE(tenant_id,from_year_id,to_year_id,account_code));
+  """)
+  c.executescript("""
+  CREATE TABLE IF NOT EXISTS dist_dispatch_manifests(
+    id INTEGER PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    manifest_no TEXT NOT NULL,
+    dispatch_date TEXT NOT NULL,
+    distributor_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','SETTLED','CANCELLED')),
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(tenant_id,manifest_no)
+  );
+  CREATE TABLE IF NOT EXISTS dist_dispatch_manifest_lines(
+    id INTEGER PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    manifest_id INTEGER NOT NULL REFERENCES dist_dispatch_manifests(id),
+    order_id INTEGER NOT NULL,
+    invoice_total_minor INTEGER NOT NULL CHECK(invoice_total_minor>=0),
+    cash_minor INTEGER NOT NULL DEFAULT 0 CHECK(cash_minor>=0),
+    check_minor INTEGER NOT NULL DEFAULT 0 CHECK(check_minor>=0),
+    credit_minor INTEGER NOT NULL DEFAULT 0 CHECK(credit_minor>=0),
+    UNIQUE(tenant_id,order_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_dispatch_manifests_tenant_date
+    ON dist_dispatch_manifests(tenant_id,dispatch_date,id);
+  CREATE TABLE IF NOT EXISTS dist_dispatch_transactions(
+    id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, manifest_id INTEGER NOT NULL,
+    order_id INTEGER, transaction_type TEXT NOT NULL CHECK(transaction_type IN ('CASH_COLLECTION','CHECK_COLLECTION','CASH_REMITTANCE')),
+    amount_minor INTEGER NOT NULL CHECK(amount_minor>0), txn_date TEXT NOT NULL,
+    reference TEXT NOT NULL DEFAULT '', account_id INTEGER, status TEXT NOT NULL DEFAULT 'RECORDED',
+    created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_dispatch_transactions_tenant_manifest
+    ON dist_dispatch_transactions(tenant_id,manifest_id,transaction_type,status);
   """)
   cols={x["name"] for x in c.execute("PRAGMA table_info(dist_purchases)").fetchall()}
   if "warehouse_code" not in cols: c.execute("ALTER TABLE dist_purchases ADD COLUMN warehouse_code TEXT NOT NULL DEFAULT 'DEFAULT'")
@@ -117,6 +152,31 @@ class CashMove(BaseModel):
  code:str; txn_date:str=Field(min_length=10,max_length=10); direction:str=Field(pattern="^(IN|OUT)$"); amount:Decimal=Field(gt=0); reference:str=""; memo:str=""
 class ReceiptIn(BaseModel):
  order_id:int; cash_code:str; txn_date:str=Field(min_length=10,max_length=10); amount:Decimal=Field(gt=0); reference:str=""
+class DispatchAllocation(BaseModel):
+ order_id:int=Field(gt=0)
+ cash_amount:Decimal=Field(default=Decimal("0"),ge=0)
+ check_amount:Decimal=Field(default=Decimal("0"),ge=0)
+ credit_amount:Decimal=Field(default=Decimal("0"),ge=0)
+
+class DispatchManifestIn(BaseModel):
+ manifest_no:str=Field(min_length=1,max_length=80)
+ dispatch_date:str=Field(min_length=10,max_length=10)
+ distributor_name:str=Field(min_length=1,max_length=160)
+ invoices:list[DispatchAllocation]=Field(min_length=1,max_length=500)
+
+class DispatchCollectionIn(BaseModel):
+ order_id:int=Field(gt=0)
+ payment_type:str=Field(pattern="^(CASH|CHECK)$")
+ amount:Decimal=Field(gt=0)
+ txn_date:str=Field(min_length=10,max_length=10)
+ reference:str=Field(default="",max_length=160)
+
+class DispatchRemittanceIn(BaseModel):
+ cash_code:str=Field(min_length=1,max_length=40)
+ amount:Decimal=Field(gt=0)
+ txn_date:str=Field(min_length=10,max_length=10)
+ reference:str=Field(default="",max_length=160)
+
 class AccountIn(BaseModel):
  code:str=Field(min_length=1,max_length=30); name:str=Field(min_length=1,max_length=160); nature:str=Field(pattern="^(asset|liability|equity|income|expense)$"); parent_code:str=""
 class JournalLineIn(BaseModel):
@@ -203,6 +263,168 @@ def create_router(db,user_dep):
    except sqlite3.IntegrityError:raise HTTPException(409,"کد انبار تکراری است.")
    audit(c,t,"distribution.warehouse.created:"+b.code)
   return {"status":"created","code":b.code}
+ @r.post("/dispatch/manifests")
+ def create_dispatch_manifest(b:DispatchManifestIn,u=Depends(user_dep)):
+  t=tenant(u)
+  if not b.manifest_no.strip() or not b.distributor_name.strip():raise HTTPException(422,"شماره مانیفست و نام توزیع‌کننده الزامی است.")
+  try:date.fromisoformat(b.dispatch_date)
+  except (ValueError,TypeError):raise HTTPException(422,"تاریخ حواله باید YYYY-MM-DD باشد.")
+  order_ids=[x.order_id for x in b.invoices]
+  if len(set(order_ids))!=len(order_ids):raise HTTPException(422,"یک فاکتور در مانیفست تکرار شده است.")
+  allocations=[]
+  total=cash_total=check_total=credit_total=0
+  with db() as c:
+   for x in b.invoices:
+    order=c.execute("SELECT id,order_no,customer_id,status,total_minor FROM dist_sales WHERE tenant_id=? AND id=?",(t,x.order_id)).fetchone()
+    if not order:raise HTTPException(404,"فاکتور در شرکت شما یافت نشد.")
+    if order["status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"فقط فاکتور نهایی‌شده قابل درج در مانیفست است.")
+    received=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_customer_receipts WHERE tenant_id=? AND order_id=?",(t,x.order_id)).fetchone()[0]
+    outstanding=order["total_minor"]-received
+    if outstanding<0:raise HTTPException(409,"جمع دریافت‌های ثبت‌شده از مبلغ فاکتور بیشتر است.")
+    cash=minor(x.cash_amount,"مبلغ نقد")
+    check=minor(x.check_amount,"مبلغ چک")
+    credit=minor(x.credit_amount,"مبلغ اعتباری")
+    if cash+check+credit!=outstanding:raise HTTPException(422,f"تفکیک نقد/چک/اعتباری فاکتور {order['order_no']} با مانده فاکتور برابر نیست.")
+    if c.execute("SELECT 1 FROM dist_dispatch_manifest_lines WHERE tenant_id=? AND order_id=?",(t,x.order_id)).fetchone():
+     raise HTTPException(409,"این فاکتور قبلاً در یک مانیفست ثبت شده است.")
+    allocations.append((x.order_id,outstanding,cash,check,credit))
+    total+=outstanding;cash_total+=cash;check_total+=check;credit_total+=credit
+   try:
+    mid=c.execute("INSERT INTO dist_dispatch_manifests(tenant_id,manifest_no,dispatch_date,distributor_name,created_by) VALUES(?,?,?,?,?)",
+      (t,b.manifest_no.strip(),b.dispatch_date,b.distributor_name.strip(),u.get("id"))).lastrowid
+   except sqlite3.IntegrityError:raise HTTPException(409,"شماره مانیفست تکراری است.")
+   try:c.executemany("INSERT INTO dist_dispatch_manifest_lines(tenant_id,manifest_id,order_id,invoice_total_minor,cash_minor,check_minor,credit_minor) VALUES(?,?,?,?,?,?,?)",[(t,mid,*x) for x in allocations])
+   except sqlite3.IntegrityError:raise HTTPException(409,"یکی از فاکتورها هم‌زمان در مانیفست دیگری ثبت شده است.")
+   audit(c,t,"distribution.dispatch_manifest.created:"+b.manifest_no.strip())
+  return {"id":mid,"manifest_no":b.manifest_no.strip(),"dispatch_date":b.dispatch_date,"distributor_name":b.distributor_name.strip(),
+          "status":"OPEN","invoice_count":len(allocations),"total":money(total),"cash_total":money(cash_total),
+          "check_total":money(check_total),"credit_total":money(credit_total)}
+
+ @r.get("/dispatch/manifests")
+ def list_dispatch_manifests(u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   rows=c.execute("""SELECT m.id,m.manifest_no,m.dispatch_date,m.distributor_name,m.status,m.created_at,
+      COUNT(l.id) invoice_count,COALESCE(SUM(l.invoice_total_minor),0) total,
+      COALESCE(SUM(l.cash_minor),0) cash_total,COALESCE(SUM(l.check_minor),0) check_total,
+      COALESCE(SUM(l.credit_minor),0) credit_total
+      FROM dist_dispatch_manifests m LEFT JOIN dist_dispatch_manifest_lines l
+      ON l.tenant_id=m.tenant_id AND l.manifest_id=m.id
+      WHERE m.tenant_id=? GROUP BY m.id ORDER BY m.id DESC LIMIT 500""",(t,)).fetchall()
+  return [{"id":x["id"],"manifest_no":x["manifest_no"],"dispatch_date":x["dispatch_date"],
+    "distributor_name":x["distributor_name"],"status":x["status"],"created_at":x["created_at"],
+    "invoice_count":x["invoice_count"],"total":money(x["total"]),"cash_total":money(x["cash_total"]),
+    "check_total":money(x["check_total"]),"credit_total":money(x["credit_total"])} for x in rows]
+
+ @r.get("/dispatch/manifests/{manifest_id}")
+ def get_dispatch_manifest(manifest_id:int,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   m=c.execute("""SELECT m.id,m.manifest_no,m.dispatch_date,m.distributor_name,m.status,m.created_at,
+      COUNT(l.id) invoice_count,COALESCE(SUM(l.invoice_total_minor),0) total,
+      COALESCE(SUM(l.cash_minor),0) cash_total,COALESCE(SUM(l.check_minor),0) check_total,
+      COALESCE(SUM(l.credit_minor),0) credit_total
+      FROM dist_dispatch_manifests m LEFT JOIN dist_dispatch_manifest_lines l
+      ON l.tenant_id=m.tenant_id AND l.manifest_id=m.id
+      WHERE m.tenant_id=? AND m.id=? GROUP BY m.id""",(t,manifest_id)).fetchone()
+   if not m:raise HTTPException(404,"مانیفست در شرکت شما یافت نشد.")
+   lines=c.execute("""SELECT l.order_id,s.order_no,s.order_date,s.status invoice_status,cu.name customer_name,
+      l.invoice_total_minor,l.cash_minor,l.check_minor,l.credit_minor
+      FROM dist_dispatch_manifest_lines l
+      JOIN dist_sales s ON s.id=l.order_id AND s.tenant_id=l.tenant_id
+      JOIN customers cu ON cu.id=s.customer_id AND cu.tenant_id=s.tenant_id
+      WHERE l.tenant_id=? AND l.manifest_id=? ORDER BY l.id""",(t,manifest_id)).fetchall()
+  return {"id":m["id"],"manifest_no":m["manifest_no"],"dispatch_date":m["dispatch_date"],
+    "distributor_name":m["distributor_name"],"status":m["status"],"created_at":m["created_at"],
+    "invoice_count":m["invoice_count"],"total":money(m["total"]),"cash_total":money(m["cash_total"]),
+    "check_total":money(m["check_total"]),"credit_total":money(m["credit_total"]),
+    "invoices":[{"order_id":x["order_id"],"order_no":x["order_no"],"order_date":x["order_date"],
+      "invoice_status":x["invoice_status"],"customer_name":x["customer_name"],
+      "invoice_total":money(x["invoice_total_minor"]),"cash_amount":money(x["cash_minor"]),
+      "check_amount":money(x["check_minor"]),"credit_amount":money(x["credit_minor"])} for x in lines]}
+
+ @r.post("/dispatch/manifests/{manifest_id}/collections")
+ def record_dispatch_collection(manifest_id:int,b:DispatchCollectionIn,u=Depends(user_dep)):
+  t=tenant(u)
+  try:date.fromisoformat(b.txn_date)
+  except (ValueError,TypeError):raise HTTPException(422,"تاریخ دریافت باید YYYY-MM-DD باشد.")
+  amount=minor(b.amount,"مبلغ دریافت")
+  if amount<=0:raise HTTPException(422,"مبلغ دریافت باید بیشتر از صفر باشد.")
+  kind="CASH_COLLECTION" if b.payment_type=="CASH" else "CHECK_COLLECTION"
+  cap_col="cash_minor" if b.payment_type=="CASH" else "check_minor"
+  gl_code="1010" if b.payment_type=="CASH" else "1020"
+  with db() as c:
+   m=c.execute("SELECT id,status FROM dist_dispatch_manifests WHERE tenant_id=? AND id=?",(t,manifest_id)).fetchone()
+   if not m:raise HTTPException(404,"مانیفست یافت نشد.")
+   if m["status"]!="OPEN":raise HTTPException(409,"مانیفست بسته یا لغو شده است.")
+   line=c.execute(f"SELECT {cap_col} allocation FROM dist_dispatch_manifest_lines WHERE tenant_id=? AND manifest_id=? AND order_id=?",(t,manifest_id,b.order_id)).fetchone()
+   if not line:raise HTTPException(404,"فاکتور متعلق به این مانیفست نیست.")
+   prior=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_dispatch_transactions WHERE tenant_id=? AND manifest_id=? AND order_id=? AND transaction_type=?",(t,manifest_id,b.order_id,kind)).fetchone()[0]
+   if prior+amount>line["allocation"]:raise HTTPException(409,"مبلغ دریافت از سهم تعیین‌شده در مانیفست بیشتر است.")
+   tid=c.execute("INSERT INTO dist_dispatch_transactions(tenant_id,manifest_id,order_id,transaction_type,amount_minor,txn_date,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",(t,manifest_id,b.order_id,kind,amount,b.txn_date,b.reference.strip(),u.get("id"))).lastrowid
+   # Record accepted customer payment for AR aging; account_id=0 denotes funds/checks still held by the distributor, not company treasury.
+   c.execute("INSERT INTO dist_customer_receipts(tenant_id,order_id,account_id,txn_date,amount_minor,reference) VALUES(?,?,?,?,?,?)",(t,b.order_id,0,b.txn_date,amount,b.reference.strip() or "DIST-"+str(tid)))
+   post(c,t,b.txn_date,"دریافت توزیع‌کننده از فاکتور "+str(b.order_id),kind,tid,[{"code":gl_code,"d":amount},{"code":"1100","c":amount}],u.get("id"))
+   audit(c,t,"distribution.dispatch.collection:"+str(tid))
+  return {"id":tid,"manifest_id":manifest_id,"order_id":b.order_id,"payment_type":b.payment_type,"amount":money(amount),"status":"RECORDED","journal_posted":True}
+
+ @r.post("/dispatch/manifests/{manifest_id}/remittances")
+ def record_dispatch_remittance(manifest_id:int,b:DispatchRemittanceIn,u=Depends(user_dep)):
+  t=tenant(u)
+  try:date.fromisoformat(b.txn_date)
+  except (ValueError,TypeError):raise HTTPException(422,"تاریخ تحویل وجه باید YYYY-MM-DD باشد.")
+  amount=minor(b.amount,"مبلغ تحویل وجه")
+  if amount<=0:raise HTTPException(422,"مبلغ تحویل وجه باید بیشتر از صفر باشد.")
+  with db() as c:
+   m=c.execute("SELECT id,status FROM dist_dispatch_manifests WHERE tenant_id=? AND id=?",(t,manifest_id)).fetchone()
+   if not m:raise HTTPException(404,"مانیفست یافت نشد.")
+   if m["status"]!="OPEN":raise HTTPException(409,"مانیفست بسته یا لغو شده است.")
+   account=c.execute("SELECT id,code,name FROM dist_cash_accounts WHERE tenant_id=? AND code=?",(t,b.cash_code.strip())).fetchone()
+   if not account:raise HTTPException(404,"حساب صندوق/بانک شرکت یافت نشد.")
+   collected=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_dispatch_transactions WHERE tenant_id=? AND manifest_id=? AND transaction_type='CASH_COLLECTION'",(t,manifest_id)).fetchone()[0]
+   remitted=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_dispatch_transactions WHERE tenant_id=? AND manifest_id=? AND transaction_type='CASH_REMITTANCE'",(t,manifest_id)).fetchone()[0]
+   if remitted+amount>collected:raise HTTPException(409,"مبلغ تحویل به شرکت از وجه نقد واقعاً دریافت‌شده بیشتر است.")
+   tid=c.execute("INSERT INTO dist_dispatch_transactions(tenant_id,manifest_id,transaction_type,amount_minor,txn_date,reference,account_id,created_by) VALUES(?,?,'CASH_REMITTANCE',?,?,?,?,?)",(t,manifest_id,amount,b.txn_date,b.reference.strip(),account["id"],u.get("id"))).lastrowid
+   c.execute("INSERT INTO dist_cash_moves(tenant_id,account_id,txn_date,direction,amount_minor,reference,memo) VALUES(?,?,?,'IN',?,?,?)",(t,account["id"],b.txn_date,amount,b.reference.strip(),"تحویل وجه نقد توزیع‌کننده"))
+   post(c,t,b.txn_date,"تحویل وجه نقد توزیع‌کننده","DISTRIBUTOR_REMITTANCE",tid,[{"code":"1000","d":amount},{"code":"1010","c":amount}],u.get("id"))
+   audit(c,t,"distribution.dispatch.remittance:"+str(tid))
+  return {"id":tid,"manifest_id":manifest_id,"cash_account":account["code"],"amount":money(amount),"status":"RECORDED","journal_posted":True}
+
+ @r.post("/dispatch/transactions/{transaction_id}/handoff-check")
+ def handoff_dispatch_check(transaction_id:int,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   tx=c.execute("SELECT * FROM dist_dispatch_transactions WHERE tenant_id=? AND id=? AND transaction_type='CHECK_COLLECTION'",(t,transaction_id)).fetchone()
+   if not tx:raise HTTPException(404,"چک دریافت‌شده یافت نشد.")
+   if tx["status"]!="RECORDED":raise HTTPException(409,"وضعیت چک اجازه تحویل ندارد.")
+   c.execute("UPDATE dist_dispatch_transactions SET status='HANDED_OVER' WHERE tenant_id=? AND id=?",(t,transaction_id))
+   audit(c,t,"distribution.dispatch.check_handed_over:"+str(transaction_id))
+  return {"id":transaction_id,"status":"HANDED_OVER","note":"تحویل فیزیکی ثبت شد؛ چک هنوز وصول‌شده محسوب نمی‌شود."}
+
+ @r.post("/dispatch/transactions/{transaction_id}/clear-check")
+ def clear_dispatch_check(transaction_id:int,payload:dict,u=Depends(user_dep)):
+  t=tenant(u)
+  try:txn_date=date.fromisoformat(str(payload.get("txn_date") or date.today().isoformat())).isoformat()
+  except (ValueError,TypeError):raise HTTPException(422,"تاریخ وصول چک نامعتبر است.")
+  with db() as c:
+   tx=c.execute("SELECT * FROM dist_dispatch_transactions WHERE tenant_id=? AND id=? AND transaction_type='CHECK_COLLECTION'",(t,transaction_id)).fetchone()
+   if not tx:raise HTTPException(404,"چک دریافت‌شده یافت نشد.")
+   if tx["status"]!="HANDED_OVER":raise HTTPException(409,"ابتدا تحویل چک به شرکت را ثبت کنید.")
+   post(c,t,txn_date,"وصول چک توزیع‌کننده","DISTRIBUTOR_CHECK_CLEARANCE",transaction_id,[{"code":"1000","d":tx["amount_minor"]},{"code":"1020","c":tx["amount_minor"]}],u.get("id"))
+   c.execute("UPDATE dist_dispatch_transactions SET status='CLEARED' WHERE tenant_id=? AND id=?",(t,transaction_id))
+   audit(c,t,"distribution.dispatch.check_cleared:"+str(transaction_id))
+  return {"id":transaction_id,"status":"CLEARED","amount":money(tx["amount_minor"]),"journal_posted":True}
+
+ @r.get("/dispatch/manifests/{manifest_id}/settlement")
+ def dispatch_settlement_summary(manifest_id:int,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   m=c.execute("SELECT id,manifest_no,status FROM dist_dispatch_manifests WHERE tenant_id=? AND id=?",(t,manifest_id)).fetchone()
+   if not m:raise HTTPException(404,"مانیفست یافت نشد.")
+   rows=c.execute("SELECT transaction_type,status,COALESCE(SUM(amount_minor),0) amount FROM dist_dispatch_transactions WHERE tenant_id=? AND manifest_id=? GROUP BY transaction_type,status ORDER BY transaction_type,status",(t,manifest_id)).fetchall()
+   txs=c.execute("SELECT id,order_id,transaction_type,amount_minor,txn_date,reference,status FROM dist_dispatch_transactions WHERE tenant_id=? AND manifest_id=? ORDER BY id",(t,manifest_id)).fetchall()
+  return {"manifest_id":m["id"],"manifest_no":m["manifest_no"],"manifest_status":m["status"],"totals":[{"type":x["transaction_type"],"status":x["status"],"amount":money(x["amount"])} for x in rows],"transactions":[{"id":x["id"],"order_id":x["order_id"],"type":x["transaction_type"],"amount":money(x["amount_minor"]),"txn_date":x["txn_date"],"reference":x["reference"],"status":x["status"]} for x in txs]}
+
  @r.get("/sales")
  def sales(u=Depends(user_dep)):
   with db() as c:

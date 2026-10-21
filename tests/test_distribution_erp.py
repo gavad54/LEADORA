@@ -91,3 +91,160 @@ def test_fiscal_year_close_blocks_new_journals_in_closed_year(tmp_path):
     assert order.status_code==200,order.text
     posted=c.post('/api/distribution/sales/'+str(order.json()['id'])+'/post')
     assert posted.status_code==409
+
+
+def _posted_invoice(client, order_no, customer_id=1, product_id=1, price="10"):
+    created = client.post("/api/distribution/sales", json={
+        "order_no": order_no,
+        "customer_id": customer_id,
+        "order_date": "2026-10-20",
+        "lines": [{"product_id": product_id, "quantity": 1, "unit_price": price}],
+    })
+    assert created.status_code == 200, created.text
+    order_id = created.json()["id"]
+    posted = client.post(f"/api/distribution/sales/{order_id}/post")
+    assert posted.status_code == 200, posted.text
+    return order_id
+
+
+def test_dispatch_manifest_totals_and_tenant_isolation(tmp_path):
+    db = factory(tmp_path / "dispatch.sqlite")
+    c = client(db, 1)
+    first = _posted_invoice(c, "SO-MAN-1")
+    second = _posted_invoice(c, "SO-MAN-2", price="20")
+    with db() as conn:
+        stock_before = conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0]
+        journal_count_before = conn.execute("SELECT COUNT(*) FROM dist_journals WHERE tenant_id=1").fetchone()[0]
+
+    response = c.post("/api/distribution/dispatch/manifests", json={
+        "manifest_no": "MAN-2026-001",
+        "dispatch_date": "2026-10-21",
+        "distributor_name": "Route A",
+        "invoices": [
+            {"order_id": first, "cash_amount": "10.00", "check_amount": "0", "credit_amount": "0"},
+            {"order_id": second, "cash_amount": "0", "check_amount": "5.00", "credit_amount": "15.00"},
+        ],
+    })
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["invoice_count"] == 2
+    assert data["total"] == "30.00"
+    assert data["cash_total"] == "10.00"
+    assert data["check_total"] == "5.00"
+    assert data["credit_total"] == "15.00"
+
+    listed = c.get("/api/distribution/dispatch/manifests")
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    detail = c.get(f"/api/distribution/dispatch/manifests/{data['id']}")
+    assert detail.status_code == 200
+    assert len(detail.json()["invoices"]) == 2
+    other = client(db, 2)
+    assert other.get(f"/api/distribution/dispatch/manifests/{data['id']}").status_code == 404
+    assert other.get("/api/distribution/dispatch/manifests").json() == []
+    with db() as conn:
+        stock_after = conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0]
+        journal_count_after = conn.execute("SELECT COUNT(*) FROM dist_journals WHERE tenant_id=1").fetchone()[0]
+    assert stock_after == stock_before
+    assert journal_count_after == journal_count_before
+
+
+def test_dispatch_manifest_rejects_invalid_allocations_and_duplicate_manifest(tmp_path):
+    db = factory(tmp_path / "dispatch-invalid.sqlite")
+    c = client(db, 1)
+    order_id = _posted_invoice(c, "SO-MAN-INVALID")
+    base = {
+        "manifest_no": "MAN-UNIQUE",
+        "dispatch_date": "2026-10-21",
+        "distributor_name": "Route B",
+        "invoices": [{"order_id": order_id, "cash_amount": "10", "check_amount": "0", "credit_amount": "0"}],
+    }
+    mismatch = {**base, "manifest_no": "MAN-MISMATCH",
+                "invoices": [{"order_id": order_id, "cash_amount": "9", "check_amount": "0", "credit_amount": "0"}]}
+    assert c.post("/api/distribution/dispatch/manifests", json=mismatch).status_code == 422
+
+    duplicate_invoice = {**base, "manifest_no": "MAN-REPEATED",
+        "invoices": [base["invoices"][0], base["invoices"][0]]}
+    assert c.post("/api/distribution/dispatch/manifests", json=duplicate_invoice).status_code == 422
+
+    other = client(db, 2)
+    cross_tenant = {**base, "manifest_no": "MAN-CROSS-TENANT"}
+    assert other.post("/api/distribution/dispatch/manifests", json=cross_tenant).status_code == 404
+
+    first = c.post("/api/distribution/dispatch/manifests", json=base)
+    assert first.status_code == 200, first.text
+    another_order = _posted_invoice(c, "SO-MAN-DUPLICATE")
+    duplicate_number = {**base, "invoices": [
+        {"order_id": another_order, "cash_amount": "10", "check_amount": "0", "credit_amount": "0"}
+    ]}
+    assert c.post("/api/distribution/dispatch/manifests", json=duplicate_number).status_code == 409
+    another_manifest = {**base, "manifest_no": "MAN-ALREADY-ASSIGNED"}
+    assert c.post("/api/distribution/dispatch/manifests", json=another_manifest).status_code == 409
+
+
+def test_dispatch_collection_remittance_and_check_lifecycle(tmp_path):
+    db = factory(tmp_path / "dispatch-settlement.sqlite")
+    c = client(db, 1)
+    order_id = _posted_invoice(c, "SO-SETTLE")
+    manifest = c.post("/api/distribution/dispatch/manifests", json={
+        "manifest_no": "MAN-SETTLE",
+        "dispatch_date": "2026-10-21",
+        "distributor_name": "Route Settlement",
+        "invoices": [{"order_id": order_id, "cash_amount": "6", "check_amount": "4", "credit_amount": "0"}],
+    })
+    assert manifest.status_code == 200, manifest.text
+    mid = manifest.json()["id"]
+    cash = c.post(f"/api/distribution/dispatch/manifests/{mid}/collections", json={
+        "order_id": order_id, "payment_type": "CASH", "amount": "6",
+        "txn_date": "2026-10-21", "reference": "cash-001",
+    })
+    assert cash.status_code == 200, cash.text
+    check = c.post(f"/api/distribution/dispatch/manifests/{mid}/collections", json={
+        "order_id": order_id, "payment_type": "CHECK", "amount": "4",
+        "txn_date": "2026-10-21", "reference": "check-001",
+    })
+    assert check.status_code == 200, check.text
+    assert c.post(f"/api/distribution/dispatch/manifests/{mid}/collections", json={
+        "order_id": order_id, "payment_type": "CASH", "amount": "0.01",
+        "txn_date": "2026-10-21",
+    }).status_code == 409
+
+    assert c.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/clear-check", json={
+        "txn_date": "2026-10-22"
+    }).status_code == 409
+    handed = c.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/handoff-check")
+    assert handed.status_code == 200, handed.text
+    cleared = c.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/clear-check", json={
+        "txn_date": "2026-10-22"
+    })
+    assert cleared.status_code == 200, cleared.text
+    assert c.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/clear-check", json={
+        "txn_date": "2026-10-22"
+    }).status_code == 409
+
+    account = c.post("/api/distribution/treasury/accounts", json={
+        "code": "BANK-SETTLE", "name": "Company bank", "kind": "BANK", "opening_balance": "0"
+    })
+    assert account.status_code == 200, account.text
+    remittance = c.post(f"/api/distribution/dispatch/manifests/{mid}/remittances", json={
+        "cash_code": "BANK-SETTLE", "amount": "6",
+        "txn_date": "2026-10-21", "reference": "remit-001",
+    })
+    assert remittance.status_code == 200, remittance.text
+    assert c.post(f"/api/distribution/dispatch/manifests/{mid}/remittances", json={
+        "cash_code": "BANK-SETTLE", "amount": "0.01",
+        "txn_date": "2026-10-21",
+    }).status_code == 409
+
+    summary = c.get(f"/api/distribution/dispatch/manifests/{mid}/settlement")
+    assert summary.status_code == 200, summary.text
+    assert len(summary.json()["transactions"]) == 3
+    receivables = c.get("/api/distribution/reports/receivables")
+    assert receivables.status_code == 200, receivables.text
+    assert receivables.json()["total_outstanding"] == "0.00"
+    assert c.get("/api/distribution/reports/trial-balance").json()["balanced"] is True
+    assert c.get("/api/distribution/treasury/accounts").json()[0]["balance"] == "6.00"
+
+    other = client(db, 2)
+    assert other.get(f"/api/distribution/dispatch/manifests/{mid}/settlement").status_code == 404
+    assert other.post(f"/api/distribution/dispatch/transactions/{check.json()['id']}/handoff-check").status_code == 404
