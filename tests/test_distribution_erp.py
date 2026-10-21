@@ -180,3 +180,68 @@ def test_dispatch_manifest_rejects_invalid_allocations_and_duplicate_manifest(tm
     assert c.post("/api/distribution/dispatch/manifests", json=duplicate_number).status_code == 409
     another_manifest = {**base, "manifest_no": "MAN-ALREADY-ASSIGNED"}
     assert c.post("/api/distribution/dispatch/manifests", json=another_manifest).status_code == 409
+
+
+def test_dispatch_collection_remittance_and_check_lifecycle(tmp_path):
+    db = factory(tmp_path / "dispatch-settlement.sqlite")
+    c = client(db, 1)
+    order_id = _posted_invoice(c, "SO-SETTLE")
+    manifest = c.post("/api/distribution/dispatch/manifests", json={
+        "manifest_no": "MAN-SETTLE",
+        "dispatch_date": "2026-10-21",
+        "distributor_name": "Route Settlement",
+        "invoices": [{"order_id": order_id, "cash_amount": "6", "check_amount": "4", "credit_amount": "0"}],
+    })
+    assert manifest.status_code == 200, manifest.text
+    mid = manifest.json()["id"]
+    cash = c.post(f"/api/distribution/dispatch/manifests/{mid}/collections", json={
+        "order_id": order_id, "payment_type": "CASH", "amount": "6",
+        "txn_date": "2026-10-21", "reference": "cash-001",
+    })
+    assert cash.status_code == 200, cash.text
+    check = c.post(f"/api/distribution/dispatch/manifests/{mid}/collections", json={
+        "order_id": order_id, "payment_type": "CHECK", "amount": "4",
+        "txn_date": "2026-10-21", "reference": "check-001",
+    })
+    assert check.status_code == 200, check.text
+    assert c.post(f"/api/distribution/dispatch/manifests/{mid}/collections", json={
+        "order_id": order_id, "payment_type": "CASH", "amount": "0.01",
+        "txn_date": "2026-10-21",
+    }).status_code == 409
+
+    assert c.post(f"/api/distribution/transactions/{check.json()['id']}/clear-check", json={
+        "txn_date": "2026-10-22"
+    }).status_code == 409
+    handed = c.post(f"/api/distribution/transactions/{check.json()['id']}/handoff-check")
+    assert handed.status_code == 200, handed.text
+    cleared = c.post(f"/api/distribution/transactions/{check.json()['id']}/clear-check", json={
+        "txn_date": "2026-10-22"
+    })
+    assert cleared.status_code == 200, cleared.text
+    assert c.post(f"/api/distribution/transactions/{check.json()['id']}/clear-check", json={
+        "txn_date": "2026-10-22"
+    }).status_code == 409
+
+    account = c.post("/api/distribution/treasury/accounts", json={
+        "code": "BANK-SETTLE", "name": "Company bank", "kind": "BANK", "opening_balance": "0"
+    })
+    assert account.status_code == 200, account.text
+    remittance = c.post(f"/api/distribution/dispatch/manifests/{mid}/remittances", json={
+        "cash_code": "BANK-SETTLE", "amount": "6",
+        "txn_date": "2026-10-21", "reference": "remit-001",
+    })
+    assert remittance.status_code == 200, remittance.text
+    assert c.post(f"/api/distribution/dispatch/manifests/{mid}/remittances", json={
+        "cash_code": "BANK-SETTLE", "amount": "0.01",
+        "txn_date": "2026-10-21",
+    }).status_code == 409
+
+    summary = c.get(f"/api/distribution/dispatch/manifests/{mid}/settlement")
+    assert summary.status_code == 200, summary.text
+    assert len(summary.json()["transactions"]) == 4
+    assert c.get("/api/distribution/reports/trial-balance").json()["balanced"] is True
+    assert c.get("/api/distribution/treasury/accounts").json()[0]["balance"] == "6.00"
+
+    other = client(db, 2)
+    assert other.get(f"/api/distribution/dispatch/manifests/{mid}/settlement").status_code == 404
+    assert other.post(f"/api/distribution/transactions/{check.json()['id']}/handoff-check").status_code == 404
