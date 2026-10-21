@@ -241,6 +241,7 @@ def install_lead_discovery(app, db, user_from_header, ROOT):
             if not row:raise HTTPException(404,"سرنخ یافت نشد.")
             cur=c.execute("UPDATE discovered_leads SET status=? WHERE id=? AND tenant_id=?",(status,lead_id,u["tenant_id"]))
             fingerprint="websearch:"+hashlib.sha256(row["url"].strip().lower().encode("utf-8")).hexdigest()
-            c.execute("UPDATE business_leads SET status=?,last_seen_at=CURRENT_TIMESTAMP WHERE tenant_id=? AND fingerprint=?",(status,u["tenant_id"],fingerprint))
+            shared_status={"new":"new","qualified":"qualified","contacted":"contacted","won":"converted","lost":"discarded","ignored":"discarded"}[status]
+            c.execute("UPDATE business_leads SET status=?,last_seen_at=CURRENT_TIMESTAMP WHERE tenant_id=? AND fingerprint=?",(shared_status,u["tenant_id"],fingerprint))
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(u["tenant_id"],"lead_discovery.lead_status:"+str(lead_id)+":"+status))
         return {"id":lead_id,"status":status}
