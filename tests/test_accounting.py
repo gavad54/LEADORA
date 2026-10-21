@@ -32,3 +32,35 @@ def test_tenant_isolation():
     assert r.status_code==200,r.text
     assert any(x["source_ref"]=="PRIVATE-A" for x in c.get("/api/accounting/journals",headers=a).json())
     assert all(x["source_ref"]!="PRIVATE-A" for x in c.get("/api/accounting/journals",headers=b).json())
+
+def test_receipt_payment_and_csv_import():
+    c,h=account()
+    receipt={"journal_date":"2026-10-21","document_ref":"RCPT-1","party":"مشتری","amount":"40"}
+    payment={"journal_date":"2026-10-21","document_ref":"PAY-1","party":"تامین‌کننده","amount":"15"}
+    r=c.post("/api/accounting/automation/receipt-voucher",headers=h,json=receipt)
+    assert r.status_code==200,r.text
+    p=c.post("/api/accounting/automation/payment-voucher",headers=h,json=payment)
+    assert p.status_code==200,p.text
+    journals=c.get("/api/accounting/journals",headers=h).json()
+    assert {j["source_type"] for j in journals}>={"receipt","payment"}
+    csv_content="date,document_ref,type,amount,party,account_code,description\n2026-10-21,CSV-S-1,sales,120,مشتری,4000,فروش CSV\n2026-10-21,CSV-E-1,expense,30,فروشنده,6300,هزینه CSV\n"
+    imported=c.post("/api/accounting/import/csv",headers=h,json={"content":csv_content})
+    assert imported.status_code==200,imported.text
+    assert imported.json()["count"]==2 and imported.json()["all_drafts"] is True
+
+def test_expense_defaults_to_expense_account_and_rejects_wrong_group():
+    c,h=account()
+    p={"journal_date":"2026-10-21","document_ref":"EXP-DEFAULT-1","amount":"22"}
+    r=c.post("/api/accounting/automation/expense-voucher",headers=h,json=p)
+    assert r.status_code==200,r.text
+    journal=next(j for j in c.get("/api/accounting/journals",headers=h).json() if j["source_ref"]=="EXP-DEFAULT-1")
+    assert journal["lines"][0]["account_code"]=="6300"
+    bad={**p,"document_ref":"EXP-BAD-1","account_code":"4000"}
+    assert c.post("/api/accounting/automation/expense-voucher",headers=h,json=bad).status_code==422
+
+def test_csv_import_rolls_back_on_duplicate_reference():
+    c,h=account()
+    content="date,document_ref,type,amount\n2026-10-21,CSV-DUP,sales,10\n2026-10-21,CSV-DUP,sales,20\n"
+    r=c.post("/api/accounting/import/csv",headers=h,json={"content":content})
+    assert r.status_code==409
+    assert all(j["source_ref"]!="CSV-DUP" for j in c.get("/api/accounting/journals",headers=h).json())
