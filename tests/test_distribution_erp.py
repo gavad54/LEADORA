@@ -273,6 +273,8 @@ def test_sales_return_approval_restores_stock_and_reverses_receivable(tmp_path):
     assert c.post(f"/api/distribution/sales/{order_id}/post").status_code == 200
     with db() as conn:
         assert conn.execute("SELECT stock FROM products WHERE tenant_id=1 AND id=1").fetchone()[0] == 20
+    before_delivery=c.post("/api/distribution/returns",json={"order_id":order_id,"return_no":"RET-TOO-EARLY","return_date":"2026-10-21","lines":[{"product_id":1,"quantity":"1"}]})
+    assert before_delivery.status_code==409
     delivered=c.post(f"/api/distribution/sales/{order_id}/deliver",json={"delivery_date":"2026-10-21"})
     assert delivered.status_code==200,delivered.text
     with db() as conn:
