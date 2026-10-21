@@ -1717,3 +1717,8 @@ def bank_accounts_status(user=Depends(user_from_header)):
         count = conn.execute("SELECT COUNT(*) n FROM tenant_bank_accounts WHERE tenant_id=?", (user["tenant_id"],)).fetchone()["n"]
     return {"accounts":count,"provider_integration":"not_configured","real_transfers_enabled":False,
             "message":"ثبت حساب و مشخصات آن فعال است؛ انتقال واقعی تا زمان اتصال درگاه بانکی معتبر و تأیید تراکنش فعال نیست."}
+
+
+# Additive accounting routes: preserve the existing LEADORA app and database.
+from app.accounting import install_accounting
+install_accounting(app, db, user_from_header, ROOT)
