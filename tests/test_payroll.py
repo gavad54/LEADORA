@@ -4,7 +4,7 @@ from app.distribution_erp import create_router as create_distribution_router
 from app.payroll import create_router as create_payroll_router
 
 
-import sqlite3\n
+import sqlite3
 def factory(path):
     def db():
         c = sqlite3.connect(path, timeout=10)
