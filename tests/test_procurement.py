@@ -79,3 +79,22 @@ def test_foreign_currency_receipt_does_not_post_unconverted_ledger_amount():
     assert receipt.status_code == 200, receipt.text
     assert receipt.json()["accounting_journal"] is None
     assert "نرخ تبدیل" in receipt.json()["message"]
+
+
+def test_receipt_cannot_exceed_remaining_order_quantity():
+    c, h = account()
+    need = c.post("/api/procurement/needs", headers=h, json={"product_name":"کالای کنترل مقدار","quantity":3,"currency":"IRR"}).json()
+    supplier = c.post("/api/procurement/suppliers", headers=h, json={"name":"تأمین‌کننده کنترل مقدار","website":"https://qty-"+uuid.uuid4().hex[:8]+".example"}).json()
+    quote = c.post("/api/procurement/quotes", headers=h, json={"need_id":need["id"],"supplier_id":supplier["id"],"unit_price":100,"currency":"IRR"}).json()
+    order = c.post("/api/procurement/orders", headers=h, json={"need_id":need["id"],"quote_id":quote["id"],"quantity":3,"approved_by_user":True}).json()
+    first = c.post(f"/api/procurement/orders/{order['id']}/receipt", headers=h,
+                   json={"quantity_received":2,"accepted":True})
+    assert first.status_code == 200, first.text
+    second = c.post(f"/api/procurement/orders/{order['id']}/receipt", headers=h,
+                    json={"quantity_received":2,"accepted":True})
+    assert second.status_code == 409, second.text
+    order_after = c.get("/api/procurement/orders", headers=h).json()
+    saved = next(o for o in order_after if o["id"] == order["id"])
+    assert saved["received_qty"] == 2
+    receipts = c.get(f"/api/procurement/orders/{order['id']}/receipts", headers=h).json()
+    assert len(receipts) == 1
