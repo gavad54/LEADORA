@@ -1727,3 +1727,7 @@ install_accounting(app, db, user_from_header, ROOT)
 # Additive lead-discovery module: tenant-scoped public business research.
 from app.lead_discovery import install_lead_discovery
 install_lead_discovery(app, db, user_from_header, ROOT)
+
+# Additive tenant-isolated smart procurement workflow.
+from app.procurement import install_procurement
+install_procurement(app, db, user_from_header, ROOT)
