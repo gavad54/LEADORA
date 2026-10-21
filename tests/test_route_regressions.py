@@ -92,6 +92,15 @@ def test_api_routes_are_registered_once_across_modules():
     assert duplicates == {}, f"Duplicate API route registrations: {duplicates}"
 
 
+def test_owner_recovery_requires_authenticated_account():
+    client = TestClient(app)
+    response = client.post(
+        "/api/finance/owner/recover",
+        json={"token": "a-valid-looking-recovery-token-0123456789"},
+    )
+    assert response.status_code == 401, response.text
+
+
 def test_business_module_read_routes_require_authentication():
     client = TestClient(app)
     protected_gets = [
