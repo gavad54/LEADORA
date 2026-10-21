@@ -174,6 +174,8 @@ def install_accounting(app, db, user_from_header, root:Path):
         exp=sum(x["debit"]-x["credit"] for x in tb["items"] if x["account_type"]=="expense")
         return {"revenue":round(rev,2),"expenses":round(exp,2),"net_profit":round(rev-exp,2)}
     def account_type(c,tid,code):
+        # New tenants may be registered after module startup; seed their chart before validation.
+        seed(c,tid)
         row=c.execute("SELECT account_type FROM gl_accounts WHERE tenant_id=? AND code=? AND is_active=1",(tid,code)).fetchone()
         if not row:raise HTTPException(422,"کد حساب نامعتبر است: "+code)
         return row["account_type"]
