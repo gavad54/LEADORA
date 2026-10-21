@@ -456,6 +456,14 @@ def create_router(db,user_dep):
   with db() as c:
    rows=c.execute("SELECT s.*,cu.name customer_name,(SELECT COUNT(*) FROM dist_sale_lines l WHERE l.tenant_id=s.tenant_id AND l.order_id=s.id) line_count FROM dist_sales s JOIN customers cu ON cu.id=s.customer_id AND cu.tenant_id=s.tenant_id WHERE s.tenant_id=? ORDER BY s.id DESC LIMIT 200",(tenant(u),)).fetchall()
   return [{"id":x["id"],"order_no":x["order_no"],"order_date":x["order_date"],"status":x["status"],"total":money(x["total_minor"]),"customer_name":x["customer_name"],"line_count":x["line_count"]} for x in rows]
+ @r.get("/sales/{oid}")
+ def sale_detail(oid:int,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   order=c.execute("SELECT s.*,cu.name customer_name FROM dist_sales s JOIN customers cu ON cu.id=s.customer_id AND cu.tenant_id=s.tenant_id WHERE s.tenant_id=? AND s.id=?",(t,oid)).fetchone()
+   if not order:raise HTTPException(404,"فاکتور در شرکت شما یافت نشد.")
+   lines=c.execute("SELECT l.product_id,p.sku,p.name,l.quantity,l.unit_price_minor,l.discount_minor,l.total_minor FROM dist_sale_lines l JOIN products p ON p.id=l.product_id AND p.tenant_id=l.tenant_id WHERE l.tenant_id=? AND l.order_id=? ORDER BY l.id",(t,oid)).fetchall()
+  return {"id":order["id"],"order_no":order["order_no"],"customer_id":order["customer_id"],"customer_name":order["customer_name"],"order_date":order["order_date"],"status":order["status"],"total":money(order["total_minor"]),"lines":[{"product_id":x["product_id"],"sku":x["sku"],"name":x["name"],"quantity":x["quantity"],"unit_price":money(x["unit_price_minor"]),"discount":money(x["discount_minor"]),"total":money(x["total_minor"])} for x in lines]}
  @r.post("/sales")
  def new_sale(b:Sale,u=Depends(user_dep)):
   t=tenant(u); total=0; lines=[]
