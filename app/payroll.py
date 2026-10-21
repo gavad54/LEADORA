@@ -205,7 +205,7 @@ def create_router(db, user_dep):
                       JOIN dist_sales_returns r ON r.id=l.return_id AND r.tenant_id=l.tenant_id
                       WHERE r.tenant_id=? AND r.order_id IN ("""+marks+""") AND r.status='APPROVED' AND r.return_date>=? AND r.return_date<?""",(t,*order_ids,start,end)).fetchone()[0]
                 booked=sum(x["total_minor"] for x in sales)
-                if basis=="BOOKED_SALES":amount=max(0,booked-returns_period)
+                if basis=="BOOKED_SALES":amount=booked
                 elif basis=="COLLECTED_SALES":amount=receipts_period
                 elif basis=="RETURNS":amount=returns_period
                 else:amount=outstanding_basis
