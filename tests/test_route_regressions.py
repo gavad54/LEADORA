@@ -29,17 +29,17 @@ def test_business_routes_are_registered_once_and_use_current_schema():
     client = TestClient(app)
     headers = register(client)
     expense = client.post("/api/expenses", headers=headers, json={
-        "category": "office", "description": "Regression expense", "amount": 125,
-        "due_date": "2026-11-01", "status": "planned", "vendor": "Test vendor",
+        "title": "Regression expense", "category": "office", "amount": 125,
+        "due_date": "2026-11-01", "status": "planned",
     })
     assert expense.status_code == 200, expense.text
     listed_expenses = client.get("/api/expenses", headers=headers)
     assert listed_expenses.status_code == 200, listed_expenses.text
-    assert any(row["description"] == "Regression expense" for row in listed_expenses.json())
+    assert any(row["title"] == "Regression expense" for row in listed_expenses.json())
 
     opportunity = client.post("/api/opportunities", headers=headers, json={
         "title": "Regression opportunity", "stage": "qualified", "estimated_value": 2500,
-        "expected_close_date": "2026-12-01", "last_contact_at": "2026-10-20",
+        "expected_close_date": "2026-12-01", "last_contact_date": "2026-10-20",
     })
     assert opportunity.status_code == 200, opportunity.text
     listed_opportunities = client.get("/api/opportunities", headers=headers)
@@ -48,4 +48,6 @@ def test_business_routes_are_registered_once_and_use_current_schema():
 
     overview = client.get("/api/agents/overview", headers=headers)
     assert overview.status_code == 200, overview.text
-    assert overview.json()["mode"] == "rules_based"
+    data = overview.json()
+    assert data["sales"]["opportunities"] == 1
+    assert data["sales"]["pipeline_value"] == 2500
