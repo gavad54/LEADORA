@@ -71,3 +71,6 @@ def test_business_routes_are_registered_once_and_use_current_schema():
     template = client.get("/api/import/template/expenses.csv", headers=headers)
     assert template.status_code == 200, template.text
     assert "title,category,amount,due_date" in template.text
+    campaign_template = client.get("/api/import/template/campaigns.csv", headers=headers)
+    assert campaign_template.status_code == 200, campaign_template.text
+    assert "name,channel,spend,leads,conversions,revenue,start_date,end_date" in campaign_template.text
