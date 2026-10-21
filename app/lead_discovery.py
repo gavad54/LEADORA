@@ -20,6 +20,9 @@ class DiscoverIn(BaseModel):
     keywords: list[str] = Field(default_factory=list, max_length=30)
     limit: int = Field(default=10, ge=1, le=25)
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl): return None
+
 class PageParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True); self.title=False; self.title_text=[]; self.text=[]; self.meta={}; self.links=[]; self.skip=0
@@ -63,7 +66,7 @@ def _fetch_public_page(raw):
     for _ in range(4):
         u=_validate_public_url(current)
         req=urllib.request.Request(current,headers={"User-Agent":USER_AGENT,"Accept":"text/html,application/xhtml+xml;q=0.9"})
-        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPHandler(),urllib.request.HTTPSHandler())
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect(),urllib.request.HTTPHandler(),urllib.request.HTTPSHandler())
         try:
             with opener.open(req,timeout=7) as response:
                 final=response.geturl()
