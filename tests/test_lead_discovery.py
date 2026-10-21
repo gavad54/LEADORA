@@ -37,6 +37,12 @@ def test_discovered_leads_are_tenant_isolated(monkeypatch):
     assert r.json()["result_count"]==1
     assert len(c.get("/api/lead-discovery/leads",headers=a).json())==1
     assert c.get("/api/lead-discovery/leads",headers=b).json()==[]
+    lead_id=r.json()["results"][0]["id"]
+    changed=c.patch(f"/api/lead-discovery/leads/{lead_id}",headers=a,json={"status":"qualified"})
+    assert changed.status_code==200,changed.text
+    shared=c.get("/api/prospecting/business-leads?status=qualified",headers=a).json()
+    assert shared["total"]==1 and shared["items"][0]["website"]=="https://example.org/business"
+    assert c.get("/api/prospecting/business-leads?status=qualified",headers=b).json()["total"]==0
 
 def test_public_url_validation_rejects_private_hosts(monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY",raising=False)
