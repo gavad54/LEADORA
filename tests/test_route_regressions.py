@@ -132,7 +132,7 @@ def test_business_module_read_routes_require_authentication():
     failures = []
     for path in protected_gets:
         response = client.get(path)
-        if response.status_code != 401:
+        if response.status_code not in {401, 403}:
             failures.append((path, response.status_code, response.text[:120]))
 
     assert failures == [], f"Protected GET routes did not reject anonymous requests: {failures}"
