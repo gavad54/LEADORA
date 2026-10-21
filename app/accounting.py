@@ -57,6 +57,9 @@ class QuickVoucher(BaseModel):
     description:str=Field(default="ثبت پیشنهادی خودکار",max_length=240)
 
 def install_accounting(app, db, user_from_header, root:Path):
+    def seed(c,tid):
+        c.execute("INSERT OR IGNORE INTO gl_automation_settings(tenant_id) VALUES(?)",(tid,))
+        for row in SEED:c.execute("INSERT OR IGNORE INTO gl_accounts(tenant_id,code,name,account_type,normal_side) VALUES(?,?,?,?,?)",(tid,*row))
     with db() as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS gl_accounts(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL REFERENCES tenants(id),code TEXT NOT NULL,name TEXT NOT NULL,account_type TEXT NOT NULL CHECK(account_type IN ('asset','liability','equity','revenue','expense')),normal_side TEXT NOT NULL CHECK(normal_side IN ('debit','credit')),parent_code TEXT NOT NULL DEFAULT '',is_active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(tenant_id,code));
@@ -68,9 +71,6 @@ def install_accounting(app, db, user_from_header, root:Path):
         """)
         for t in c.execute("SELECT id FROM tenants").fetchall():
             seed(c,t["id"])
-    def seed(c,tid):
-        c.execute("INSERT OR IGNORE INTO gl_automation_settings(tenant_id) VALUES(?)",(tid,))
-        for row in SEED:c.execute("INSERT OR IGNORE INTO gl_accounts(tenant_id,code,name,account_type,normal_side) VALUES(?,?,?,?,?)",(tid,*row))
     def amount(n):return format(Decimal(str(n)).quantize(Decimal("0.01")),".2f")
     def make_journal(c,u,p):
         tid=u["tenant_id"];seed(c,tid)
