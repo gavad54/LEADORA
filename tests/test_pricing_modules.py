@@ -58,3 +58,26 @@ def test_owner_pricing_requires_secret_and_can_update(monkeypatch):
     saved = client.put("/api/owner/pricing", headers=headers, json=body)
     assert saved.status_code == 200
     assert saved.json()["saved"] is True
+
+def test_owner_pricing_rejects_boolean_prices(monkeypatch):
+    client = TestClient(app)
+    monkeypatch.setenv("LEADORA_OWNER_KEY", "test-owner-key-with-more-than-24-chars")
+    headers = {"X-LEADORA-OWNER-KEY": "test-owner-key-with-more-than-24-chars"}
+    current = client.get("/api/owner/pricing", headers=headers)
+    assert current.status_code == 200
+    body = {
+        "modules": {m["module_key"]: m["monthly_price"] for m in current.json()["modules"]},
+        "active_modules": [m["module_key"] for m in current.json()["modules"] if m["active"]],
+        "currency": current.json()["settings"]["currency"],
+        "currency_label": current.json()["settings"]["currency_label"],
+        "base_monthly_price": current.json()["settings"]["base_monthly_price"],
+        "pricing_note": current.json()["settings"]["pricing_note"]
+    }
+    body["modules"]["accounting"] = True
+    rejected_module_boolean = client.put("/api/owner/pricing", headers=headers, json=body)
+    assert rejected_module_boolean.status_code == 422
+
+    body["modules"]["accounting"] = 0
+    body["base_monthly_price"] = True
+    rejected_base_boolean = client.put("/api/owner/pricing", headers=headers, json=body)
+    assert rejected_base_boolean.status_code == 422

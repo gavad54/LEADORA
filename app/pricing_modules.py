@@ -1,9 +1,8 @@
 """Owner-managed modular pricing and tenant module requests for LEADORA."""
 import hmac
 import os
-import sqlite3
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 MODULES = {
     "crm_sales": "مشتری‌یابی و فروش",
@@ -14,11 +13,11 @@ MODULES = {
 CURRENCY_DEFAULT = "IRR"
 
 class PriceUpdate(BaseModel):
-    modules: dict[str, int] = Field(description="Monthly price per module in the configured currency; 0 means free")
+    modules: dict[str, StrictInt] = Field(description="Monthly price per module in the configured currency; 0 means free")
     active_modules: list[str] = Field(default_factory=lambda: list(MODULES))
     currency: str = Field(min_length=2, max_length=12)
     currency_label: str = Field(min_length=1, max_length=40)
-    base_monthly_price: int = Field(ge=0)
+    base_monthly_price: StrictInt = Field(ge=0)
     pricing_note: str = Field(default="", max_length=500)
 
 def create_router(db, user_from_header):
@@ -70,7 +69,7 @@ def create_router(db, user_from_header):
         unknown = (set(body.modules) | set(body.active_modules)) - set(MODULES)
         if unknown:
             raise HTTPException(422, "شناسه ماژول نامعتبر است.")
-        if any((not isinstance(v, int)) or v < 0 for v in body.modules.values()):
+        if any(type(v) is not int or v < 0 for v in body.modules.values()):
             raise HTTPException(422, "قیمت هر ماژول باید عدد صحیح و غیرمنفی باشد.")
         with db() as c:
             c.execute("UPDATE leadora_pricing_settings SET currency=?,currency_label=?,base_monthly_price=?,pricing_note=? WHERE id=1",
