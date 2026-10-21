@@ -36,6 +36,7 @@ jobs:
               ('app/static/plans.html', '/tmp/leadora-plans.js'),
               ('app/static/dispatch-settlement.html', '/tmp/leadora-dispatch-settlement.js'),
               ('app/static/returns.html', '/tmp/leadora-returns.js'),
+              ('app/static/payroll.html', '/tmp/leadora-payroll.js'),
           ]:
               page = Path(source).read_text(encoding='utf-8')
               Path(output).write_text('\\n'.join(re.findall(r'<script>(.*?)</script>', page, re.S)), encoding='utf-8')
@@ -51,6 +52,7 @@ jobs:
       - run: node --check /tmp/leadora-plans.js
       - run: node --check /tmp/leadora-dispatch-settlement.js
       - run: node --check /tmp/leadora-returns.js
+      - run: node --check /tmp/leadora-payroll.js
       - run: node --check app/static/service-worker.js
       - name: Validate PWA manifest
         run: python -c "import json; json.load(open('app/static/manifest.webmanifest', encoding='utf-8'))"

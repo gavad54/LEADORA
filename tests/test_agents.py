@@ -136,3 +136,15 @@ def test_scheduled_prospecting_settings_are_tenant_scoped_and_validated():
         "category": "all", "enabled": True, "interval_seconds": 60,
     })
     assert invalid.status_code == 422
+
+
+def test_integrated_operations_report_is_authenticated_and_explicit_about_data_limits():
+    h = account("operations-report")
+    response = client.get("/api/operations/report", headers=h)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert "distribution" in data and "accounting" in data and "payroll" in data
+    assert "marketing" in data and "ai" in data
+    assert data["accounting"]["balanced"] in (True, False, None)
+    assert data["limitations"]
+    assert client.get("/api/operations/report").status_code == 401
