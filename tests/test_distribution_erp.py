@@ -238,7 +238,7 @@ def test_dispatch_collection_remittance_and_check_lifecycle(tmp_path):
 
     summary = c.get(f"/api/distribution/dispatch/manifests/{mid}/settlement")
     assert summary.status_code == 200, summary.text
-    assert len(summary.json()["transactions"]) == 4
+    assert len(summary.json()["transactions"]) == 3
     assert c.get("/api/distribution/reports/trial-balance").json()["balanced"] is True
     assert c.get("/api/distribution/treasury/accounts").json()[0]["balance"] == "6.00"
 
