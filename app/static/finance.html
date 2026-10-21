@@ -2,7 +2,7 @@
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#101b35"><title>LEADORA | مالی و مشارکت</title>
+<meta name="theme-color" content="#101b35"><title>LEADORA | گزارش‌های مالی شرکت</title>
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap');
@@ -10,7 +10,7 @@
 </style>
 </head>
 <body><div id="runtimeError" role="alert" style="display:none;position:sticky;top:0;z-index:10000;margin:10px;padding:14px;border:1px solid #d97706;border-radius:12px;background:#fff7ed;color:#7c2d12;font:14px/1.9 Tahoma,sans-serif"><strong>برنامه با خطای فنی روبه‌رو شد.</strong><div>صفحه را تازه‌سازی کنید. اگر مشکل تکرار شد، جزئیات خطای زیر را برای پشتیبانی بفرستید.</div><div data-runtime-detail style="margin-top:6px;direction:ltr;text-align:left;overflow-wrap:anywhere"></div><button type="button" onclick="location.reload()" style="margin-top:8px;padding:8px 12px;border:0;border-radius:8px;background:#7c2d12;color:white">تازه‌سازی صفحه</button></div><main class="shell">
-<header class="top"><div><div class="brand">LEADORA <small>مالی، قرارداد و مشارکت</small></div><p>محاسبه شفاف سود قابل‌مشارکت، گزارش ماهانه و پیگیری تسویه</p></div><div><button class="btn ghost" onclick="location.href='/'">بازگشت به برنامه</button> <button class="btn mint" id="refresh">به‌روزرسانی</button></div></header>
+<header class="top"><div><div class="brand">LEADORA <small>گزارش‌های مالی شرکت</small></div><p>ثبت و بررسی داده‌های مالی، گزارش‌های ماهانه و پیگیری اسناد شرکت</p></div><div><button class="btn ghost" onclick="location.href='/'">بازگشت به برنامه</button> <button class="btn mint" id="refresh">به‌روزرسانی</button></div></header>
 <div id="globalStatus" class="status">در حال بررسی نشست کاربر…</div>
 <nav class="tabs"><button class="active" data-view="company">اطلاعات شرکت</button><button data-view="entries">ثبت اطلاعات مالی</button><button data-view="reports">گزارش‌های سود</button><button data-view="owner" id="ownerTab" class="hidden">پنل مالک</button></nav>
 
@@ -136,5 +136,9 @@ async function init(){if(!token){status('globalStatus','برای راه‌اند
 $('ownerClaimForm').onsubmit=async e=>{e.preventDefault();const bootstrapToken=$('ownerBootstrapToken').value;try{const d=await api('/api/finance/owner/claim','POST',{token:bootstrapToken});$('ownerBootstrapToken').value='';status('ownerClaimStatus',d.message||'ثبت مالک انجام شد.','success');const identity=await api('/api/finance/identity');if(identity.is_platform_owner){$('ownerClaimPanel').classList.add('hidden');status('globalStatus','مالکیت تأیید شد.','success');await loadOwner()}else{status('ownerClaimStatus','درخواست پذیرفته شد، اما تأیید مالکیت در نشست فعلی دیده نشد. صفحه را تازه‌سازی کنید.','error')}}catch(err){status('ownerClaimStatus',err.message,'error');if(err.message.includes('503'))status('ownerSetupHint','فرایند ثبت مالک در سرور غیرفعال است. متغیر امن LEADORA_OWNER_BOOTSTRAP_TOKEN را بررسی کنید.','error');else if(err.message.includes('409'))status('ownerSetupHint','مالک قبلاً در تنظیمات سرور یا پایگاه داده ثبت شده است؛ ثبت مجدد مسدود است. ایمیل مجاز و حساب واردشده را بررسی کنید.','error');else if(err.message.includes('403'))status('ownerSetupHint','رمز راه‌اندازی یا ایمیل حساب با مقدار مجاز سرور مطابقت ندارد. از مالک سامانه بخواهید تنظیمات امن را بررسی کند.','error')}};
 $('ownerRecoveryForm').onsubmit=async e=>{e.preventDefault();const recoveryToken=$('ownerRecoveryToken').value;const submit=e.submitter; if(submit)submit.disabled=true;try{const d=await api('/api/finance/owner/recover','POST',{token:recoveryToken});$('ownerRecoveryToken').value='';status('ownerRecoveryStatus',d.message||'بازیابی مالک انجام شد.','success');const identity=await api('/api/finance/identity');if(identity.is_platform_owner){$('ownerRecoveryPanel').classList.add('hidden');$('ownerClaimPanel').classList.add('hidden');status('globalStatus','دسترسی مالک اصلی تأیید شد.','success');await loadOwner()}else{status('ownerRecoveryStatus','بازیابی پاسخ مثبت داد، اما هویت مالک تأیید نشد؛ صفحه را تازه‌سازی کنید.','error')}}catch(err){status('ownerRecoveryStatus',err.message,'error');if(err.message.includes('503'))status('ownerRecoveryHint','بازیابی در تنظیمات سرور فعال نیست؛ دو متغیر LEADORA_OWNER_RECOVERY_TOKEN و LEADORA_OWNER_RECOVERY_EMAIL باید توسط مدیر مجاز تنظیم شوند.','error');else if(err.message.includes('409'))status('ownerRecoveryHint','بازیابی از طریق فرم مجاز نیست یا مالک ثبت‌شده‌ای وجود ندارد؛ تنظیمات امن سرور را بررسی کنید.','error');else if(err.message.includes('403'))status('ownerRecoveryHint','کلید بازیابی یا ایمیل حساب با تنظیمات امن سرور مطابقت ندارد.','error')}finally{if(submit)submit.disabled=false}};
 $('refresh').onclick=()=>init();
+// Remove legacy participation/contract panels from the customer-facing UI; historical data remains in storage.
+document.querySelectorAll('.panel').forEach(panel=>{const heading=panel.querySelector('h2');if(heading&&/(قرارداد|مشارکت)/.test(heading.textContent)){panel.hidden=true;}});
+document.querySelectorAll('[data-view]').forEach(button=>{if(/قرارداد|مشارکت/.test(button.textContent))button.remove();});
+document.querySelectorAll('label').forEach(label=>{if(/درصد مشارکت|سهم مالک/.test(label.textContent)){const field=label.closest('.field');if(field)field.hidden=true;}});
 init();
 </script></body></html>
