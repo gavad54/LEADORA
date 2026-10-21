@@ -173,6 +173,10 @@ def test_dispatch_manifest_rejects_invalid_allocations_and_duplicate_manifest(tm
 
     first = c.post("/api/distribution/dispatch/manifests", json=base)
     assert first.status_code == 200, first.text
-    assert c.post("/api/distribution/dispatch/manifests", json=base).status_code == 409
+    another_order = _posted_invoice(c, "SO-MAN-DUPLICATE")
+    duplicate_number = {**base, "invoices": [
+        {"order_id": another_order, "cash_amount": "10", "check_amount": "0", "credit_amount": "0"}
+    ]}
+    assert c.post("/api/distribution/dispatch/manifests", json=duplicate_number).status_code == 409
     another_manifest = {**base, "manifest_no": "MAN-ALREADY-ASSIGNED"}
     assert c.post("/api/distribution/dispatch/manifests", json=another_manifest).status_code == 409
