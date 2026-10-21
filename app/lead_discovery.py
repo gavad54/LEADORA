@@ -1,5 +1,5 @@
 """Tenant-isolated lead discovery from user-provided public business sources."""
-import os, re, json, html, socket, ipaddress, urllib.request, urllib.parse, urllib.error
+import os, re, json, html, socket, ipaddress, hashlib, urllib.request, urllib.parse, urllib.error
 from html.parser import HTMLParser
 from datetime import datetime, timezone
 from fastapi import Depends, HTTPException
@@ -207,6 +207,17 @@ def install_lead_discovery(app, db, user_from_header, ROOT):
                 except Exception:
                     row=c.execute("SELECT id,name,url,summary,lead_type,source,status,confidence FROM discovered_leads WHERE tenant_id=? AND url=?",(u["tenant_id"],item["url"])).fetchone()
                     if row:saved.append(dict(row))
+                # Keep the main LEADORA prospecting registry in sync for shared pipeline/export.
+                fingerprint="websearch:"+hashlib.sha256(item["url"].strip().lower().encode("utf-8")).hexdigest()
+                c.execute("""INSERT INTO business_leads(tenant_id,source,source_record_id,name,category,website,source_url,notes,fingerprint,status)
+                  VALUES(?,?,?,?,?,?,?,?,?,'new')
+                  ON CONFLICT(tenant_id,fingerprint) DO UPDATE SET
+                  name=CASE WHEN excluded.name!='' THEN excluded.name ELSE business_leads.name END,
+                  website=CASE WHEN excluded.website!='' THEN excluded.website ELSE business_leads.website END,
+                  source_url=CASE WHEN excluded.source_url!='' THEN excluded.source_url ELSE business_leads.source_url END,
+                  notes=CASE WHEN excluded.notes!='' THEN excluded.notes ELSE business_leads.notes END,
+                  last_seen_at=CURRENT_TIMESTAMP""",
+                  (u["tenant_id"],"web_search",item["url"],item["name"] or item["url"],item["lead_type"],item["url"],item["url"],item["summary"],fingerprint))
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(u["tenant_id"],"lead_discovery.run:"+str(run_id)))
         return {"run_id":run_id,"profile":public_profiles,"keywords":keywords,"queries":queries,
                 "provider":provider,"search_configured":provider=="tavily","results":saved,
@@ -226,7 +237,10 @@ def install_lead_discovery(app, db, user_from_header, ROOT):
         status=p.get("status")
         if status not in ("new","qualified","contacted","won","lost","ignored"):raise HTTPException(422,"وضعیت نامعتبر است.")
         with db() as c:
+            row=c.execute("SELECT url FROM discovered_leads WHERE id=? AND tenant_id=?",(lead_id,u["tenant_id"])).fetchone()
+            if not row:raise HTTPException(404,"سرنخ یافت نشد.")
             cur=c.execute("UPDATE discovered_leads SET status=? WHERE id=? AND tenant_id=?",(status,lead_id,u["tenant_id"]))
-            if not cur.rowcount:raise HTTPException(404,"سرنخ یافت نشد.")
+            fingerprint="websearch:"+hashlib.sha256(row["url"].strip().lower().encode("utf-8")).hexdigest()
+            c.execute("UPDATE business_leads SET status=?,last_seen_at=CURRENT_TIMESTAMP WHERE tenant_id=? AND fingerprint=?",(status,u["tenant_id"],fingerprint))
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(u["tenant_id"],"lead_discovery.lead_status:"+str(lead_id)+":"+status))
         return {"id":lead_id,"status":status}
