@@ -51,3 +51,23 @@ def test_business_routes_are_registered_once_and_use_current_schema():
     data = overview.json()
     assert data["sales"]["opportunities"] == 1
     assert data["sales"]["pipeline_value"] == 2500
+
+    created_action = client.post("/api/agents/actions", headers=headers, json={
+        "agent": "sales_analytics", "title": "Regression action", "rationale": "Test rationale",
+        "recommendation": "Test recommendation", "sensitive": True,
+    })
+    assert created_action.status_code == 200, created_action.text
+    action_id = created_action.json()["id"]
+    action_rows = client.get("/api/agents/actions", headers=headers)
+    assert action_rows.status_code == 200, action_rows.text
+    assert any(row["id"] == action_id and row["rationale"] == "Test rationale" for row in action_rows.json())
+    assert client.post(f"/api/agents/actions/{action_id}/resolve", headers=headers).status_code == 409
+    decision = client.post(f"/api/agents/actions/{action_id}/decision", headers=headers, json={"decision": "approved"})
+    assert decision.status_code == 200, decision.text
+    resolved = client.post(f"/api/agents/actions/{action_id}/resolve", headers=headers)
+    assert resolved.status_code == 200, resolved.text
+    assert any(row["id"] == action_id and row["status"] == "done" for row in client.get("/api/agents/actions", headers=headers).json())
+
+    template = client.get("/api/import/template/expenses.csv", headers=headers)
+    assert template.status_code == 200, template.text
+    assert "title,category,amount,due_date" in template.text
