@@ -74,3 +74,65 @@ def test_business_routes_are_registered_once_and_use_current_schema():
     campaign_template = client.get("/api/import/template/campaigns.csv", headers=headers)
     assert campaign_template.status_code == 200, campaign_template.text
     assert "name,channel,spend,leads,conversions,revenue,start_date,end_date" in campaign_template.text
+
+
+def test_api_routes_are_registered_once_across_modules():
+    from collections import Counter
+
+    registrations = Counter()
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if not path.startswith("/api/"):
+            continue
+        for method in getattr(route, "methods", set()) or set():
+            if method in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                registrations[(method, path)] += 1
+
+    duplicates = {key: count for key, count in registrations.items() if count != 1}
+    assert duplicates == {}, f"Duplicate API route registrations: {duplicates}"
+
+
+def test_business_module_read_routes_require_authentication():
+    client = TestClient(app)
+    protected_gets = [
+        # Company operations, reports, exports, backup and workflows.
+        "/api/products", "/api/customers", "/api/audit-log",
+        "/api/export/products.csv", "/api/backup.json", "/api/insights",
+        "/api/invoices", "/api/expenses", "/api/opportunities", "/api/campaigns",
+        "/api/agents/overview", "/api/agents/actions",
+        "/api/import/template/expenses.csv", "/api/backup/full.json",
+        "/api/storage/status", "/api/workflow/statuses", "/api/workflow/documents",
+        "/api/workflow/followups",
+        # Prospecting and lead sources.
+        "/api/prospecting/leads", "/api/prospecting/summary",
+        "/api/prospecting/sources", "/api/prospecting/business-leads",
+        "/api/prospecting/source-runs", "/api/prospecting/settings",
+        "/api/prospecting/worker/status", "/api/prospecting/business-leads/export.csv",
+        # Financial participation and owner-only operations.
+        "/api/finance/identity", "/api/finance/settings", "/api/finance/contracts",
+        "/api/finance/integration/status", "/api/finance/entries",
+        "/api/finance/reports", "/api/finance/adjustments",
+        "/api/finance/owner/overview", "/api/finance/owner/audit",
+        # Distribution ERP and accounting.
+        "/api/distribution/fiscal-years", "/api/distribution/overview",
+        "/api/distribution/accounts", "/api/distribution/warehouses",
+        "/api/distribution/sales", "/api/distribution/journals",
+        "/api/distribution/reports/balance-sheet",
+        "/api/distribution/reports/receivables", "/api/distribution/reports/payables",
+        "/api/distribution/reports/trial-balance", "/api/distribution/reports/profit-loss",
+        "/api/distribution/reports/stock-movements", "/api/distribution/treasury/accounts",
+        "/api/distribution/import/catalog", "/api/distribution/import/batches",
+        # Module access, AI command center and observability.
+        "/api/modules", "/api/owner/pricing",
+        "/api/ai/followups", "/api/ai/agents", "/api/ai/command-center",
+        "/api/ai/workflows", "/api/ai/approvals", "/api/ai/tasks",
+        "/api/ai/health", "/api/ai/observability",
+    ]
+
+    failures = []
+    for path in protected_gets:
+        response = client.get(path)
+        if response.status_code != 401:
+            failures.append((path, response.status_code, response.text[:120]))
+
+    assert failures == [], f"Protected GET routes did not reject anonymous requests: {failures}"
