@@ -1,4 +1,4 @@
-name: Build LEADORA Android APK
+name: Build LEADORA Android test APK
 
 on:
   workflow_dispatch:
@@ -61,13 +61,15 @@ jobs:
       - name: Publish APK release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: android-v1.0.${{ github.run_number }}
-          name: LEADORA Android v1.0.${{ github.run_number }}
+          tag_name: android-test-v1.0.${{ github.run_number }}
+          name: LEADORA Android Test Build v1.0.${{ github.run_number }}
           body: |
-            LEADORA Android WebView client for the LEADORA business platform.
-            CI-built debug-signed APK for direct installation and testing.
-            Internet connection is required for live business data.
+            TEST BUILD ONLY — not an official commercial release.
+            CI-built debug-signed APK for installation and functional testing.
+            Signing keys may differ between CI runs; do not rely on in-place upgrades.
+            Internet connection is required for live business data. Do not use real sensitive production data in this test build.
           files: |
             release/LEADORA-Android.apk
             release/LEADORA-Android.apk.sha256
-          make_latest: true
+          prerelease: true
+          make_latest: false
