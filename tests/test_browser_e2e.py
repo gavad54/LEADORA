@@ -80,6 +80,7 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
         assert page.locator("#runtimeError").is_hidden()
 
+        page.locator('.mobile [data-view="settings"]').click()
         page.locator("#logoutBtn").click()
         assert page.locator("#authOverlay").is_visible()
         page.locator("#company").fill(company)
