@@ -76,6 +76,32 @@ def init_db(db):
   CREATE TABLE IF NOT EXISTS dist_fiscal_years(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,jalali_year INTEGER NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'OPEN',carry_forward_done INTEGER NOT NULL DEFAULT 0,created_at TEXT DEFAULT CURRENT_TIMESTAMP,closed_at TEXT,UNIQUE(tenant_id,jalali_year));
   CREATE TABLE IF NOT EXISTS dist_fiscal_carryovers(id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL,from_year_id INTEGER NOT NULL,to_year_id INTEGER NOT NULL,account_code TEXT NOT NULL,amount_minor INTEGER NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,UNIQUE(tenant_id,from_year_id,to_year_id,account_code));
   """)
+  c.executescript("""
+  CREATE TABLE IF NOT EXISTS dist_dispatch_manifests(
+    id INTEGER PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    manifest_no TEXT NOT NULL,
+    dispatch_date TEXT NOT NULL,
+    distributor_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','SETTLED','CANCELLED')),
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(tenant_id,manifest_no)
+  );
+  CREATE TABLE IF NOT EXISTS dist_dispatch_manifest_lines(
+    id INTEGER PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    manifest_id INTEGER NOT NULL REFERENCES dist_dispatch_manifests(id),
+    order_id INTEGER NOT NULL,
+    invoice_total_minor INTEGER NOT NULL CHECK(invoice_total_minor>=0),
+    cash_minor INTEGER NOT NULL DEFAULT 0 CHECK(cash_minor>=0),
+    check_minor INTEGER NOT NULL DEFAULT 0 CHECK(check_minor>=0),
+    credit_minor INTEGER NOT NULL DEFAULT 0 CHECK(credit_minor>=0),
+    UNIQUE(tenant_id,order_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_dispatch_manifests_tenant_date
+    ON dist_dispatch_manifests(tenant_id,dispatch_date,id);
+  """)
   cols={x["name"] for x in c.execute("PRAGMA table_info(dist_purchases)").fetchall()}
   if "warehouse_code" not in cols: c.execute("ALTER TABLE dist_purchases ADD COLUMN warehouse_code TEXT NOT NULL DEFAULT 'DEFAULT'")
 
@@ -117,6 +143,18 @@ class CashMove(BaseModel):
  code:str; txn_date:str=Field(min_length=10,max_length=10); direction:str=Field(pattern="^(IN|OUT)$"); amount:Decimal=Field(gt=0); reference:str=""; memo:str=""
 class ReceiptIn(BaseModel):
  order_id:int; cash_code:str; txn_date:str=Field(min_length=10,max_length=10); amount:Decimal=Field(gt=0); reference:str=""
+class DispatchAllocation(BaseModel):
+ order_id:int=Field(gt=0)
+ cash_amount:Decimal=Field(default=Decimal("0"),ge=0)
+ check_amount:Decimal=Field(default=Decimal("0"),ge=0)
+ credit_amount:Decimal=Field(default=Decimal("0"),ge=0)
+
+class DispatchManifestIn(BaseModel):
+ manifest_no:str=Field(min_length=1,max_length=80)
+ dispatch_date:str=Field(min_length=10,max_length=10)
+ distributor_name:str=Field(min_length=1,max_length=160)
+ invoices:list[DispatchAllocation]=Field(min_length=1,max_length=500)
+
 class AccountIn(BaseModel):
  code:str=Field(min_length=1,max_length=30); name:str=Field(min_length=1,max_length=160); nature:str=Field(pattern="^(asset|liability|equity|income|expense)$"); parent_code:str=""
 class JournalLineIn(BaseModel):
@@ -203,6 +241,85 @@ def create_router(db,user_dep):
    except sqlite3.IntegrityError:raise HTTPException(409,"کد انبار تکراری است.")
    audit(c,t,"distribution.warehouse.created:"+b.code)
   return {"status":"created","code":b.code}
+ @r.post("/dispatch/manifests")
+ def create_dispatch_manifest(b:DispatchManifestIn,u=Depends(user_dep)):
+  t=tenant(u)
+  try:date.fromisoformat(b.dispatch_date)
+  except (ValueError,TypeError):raise HTTPException(422,"تاریخ حواله باید YYYY-MM-DD باشد.")
+  order_ids=[x.order_id for x in b.invoices]
+  if len(set(order_ids))!=len(order_ids):raise HTTPException(422,"یک فاکتور در مانیفست تکرار شده است.")
+  allocations=[]
+  total=cash_total=check_total=credit_total=0
+  with db() as c:
+   for x in b.invoices:
+    order=c.execute("SELECT id,order_no,customer_id,status,total_minor FROM dist_sales WHERE tenant_id=? AND id=?",(t,x.order_id)).fetchone()
+    if not order:raise HTTPException(404,"فاکتور در شرکت شما یافت نشد.")
+    if order["status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"فقط فاکتور نهایی‌شده قابل درج در مانیفست است.")
+    received=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_customer_receipts WHERE tenant_id=? AND order_id=?",(t,x.order_id)).fetchone()[0]
+    outstanding=order["total_minor"]-received
+    if outstanding<0:raise HTTPException(409,"جمع دریافت‌های ثبت‌شده از مبلغ فاکتور بیشتر است.")
+    cash=minor(x.cash_amount,"مبلغ نقد")
+    check=minor(x.check_amount,"مبلغ چک")
+    credit=minor(x.credit_amount,"مبلغ اعتباری")
+    if cash+check+credit!=outstanding:raise HTTPException(422,f"تفکیک نقد/چک/اعتباری فاکتور {order['order_no']} با مانده فاکتور برابر نیست.")
+    if c.execute("SELECT 1 FROM dist_dispatch_manifest_lines WHERE tenant_id=? AND order_id=?",(t,x.order_id)).fetchone():
+     raise HTTPException(409,"این فاکتور قبلاً در یک مانیفست ثبت شده است.")
+    allocations.append((x.order_id,outstanding,cash,check,credit))
+    total+=outstanding;cash_total+=cash;check_total+=check;credit_total+=credit
+   try:
+    mid=c.execute("INSERT INTO dist_dispatch_manifests(tenant_id,manifest_no,dispatch_date,distributor_name,created_by) VALUES(?,?,?,?,?)",
+      (t,b.manifest_no.strip(),b.dispatch_date,b.distributor_name.strip(),u.get("id"))).lastrowid
+   except sqlite3.IntegrityError:raise HTTPException(409,"شماره مانیفست تکراری است.")
+   c.executemany("INSERT INTO dist_dispatch_manifest_lines(tenant_id,manifest_id,order_id,invoice_total_minor,cash_minor,check_minor,credit_minor) VALUES(?,?,?,?,?,?,?)",
+     [(t,mid,*x) for x in allocations])
+   audit(c,t,"distribution.dispatch_manifest.created:"+b.manifest_no.strip())
+  return {"id":mid,"manifest_no":b.manifest_no.strip(),"dispatch_date":b.dispatch_date,"distributor_name":b.distributor_name.strip(),
+          "status":"OPEN","invoice_count":len(allocations),"total":money(total),"cash_total":money(cash_total),
+          "check_total":money(check_total),"credit_total":money(credit_total)}
+
+ @r.get("/dispatch/manifests")
+ def list_dispatch_manifests(u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   rows=c.execute("""SELECT m.id,m.manifest_no,m.dispatch_date,m.distributor_name,m.status,m.created_at,
+      COUNT(l.id) invoice_count,COALESCE(SUM(l.invoice_total_minor),0) total,
+      COALESCE(SUM(l.cash_minor),0) cash_total,COALESCE(SUM(l.check_minor),0) check_total,
+      COALESCE(SUM(l.credit_minor),0) credit_total
+      FROM dist_dispatch_manifests m LEFT JOIN dist_dispatch_manifest_lines l
+      ON l.tenant_id=m.tenant_id AND l.manifest_id=m.id
+      WHERE m.tenant_id=? GROUP BY m.id ORDER BY m.id DESC LIMIT 500""",(t,)).fetchall()
+  return [{"id":x["id"],"manifest_no":x["manifest_no"],"dispatch_date":x["dispatch_date"],
+    "distributor_name":x["distributor_name"],"status":x["status"],"created_at":x["created_at"],
+    "invoice_count":x["invoice_count"],"total":money(x["total"]),"cash_total":money(x["cash_total"]),
+    "check_total":money(x["check_total"]),"credit_total":money(x["credit_total"])} for x in rows]
+
+ @r.get("/dispatch/manifests/{manifest_id}")
+ def get_dispatch_manifest(manifest_id:int,u=Depends(user_dep)):
+  t=tenant(u)
+  with db() as c:
+   m=c.execute("""SELECT m.id,m.manifest_no,m.dispatch_date,m.distributor_name,m.status,m.created_at,
+      COUNT(l.id) invoice_count,COALESCE(SUM(l.invoice_total_minor),0) total,
+      COALESCE(SUM(l.cash_minor),0) cash_total,COALESCE(SUM(l.check_minor),0) check_total,
+      COALESCE(SUM(l.credit_minor),0) credit_total
+      FROM dist_dispatch_manifests m LEFT JOIN dist_dispatch_manifest_lines l
+      ON l.tenant_id=m.tenant_id AND l.manifest_id=m.id
+      WHERE m.tenant_id=? AND m.id=? GROUP BY m.id""",(t,manifest_id)).fetchone()
+   if not m:raise HTTPException(404,"مانیفست در شرکت شما یافت نشد.")
+   lines=c.execute("""SELECT l.order_id,s.order_no,s.order_date,s.status invoice_status,cu.name customer_name,
+      l.invoice_total_minor,l.cash_minor,l.check_minor,l.credit_minor
+      FROM dist_dispatch_manifest_lines l
+      JOIN dist_sales s ON s.id=l.order_id AND s.tenant_id=l.tenant_id
+      JOIN customers cu ON cu.id=s.customer_id AND cu.tenant_id=s.tenant_id
+      WHERE l.tenant_id=? AND l.manifest_id=? ORDER BY l.id""",(t,manifest_id)).fetchall()
+  return {"id":m["id"],"manifest_no":m["manifest_no"],"dispatch_date":m["dispatch_date"],
+    "distributor_name":m["distributor_name"],"status":m["status"],"created_at":m["created_at"],
+    "invoice_count":m["invoice_count"],"total":money(m["total"]),"cash_total":money(m["cash_total"]),
+    "check_total":money(m["check_total"]),"credit_total":money(m["credit_total"]),
+    "invoices":[{"order_id":x["order_id"],"order_no":x["order_no"],"order_date":x["order_date"],
+      "invoice_status":x["invoice_status"],"customer_name":x["customer_name"],
+      "invoice_total":money(x["invoice_total_minor"]),"cash_amount":money(x["cash_minor"]),
+      "check_amount":money(x["check_minor"]),"credit_amount":money(x["credit_minor"])} for x in lines]}
+
  @r.get("/sales")
  def sales(u=Depends(user_dep)):
   with db() as c:
