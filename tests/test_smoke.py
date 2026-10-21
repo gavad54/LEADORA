@@ -162,3 +162,46 @@ def test_agent_finance_and_sales_endpoints_are_tenant_scoped():
     assert data["retention"]["risk_model"] == "insufficient_history_rule_based"
     assert "forecast_note" in data
     assert c.get("/api/invoices").status_code == 401
+
+
+def test_tenant_backup_includes_business_records_but_excludes_credentials():
+    import uuid
+
+    c = TestClient(app)
+    suffix = uuid.uuid4().hex[:10]
+    reg = c.post("/api/register", json={
+        "company_name": "Backup Test " + suffix,
+        "industry": "distribution",
+        "email": "backup-" + suffix + "@example.com",
+        "password": "secure-backup-test-password",
+    })
+    assert reg.status_code == 200, reg.text
+    headers = {"Authorization": "Bearer " + reg.json()["token"]}
+
+    invoice = c.post("/api/invoices", headers=headers, json={
+        "invoice_number": "BACKUP-" + suffix,
+        "issue_date": "2026-10-01",
+        "due_date": "2026-11-01",
+        "amount": 125.5,
+        "note": "backup regression",
+    })
+    assert invoice.status_code == 200, invoice.text
+    expense = c.post("/api/expenses", headers=headers, json={
+        "title": "Backup expense " + suffix,
+        "category": "office",
+        "amount": 12.5,
+        "due_date": "2026-11-15",
+        "status": "planned",
+    })
+    assert expense.status_code == 200, expense.text
+
+    response = c.get("/api/backup.json", headers=headers)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["format"] == "leadora-tenant-backup-v2"
+    assert any(row["invoice_number"] == "BACKUP-" + suffix for row in data["tables"]["invoices"])
+    assert any(row["title"] == "Backup expense " + suffix for row in data["tables"]["expenses"])
+    assert "products" in data and "customers" in data and "audit_log" in data
+    assert "users" not in data["tables"]
+    assert "finance_integration_keys" not in data["tables"]
+    assert "finance_platform_owner" not in data["tables"]

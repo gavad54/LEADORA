@@ -302,19 +302,52 @@ def export_csv(dataset: str, user=Depends(user_from_header)):
 
 @app.get("/api/backup.json")
 def export_tenant_backup(user=Depends(user_from_header)):
-    # Business-data backup only: credentials and password hashes are deliberately excluded.
+    # Export tenant-owned business data while never exporting credentials or platform-wide secrets.
+    sensitive_column = re.compile(r"(?:password|secret|token|salt|credential|api[_-]?key|private[_-]?key|key_hash)", re.I)
+    excluded_tables = {
+        "users", "login_attempts", "finance_platform_owner",
+        "finance_integration_keys", "prospecting_worker_lease",
+    }
     with db() as c:
-        tenant = c.execute("SELECT id,name,industry FROM tenants WHERE id=?", (user["tenant_id"],)).fetchone()
-        products = c.execute("SELECT id,sku,name,price,stock FROM products WHERE tenant_id=? ORDER BY id", (user["tenant_id"],)).fetchall()
-        customers = c.execute("SELECT id,name,phone FROM customers WHERE tenant_id=? ORDER BY id", (user["tenant_id"],)).fetchall()
-        audit = c.execute("SELECT action,created_at FROM audit_log WHERE tenant_id=? ORDER BY id", (user["tenant_id"],)).fetchall()
+        tenant = c.execute(
+            "SELECT id,name,industry FROM tenants WHERE id=?", (user["tenant_id"],)
+        ).fetchone()
+        if tenant is None:
+            raise HTTPException(404, "شرکت یافت نشد.")
+        table_names = [
+            row["name"] for row in c.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()
+        ]
+        tenant_tables = {}
+        for table_name in table_names:
+            if table_name in excluded_tables or table_name == "tenants":
+                continue
+            quoted = '"' + table_name.replace('"', '""') + '"'
+            columns = c.execute(f"PRAGMA table_info({quoted})").fetchall()
+            column_names = [column["name"] for column in columns]
+            if "tenant_id" not in column_names or any(sensitive_column.search(name) for name in column_names):
+                continue
+            order_by = " ORDER BY id" if "id" in column_names else ""
+            rows = c.execute(
+                f"SELECT * FROM {quoted} WHERE tenant_id=?{order_by}", (user["tenant_id"],)
+            ).fetchall()
+            if rows:
+                tenant_tables[table_name] = [dict(row) for row in rows]
+
+        # Keep the original top-level keys for existing clients while adding all non-sensitive
+        # tenant-scoped tables from the business modules.
+        products = tenant_tables.get("products", [])
+        customers = tenant_tables.get("customers", [])
+        audit = tenant_tables.get("audit_log", [])
     payload = json.dumps({
-        "format": "leadora-tenant-backup-v1",
+        "format": "leadora-tenant-backup-v2",
         "tenant": dict(tenant),
-        "products": [dict(row) for row in products],
-        "customers": [dict(row) for row in customers],
-        "audit_log": [dict(row) for row in audit],
-    }, ensure_ascii=False, indent=2)
+        "products": products,
+        "customers": customers,
+        "audit_log": audit,
+        "tables": tenant_tables,
+    }, ensure_ascii=False, indent=2, default=str)
     return StreamingResponse(
         iter([payload]),
         media_type="application/json; charset=utf-8",
