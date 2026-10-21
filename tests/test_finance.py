@@ -188,7 +188,33 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
 
     # Recovery is an explicit, separately gated path for a wrongly claimed owner account.
     recovery_headers, recovery = register(client, "Recovery Owner")
+
+    # Fail closed if the recovery token reuses the bootstrap token.
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", bootstrap)
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", recovery["user"]["email"])
+    same_token = client.post(
+        "/api/finance/owner/recover", headers=recovery_headers, json={"token": bootstrap}
+    )
+    assert same_token.status_code == 503
+
+    # Missing recovery email must fail closed.
     recovery_token = "test-owner-recovery-token-0123456789-abcdef"
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", recovery_token)
+    monkeypatch.delenv("LEADORA_OWNER_RECOVERY_EMAIL", raising=False)
+    missing_email = client.post(
+        "/api/finance/owner/recover", headers=recovery_headers, json={"token": recovery_token}
+    )
+    assert missing_email.status_code == 503
+
+    # An explicit server-side owner ID list takes precedence over form recovery.
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", recovery["user"]["email"])
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", "999999999")
+    server_owned = client.post(
+        "/api/finance/owner/recover", headers=recovery_headers, json={"token": recovery_token}
+    )
+    assert server_owned.status_code == 409
+    monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
+
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", recovery_token)
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", recovery["user"]["email"])
 
@@ -263,39 +289,3 @@ def test_integration_webhook_key_rotation_ingest_and_tenant_isolation():
         {"period": "2026-10", "document_ref": "WEB-2", "sales": "10", "discounts": "0", "returns": "0", "cogs": "5", "direct_costs": "0", "currency": "IRT"}
     ]})
     assert new_key.status_code == 200, new_key.text
-
-
-def test_owner_recovery_rejects_unsafe_configuration(monkeypatch):
-    client = TestClient(app)
-    monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
-    bootstrap = "test-owner-bootstrap-token-0123456789-abcdef"
-    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", bootstrap)
-    owner_headers, owner = register(client, "Recovery Config Owner")
-    target_headers, target = register(client, "Recovery Config Target")
-    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", owner["user"]["email"])
-    claim = client.post("/api/finance/owner/claim", headers=owner_headers, json={"token": bootstrap})
-    assert claim.status_code == 200, claim.text
-
-    # Reusing the initial bootstrap token as the recovery token must be disabled.
-    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", bootstrap)
-    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", target["user"]["email"])
-    same_token = client.post("/api/finance/owner/recover", headers=target_headers, json={"token": bootstrap})
-    assert same_token.status_code == 503
-
-    # Missing recovery email must fail closed.
-    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", "distinct-recovery-token-0123456789-abcdef")
-    monkeypatch.delenv("LEADORA_OWNER_RECOVERY_EMAIL", raising=False)
-    missing_email = client.post(
-        "/api/finance/owner/recover", headers=target_headers,
-        json={"token": "distinct-recovery-token-0123456789-abcdef"},
-    )
-    assert missing_email.status_code == 503
-
-    # An explicit server-side owner ID list takes precedence over form recovery.
-    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", target["user"]["email"])
-    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", "999999999")
-    server_owned = client.post(
-        "/api/finance/owner/recover", headers=target_headers,
-        json={"token": "distinct-recovery-token-0123456789-abcdef"},
-    )
-    assert server_owned.status_code == 409
