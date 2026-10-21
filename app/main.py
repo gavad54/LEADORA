@@ -1498,9 +1498,17 @@ from pydantic import BaseModel, Field
 
 def _platform_owner(user):
     allowed = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
-    if not allowed or str(user.get("id")) not in allowed:
-        raise HTTPException(403, "این عملیات فقط برای مالک پلتفرم مجاز است.")
-    return True
+    if str(user.get("id")) in allowed:
+        return True
+    # Reuse the existing, separately secured platform-owner claim instead of requiring a second owner setup.
+    try:
+        with db() as conn:
+            row = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+        if row and str(row["user_id"]) == str(user.get("id")):
+            return True
+    except sqlite3.OperationalError:
+        pass
+    raise HTTPException(403, "این عملیات فقط برای مالک پلتفرم مجاز است.")
 
 def _license_for_tenant(tenant_id):
     with db() as conn:
