@@ -42,3 +42,40 @@ def test_payment_record_does_not_claim_real_transfer():
     assert payment.status_code == 200, payment.text
     assert payment.json()["real_transfer"] is False
     assert payment.json()["status"] == "recorded_not_transferred"
+
+def test_accepted_irr_receipt_updates_stock_and_creates_balanced_draft():
+    c, h = account()
+    sku = "SKU-" + uuid.uuid4().hex[:8]
+    product = c.post("/api/products", headers=h, json={"sku":sku,"name":"کالای رسید","price":0,"stock":0})
+    assert product.status_code == 200, product.text
+    need = c.post("/api/procurement/needs", headers=h, json={"product_name":"کالای رسید","sku":sku,"quantity":5,"currency":"IRR"}).json()
+    supplier = c.post("/api/procurement/suppliers", headers=h, json={"name":"تأمین‌کننده رسید","website":"https://receipt-"+uuid.uuid4().hex[:8]+".example"}).json()
+    quote = c.post("/api/procurement/quotes", headers=h, json={"need_id":need["id"],"supplier_id":supplier["id"],"unit_price":200,"currency":"IRR","shipping_cost":50}).json()
+    order = c.post("/api/procurement/orders", headers=h, json={"need_id":need["id"],"quote_id":quote["id"],"quantity":5,"approved_by_user":True}).json()
+    receipt = c.post(f"/api/procurement/orders/{order['id']}/receipt", headers=h,
+                      json={"quantity_received":2,"accepted":True,"note":"رسید آزمایشی"})
+    assert receipt.status_code == 200, receipt.text
+    data = receipt.json()
+    assert data["receipt_amount"] == 410
+    assert data["inventory_stock_updated"] is True
+    assert data["accounting_journal"]["status"] == "draft"
+    assert data["accounting_journal"]["amount"] == 410
+    products = c.get("/api/products", headers=h).json()
+    assert next(p for p in products if p["sku"] == sku)["stock"] == 2
+    journals = c.get("/api/accounting/journals?status=draft", headers=h).json()
+    journal = next(j for j in journals if j["id"] == data["accounting_journal"]["id"])
+    assert sum(float(line["debit"]) for line in journal["lines"]) == 410
+    assert sum(float(line["credit"]) for line in journal["lines"]) == 410
+    assert journal["status"] == "draft"
+
+def test_foreign_currency_receipt_does_not_post_unconverted_ledger_amount():
+    c, h = account()
+    need = c.post("/api/procurement/needs", headers=h, json={"product_name":"کالای ارزی","quantity":2,"currency":"EUR"}).json()
+    supplier = c.post("/api/procurement/suppliers", headers=h, json={"name":"تأمین‌کننده ارزی","website":"https://fx-"+uuid.uuid4().hex[:8]+".example"}).json()
+    quote = c.post("/api/procurement/quotes", headers=h, json={"need_id":need["id"],"supplier_id":supplier["id"],"unit_price":10,"currency":"EUR"}).json()
+    order = c.post("/api/procurement/orders", headers=h, json={"need_id":need["id"],"quote_id":quote["id"],"quantity":2,"approved_by_user":True}).json()
+    receipt = c.post(f"/api/procurement/orders/{order['id']}/receipt", headers=h,
+                     json={"quantity_received":2,"accepted":True})
+    assert receipt.status_code == 200, receipt.text
+    assert receipt.json()["accounting_journal"] is None
+    assert "نرخ تبدیل" in receipt.json()["message"]
