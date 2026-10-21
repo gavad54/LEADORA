@@ -1722,3 +1722,8 @@ def bank_accounts_status(user=Depends(user_from_header)):
 # Additive accounting routes: preserve the existing LEADORA app and database.
 from app.accounting import install_accounting
 install_accounting(app, db, user_from_header, ROOT)
+
+
+# Additive lead-discovery module: tenant-scoped public business research.
+from app.lead_discovery import install_lead_discovery
+install_lead_discovery(app, db, user_from_header, ROOT)
