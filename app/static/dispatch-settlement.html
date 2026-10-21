@@ -11,7 +11,8 @@
 const token=localStorage.getItem('leadora_token')||'';
 const $=id=>document.getElementById(id),today=()=>{let d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
 ["dt","cd","rd"].forEach(id=>$(id).value=today());
-function esc(v){return String(v??"").replace(/[&<>"\']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","\'":"&#39;"}[c]))}\nfunction msg(t,err=false){$("msg").hidden=false;$("msg").textContent=t;$("msg").className="notice"+(err?" error":"")}
+function esc(v){return String(v??"").replace(/[&<>"\']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","\'":"&#39;"}[c]))}
+function msg(t,err=false){$("msg").hidden=false;$("msg").textContent=t;$("msg").className="notice"+(err?" error":"")}
 async function api(p,o={}){if(!token)throw Error("ابتدا از صفحه اصلی وارد حساب شرکت شوید.");let h={Authorization:"Bearer "+token};if(o.body&&!(o.body instanceof FormData))h["Content-Type"]="application/json";let r=await fetch(p,{...o,headers:{...h,...(o.headers||{})}});let d;try{d=await r.json()}catch{d={detail:"پاسخ سرور قابل خواندن نیست."}}if(!r.ok)throw Error(d.detail||JSON.stringify(d));return d}
 function table(h,rows){return rows.length?"<table><thead><tr>"+h.map(x=>"<th>"+x+"</th>").join("")+"</tr></thead><tbody>"+rows.join("")+"</tbody></table>":"<p>تراکنشی ثبت نشده است.</p>"}
 async function load(){try{let a=await api("/api/distribution/dispatch/manifests");$("list").innerHTML=table(["شناسه","شماره","تاریخ","مسیر","فاکتور","جمع","نقد","چک","اعتبار","جزئیات"],a.map(x=>"<tr><td>"+x.id+"</td><td>"+esc(x.manifest_no)+"</td><td>"+esc(x.dispatch_date)+"</td><td>"+esc(x.distributor_name)+"</td><td>"+x.invoice_count+"</td><td>"+esc(x.total)+"</td><td>"+esc(x.cash_total)+"</td><td>"+esc(x.check_total)+"</td><td>"+esc(x.credit_total)+"</td><td><button class='secondary' onclick='pick("+x.id+")'>بازکردن</button></td></tr>"))}catch(e){msg(e.message,true)}}
