@@ -205,3 +205,11 @@ def test_tenant_backup_includes_business_records_but_excludes_credentials():
     assert "users" not in data["tables"]
     assert "finance_integration_keys" not in data["tables"]
     assert "finance_platform_owner" not in data["tables"]
+
+
+def test_finance_page_and_owner_recovery_form_are_served():
+    client = TestClient(app)
+    response = client.get("/finance")
+    assert response.status_code == 200
+    assert 'id="ownerRecoveryForm"' in response.text
+    assert 'id="ownerRecoveryToken"' in response.text
