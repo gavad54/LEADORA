@@ -1472,7 +1472,9 @@ def export_business_leads(user=Depends(user_from_header)):
 from app.participation import create_router
 app.include_router(create_router(db, user_from_header))
 from app.distribution_erp import create_router as create_distribution_router
+from app.payroll import create_router as create_payroll_router
 app.include_router(create_distribution_router(db, user_from_header))
+app.include_router(create_payroll_router(db, user_from_header))
 from app.pricing_modules import create_router as create_pricing_router
 app.include_router(create_pricing_router(db, user_from_header))
 from app.ai_command_center import create_router as create_ai_command_center_router
