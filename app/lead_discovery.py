@@ -89,7 +89,7 @@ def _fetch_public_page(raw):
     raise HTTPException(422,"تعداد تغییرمسیرهای صفحه بیش از حد مجاز است.")
 
 def _clean(s):
-    return re.sub(r"\\s+"," ",html.unescape(str(s or ""))).strip()
+    return re.sub(r"\s+"," ",html.unescape(str(s or ""))).strip()
 
 def _source_profile(source):
     if source.url.strip():
@@ -163,7 +163,7 @@ def install_lead_discovery(app, db, user_from_header, ROOT):
         all_text=" ".join(" ".join((x.get("label",""),x.get("title",""),x.get("description",""),x.get("text",""))) for x in profiles)
         # Keep only bounded, user-supplied business keywords; no personal-data inference.
         words=[]
-        for word in re.findall(r"[A-Za-z0-9\\u0600-\\u06FF][A-Za-z0-9\\u0600-\\u06FF&+.-]{2,}",all_text.lower()):
+        for word in re.findall(r"[A-Za-z0-9\u0600-\u06FF][A-Za-z0-9\u0600-\u06FF&+.-]{2,}",all_text.lower()):
             if word not in words and word not in ("https","http","www","com","the","and","for","with","this","that","from","your","our","you","are","www","شرکت","برای","این","است","های","فروشگاه","محصولات"):
                 words.append(word)
             if len(words)>=18:break
