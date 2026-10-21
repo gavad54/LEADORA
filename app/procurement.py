@@ -357,7 +357,7 @@ def install_procurement(app, db, user_from_header, ROOT):
                   (u["tenant_id"],journal_id,1,"1200","موجودی کالای دریافتی",f"{receipt_amount:.2f}","0.00",""))
                 c.execute("""INSERT INTO gl_lines
                   (tenant_id,journal_id,line_no,account_code,memo,debit,credit,party_name)
-                  VALUES(?,?,?,?,?,?,?,?,?)""".replace("VALUES(?,?,?,?,?,?,?,?,?)","VALUES(?,?,?,?,?,?,?,?,?)"),
+                  VALUES(?,?,?,?,?,?,?,?)""",
                   (u["tenant_id"],journal_id,2,"2000","حساب پرداختنی تأمین‌کننده","0.00",f"{receipt_amount:.2f}",""))
                 c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)", (u["tenant_id"],"accounting.journal.draft:"+journal_no))
                 c.execute("UPDATE procurement_receipts SET journal_id=? WHERE id=? AND tenant_id=?", (journal_id,receipt_id,u["tenant_id"]))
