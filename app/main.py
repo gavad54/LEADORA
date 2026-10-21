@@ -1492,6 +1492,10 @@ def dispatch_settlement_page():
 def returns_page():
     return FileResponse(ROOT / "static" / "returns.html")
 
+@app.get("/payroll")
+def payroll_page():
+    return FileResponse(ROOT / "static" / "payroll.html")
+
 @app.get("/finance")
 def finance_page():
     return FileResponse(ROOT / "static" / "finance.html")
