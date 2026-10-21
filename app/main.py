@@ -140,6 +140,8 @@ def user_from_header(request: Request, authorization: str | None = Header(defaul
             if license_row["status"] in ("expired", "suspended"):
                 raise HTTPException(402, "دوره آزمایشی پایان یافته یا مجوز غیرفعال است؛ کلید مجوز معتبر را فعال کنید.")
         return user
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(401, "نشست نامعتبر یا منقضی است.")
 
