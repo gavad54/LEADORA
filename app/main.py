@@ -613,9 +613,21 @@ def import_rows(body: ImportRowsIn, user=Depends(user_from_header)):
                 with db() as c: c.execute("INSERT INTO expenses(tenant_id,title,category,amount,due_date,status) VALUES(?,?,?,?,?,?)",(tid,title,category,amount,due_date,"pending" if status=="planned" else status))
             elif body.dataset=="opportunities":
                 x=OpportunityIn(**row)
+                if x.customer_id is not None:
+                    with db() as c:
+                        if not c.execute("SELECT 1 FROM customers WHERE id=? AND tenant_id=?",(x.customer_id,tid)).fetchone():
+                            raise HTTPException(422,"مشتری متعلق به این شرکت نیست.")
+                if x.expected_close_date and not _date_ok(x.expected_close_date):
+                    raise HTTPException(422,"تاریخ بستن فرصت معتبر نیست.")
+                if x.last_contact_date and not _date_ok(x.last_contact_date):
+                    raise HTTPException(422,"تاریخ آخرین تماس معتبر نیست.")
                 with db() as c: c.execute("INSERT INTO opportunities(tenant_id,title,customer_id,source,stage,estimated_value,expected_close_date,last_contact_date,lost_reason) VALUES(?,?,?,?,?,?,?,?,?)",(tid,x.title.strip(),x.customer_id,x.source,x.stage,x.estimated_value,x.expected_close_date,x.last_contact_date,x.lost_reason))
             else:
                 x=CampaignIn(**row)
+                if (x.start_date and not _date_ok(x.start_date)) or (x.end_date and not _date_ok(x.end_date)):
+                    raise HTTPException(422,"تاریخ شروع یا پایان کمپین معتبر نیست.")
+                if x.start_date and x.end_date and x.end_date < x.start_date:
+                    raise HTTPException(422,"تاریخ پایان کمپین نباید قبل از شروع باشد.")
                 with db() as c: c.execute("INSERT INTO campaigns(tenant_id,name,channel,spend,leads,conversions,revenue,start_date,end_date) VALUES(?,?,?,?,?,?,?,?,?)",(tid,x.name.strip(),x.channel,x.spend,x.leads,x.conversions,x.revenue,x.start_date,x.end_date))
             count+=1
         except Exception as exc:
@@ -711,35 +723,6 @@ def _paid_by_invoice(c, tenant_id):
         "SELECT invoice_id,COALESCE(SUM(amount),0) AS paid FROM payments WHERE tenant_id=? GROUP BY invoice_id",
         (tenant_id,)).fetchall()}
 
-@app.post("/api/invoices")
-def create_invoice(body: InvoiceIn, user=Depends(user_from_header)):
-    if not _date_ok(body.issue_date) or not _date_ok(body.due_date) or body.due_date < body.issue_date:
-        raise HTTPException(422, "تاریخ صدور و سررسید باید معتبر باشند و سررسید قبل از صدور نباشد.")
-    tid = user["tenant_id"]
-    with db() as c:
-        if body.customer_id is not None and not c.execute("SELECT 1 FROM customers WHERE id=? AND tenant_id=?", (body.customer_id,tid)).fetchone():
-            raise HTTPException(404, "مشتری در این شرکت یافت نشد.")
-        try:
-            cur = c.execute("INSERT INTO invoices(tenant_id,customer_id,invoice_number,issue_date,due_date,amount,note) VALUES(?,?,?,?,?,?,?)",
-                (tid,body.customer_id,body.invoice_number.strip(),body.issue_date,body.due_date,body.amount,body.note.strip()))
-        except sqlite3.IntegrityError:
-            raise HTTPException(409, "شماره فاکتور تکراری است.")
-        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"invoice.created"))
-    return {"id":cur.lastrowid,"message":"فاکتور ثبت شد."}
-
-@app.get("/api/invoices")
-def list_invoices(user=Depends(user_from_header)):
-    from datetime import date
-    tid=user["tenant_id"]; today=date.today().isoformat()
-    with db() as c:
-        rows=c.execute("""SELECT i.id,i.customer_id,i.invoice_number,i.issue_date,i.due_date,i.amount,i.note,
-          COALESCE(SUM(p.amount),0) AS paid, MAX(0,i.amount-COALESCE(SUM(p.amount),0)) AS outstanding,
-          CASE WHEN i.amount<=COALESCE(SUM(p.amount),0) THEN 'paid'
-               WHEN i.due_date<? THEN 'overdue' ELSE 'open' END AS computed_status
-          FROM invoices i LEFT JOIN payments p ON p.invoice_id=i.id AND p.tenant_id=i.tenant_id
-          WHERE i.tenant_id=? GROUP BY i.id ORDER BY i.due_date""",(today,tid)).fetchall()
-    return [dict(r) for r in rows]
-
 @app.post("/api/invoices/{invoice_id}/payments")
 def add_payment(invoice_id: int, body: PaymentIn, user=Depends(user_from_header)):
     if not _date_ok(body.paid_at): raise HTTPException(422,"تاریخ پرداخت معتبر نیست.")
@@ -754,112 +737,28 @@ def add_payment(invoice_id: int, body: PaymentIn, user=Depends(user_from_header)
         c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"invoice.payment_recorded"))
     return {"id":cur.lastrowid,"message":"پرداخت ثبت شد."}
 
-@app.post("/api/expenses")
-def create_expense(body: ExpenseIn, user=Depends(user_from_header)):
-    if not _date_ok(body.due_date): raise HTTPException(422,"تاریخ هزینه معتبر نیست.")
-    tid=user["tenant_id"]
-    with db() as c:
-        cur=c.execute("INSERT INTO expenses(tenant_id,category,description,amount,due_date,status,vendor) VALUES(?,?,?,?,?,?,?)",
-          (tid,body.category.strip(),body.description.strip(),body.amount,body.due_date,body.status,body.vendor.strip()))
-        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"expense.created"))
-    return {"id":cur.lastrowid,"message":"هزینه ثبت شد."}
-
-@app.get("/api/expenses")
-def list_expenses(user=Depends(user_from_header)):
-    with db() as c:
-        rows=c.execute("SELECT id,category,description,amount,due_date,status,vendor FROM expenses WHERE tenant_id=? ORDER BY due_date",(user["tenant_id"],)).fetchall()
-    return [dict(r) for r in rows]
-
-@app.post("/api/opportunities")
-def create_opportunity(body: OpportunityIn, user=Depends(user_from_header)):
-    tid=user["tenant_id"]
-    if body.expected_close_date and not _date_ok(body.expected_close_date): raise HTTPException(422,"تاریخ بستن فرصت معتبر نیست.")
-    if body.last_contact_at and not _date_ok(body.last_contact_at): raise HTTPException(422,"تاریخ آخرین تماس معتبر نیست.")
-    with db() as c:
-        if body.customer_id is not None and not c.execute("SELECT 1 FROM customers WHERE id=? AND tenant_id=?",(body.customer_id,tid)).fetchone():
-            raise HTTPException(404,"مشتری در این شرکت یافت نشد.")
-        cur=c.execute("""INSERT INTO opportunities(tenant_id,customer_id,title,source,stage,estimated_value,expected_close_date,last_contact_at,lost_reason)
-          VALUES(?,?,?,?,?,?,?,?,?)""",(tid,body.customer_id,body.title.strip(),body.source.strip(),body.stage,body.estimated_value,body.expected_close_date,body.last_contact_at,body.lost_reason.strip()))
-        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"opportunity.created"))
-    return {"id":cur.lastrowid,"message":"فرصت فروش ثبت شد."}
-
-@app.get("/api/opportunities")
-def list_opportunities(user=Depends(user_from_header)):
-    with db() as c:
-        rows=c.execute("SELECT id,customer_id,title,source,stage,estimated_value,expected_close_date,last_contact_at,lost_reason FROM opportunities WHERE tenant_id=? ORDER BY id DESC",(user["tenant_id"],)).fetchall()
-    return [dict(r) for r in rows]
-
-@app.get("/api/agents/overview")
-def agents_overview(user=Depends(user_from_header)):
-    from datetime import date, timedelta
-    tid=user["tenant_id"]; today=date.today(); today_s=today.isoformat()
-    with db() as c:
-        inv=c.execute("""SELECT i.id,i.invoice_number,i.due_date,i.amount,COALESCE(SUM(p.amount),0) paid
-          FROM invoices i LEFT JOIN payments p ON p.invoice_id=i.id AND p.tenant_id=i.tenant_id
-          WHERE i.tenant_id=? GROUP BY i.id""",(tid,)).fetchall()
-        expenses=c.execute("SELECT amount,due_date,status,category,description FROM expenses WHERE tenant_id=?",(tid,)).fetchall()
-        opps=c.execute("SELECT stage,estimated_value,last_contact_at,expected_close_date FROM opportunities WHERE tenant_id=?",(tid,)).fetchall()
-        customers=c.execute("SELECT id,name FROM customers WHERE tenant_id=?",(tid,)).fetchall()
-    aging={"not_due":0.0,"1_30":0.0,"31_60":0.0,"61_90":0.0,"90_plus":0.0}
-    overdue=[]; receivable=0.0; due_in_7=0.0
-    for r in inv:
-        outstanding=max(0.0,float(r["amount"])-float(r["paid"]))
-        if outstanding<=0: continue
-        receivable+=outstanding
-        days=(today-date.fromisoformat(r["due_date"])).days
-        if days<=0:
-            aging["not_due"]+=outstanding
-            if (date.fromisoformat(r["due_date"])-today).days<=7: due_in_7+=outstanding
-        else:
-            key="1_30" if days<=30 else "31_60" if days<=60 else "61_90" if days<=90 else "90_plus"
-            aging[key]+=outstanding
-            overdue.append({"invoice_number":r["invoice_number"],"days_overdue":days,"outstanding":round(outstanding,2),"severity":"high" if days>30 else "medium"})
-    overdue.sort(key=lambda x:(x["days_overdue"],x["outstanding"]),reverse=True)
-    due_expenses=[dict(r) for r in expenses if r["status"]=="planned" and r["due_date"]<= (today+timedelta(days=30)).isoformat()]
-    expected_outflow=sum(float(r["amount"]) for r in due_expenses)
-    stages={}
-    for r in opps: stages[r["stage"]]=stages.get(r["stage"],0)+1
-    stale=[]
-    for r in customers:
-        # No churn claim without customer activity/purchase history; use explicit evidence status.
-        pass
-    actions=[]
-    if overdue: actions.append({"agent":"receivables","severity":"high" if any(x["days_overdue"]>30 for x in overdue) else "medium","title":"پیگیری مطالبات سررسیدگذشته","explanation":f"{len(overdue)} فاکتور دارای مانده سررسیدگذشته است.","recommendation":"فاکتورها را بر اساس مبلغ و روزهای تأخیر اولویت‌بندی و پیش‌نویس پیگیری تهیه کنید.","approval_required":True})
-    if expected_outflow: actions.append({"agent":"cash_flow","severity":"medium","title":"بررسی خروجی نقدی ۳۰ روز آینده","explanation":f"هزینه‌های برنامه‌ریزی‌شده نزدیک به سررسید: {expected_outflow:.2f}.","recommendation":"ورودی‌های نقدی مورد انتظار را با هزینه‌ها مقایسه و پرداخت‌ها را اولویت‌بندی کنید.","approval_required":True})
-    if not inv: actions.append({"agent":"receivables","severity":"info","title":"داده مطالبات کافی نیست","explanation":"هنوز فاکتوری ثبت نشده است.","recommendation":"فاکتورها را دستی ثبت کنید یا در مرحله بعد فایل استاندارد را وارد کنید.","approval_required":False})
-    if not opps: actions.append({"agent":"sales_analytics","severity":"info","title":"داده قیف فروش کافی نیست","explanation":"برای محاسبه نرخ تبدیل، فرصت‌های فروش ثبت نشده‌اند.","recommendation":"فرصت‌ها را همراه با مرحله فروش، ارزش تقریبی و منبع ثبت کنید.","approval_required":False})
-    return {"mode":"rules_based","as_of":today_s,"agents":[
-      {"id":"business_manager","name":"دستیار مدیریت کسب‌وکار","status":"rules_based"},
-      {"id":"receivables","name":"مدیریت مطالبات","status":"active"},
-      {"id":"sales_analytics","name":"تحلیل فروش و قیف","status":"active"},
-      {"id":"retention","name":"حفظ مشتری","status":"insufficient_data" if not opps else "limited_data"},
-      {"id":"cash_flow","name":"مدیریت نقدینگی","status":"active"},
-      {"id":"marketing_sales","name":"بازاریابی و فروش هوشمند","status":"limited_data"}],
-      "metrics":{"outstanding_receivables":round(receivable,2),"due_in_7_days":round(due_in_7,2),"aging":{k:round(v,2) for k,v in aging.items()},"planned_outflow_30_days":round(expected_outflow,2),"pipeline_count":len(opps),"pipeline_value":round(sum(float(r["estimated_value"]) for r in opps if r["stage"] not in ("won","lost")),2),"pipeline_by_stage":stages,"customer_count":len(customers)},
-      "overdue_invoices":overdue[:100],"actions":actions,
-      "limitations":["پیش‌بینی ریزش مشتری تا ثبت تاریخچه تعامل یا خرید، قابل اتکا نیست.","بازده کمپین تا ثبت هزینه و نتیجه کمپین محاسبه نمی‌شود.","پیش‌بینی نقدینگی فعلاً قواعدمحور است و موجودی بانکی زنده را نشان نمی‌دهد."]}
-
 @app.get("/api/agents/actions")
 def list_agent_actions(user=Depends(user_from_header)):
     with db() as c:
-        rows=c.execute("SELECT id,agent,severity,title,explanation,recommendation,status,approval_required,created_at FROM agent_actions WHERE tenant_id=? ORDER BY id DESC LIMIT 200",(user["tenant_id"],)).fetchall()
+        rows=c.execute("SELECT id,agent,severity,title,rationale,recommendation,status,sensitive,created_at FROM agent_actions WHERE tenant_id=? ORDER BY id DESC LIMIT 200",(user["tenant_id"],)).fetchall()
     return [dict(r) for r in rows]
 
 @app.post("/api/agents/actions/{action_id}/resolve")
 def resolve_agent_action(action_id: int, user=Depends(user_from_header)):
     tid=user["tenant_id"]
     with db() as c:
-        cur=c.execute("UPDATE agent_actions SET status='resolved',resolved_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=? AND status='open'",(action_id,tid))
-        if not cur.rowcount: raise HTTPException(404,"اقدام باز یافت نشد.")
-        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"agent_action.resolved"))
-    return {"message":"اقدام علامت‌گذاری شد."}
+        cur=c.execute("UPDATE agent_actions SET status='done' WHERE id=? AND tenant_id=? AND status='approved'",(action_id,tid))
+        if not cur.rowcount: raise HTTPException(409,"فقط اقدام تأییدشده و متعلق به این شرکت قابل تکمیل است.")
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"agent_action.done"))
+    return {"message":"اقدام تأییدشده تکمیل شد."}
 
 @app.get("/api/import/template/{dataset}.csv")
 def import_template(dataset: str, user=Depends(user_from_header)):
     templates={
-      "invoices":["invoice_number","customer_id","issue_date(YYYY-MM-DD)","due_date(YYYY-MM-DD)","amount","note"],
-      "expenses":["category","description","amount","due_date(YYYY-MM-DD)","status(planned/paid/cancelled)","vendor"],
-      "opportunities":["title","source","stage(lead/qualified/proposal/negotiation/won/lost)","estimated_value","expected_close_date(YYYY-MM-DD)","last_contact_at(YYYY-MM-DD)","lost_reason"]
+      "invoices":["invoice_number","customer_id","issue_date","due_date","amount","note"],
+      "expenses":["title","category","amount","due_date","status"],
+      "opportunities":["title","customer_id","source","stage","estimated_value","expected_close_date","last_contact_date","lost_reason"],
+      "campaigns":["name","channel","spend","leads","conversions","revenue","start_date","end_date"]
     }
     if dataset not in templates: raise HTTPException(404,"قالب برای این نوع داده وجود ندارد.")
     stream=io.StringIO(newline=""); csv.writer(stream).writerow(templates[dataset])
