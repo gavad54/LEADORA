@@ -418,6 +418,7 @@ def create_router(db,user_dep):
    m=c.execute("SELECT id,status FROM dist_dispatch_manifests WHERE tenant_id=? AND id=?",(t,manifest_id)).fetchone()
    if not m:raise HTTPException(404,"مانیفست یافت نشد.")
    if m["status"]!="OPEN":raise HTTPException(409,"مانیفست بسته یا لغو شده است.")
+   if not c.execute("SELECT 1 FROM dist_deliveries WHERE tenant_id=? AND order_id=?",(t,b.order_id)).fetchone():raise HTTPException(409,"ابتدا مانیفست را از انبار ارسال کنید؛ سپس دریافت ثبت شود.")
    line=c.execute(f"SELECT {cap_col} allocation FROM dist_dispatch_manifest_lines WHERE tenant_id=? AND manifest_id=? AND order_id=?",(t,manifest_id,b.order_id)).fetchone()
    if not line:raise HTTPException(404,"فاکتور متعلق به این مانیفست نیست.")
    prior=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_dispatch_transactions WHERE tenant_id=? AND manifest_id=? AND order_id=? AND transaction_type=?",(t,manifest_id,b.order_id,kind)).fetchone()[0]
