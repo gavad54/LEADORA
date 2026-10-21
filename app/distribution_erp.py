@@ -324,7 +324,7 @@ def create_router(db,user_dep):
    for x in b.invoices:
     order=c.execute("SELECT id,order_no,customer_id,status,total_minor FROM dist_sales WHERE tenant_id=? AND id=?",(t,x.order_id)).fetchone()
     if not order:raise HTTPException(404,"فاکتور در شرکت شما یافت نشد.")
-    if order["status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"فقط فاکتور نهایی‌شده قابل درج در مانیفست است.")
+    if order["status"]!="POSTED":raise HTTPException(409,"فقط فاکتور نهایی‌شده و هنوز ارسال‌نشده قابل درج در مانیفست است.")
     received=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_customer_receipts WHERE tenant_id=? AND order_id=?",(t,x.order_id)).fetchone()[0]
     outstanding=order["total_minor"]-received
     if outstanding<0:raise HTTPException(409,"جمع دریافت‌های ثبت‌شده از مبلغ فاکتور بیشتر است.")
@@ -389,6 +389,20 @@ def create_router(db,user_dep):
       "invoice_status":x["invoice_status"],"customer_name":x["customer_name"],
       "invoice_total":money(x["invoice_total_minor"]),"cash_amount":money(x["cash_minor"]),
       "check_amount":money(x["check_minor"]),"credit_amount":money(x["credit_minor"])} for x in lines]}
+
+ @r.post("/dispatch/manifests/{manifest_id}/dispatch")
+ def dispatch_manifest(manifest_id:int,u=Depends(user_dep)):
+  t=tenant(u);results=[]
+  with db() as c:
+   m=c.execute("SELECT * FROM dist_dispatch_manifests WHERE tenant_id=? AND id=?",(t,manifest_id)).fetchone()
+   if not m:raise HTTPException(404,"مانیفست در شرکت شما یافت نشد.")
+   if m["status"]!="OPEN":raise HTTPException(409,"فقط مانیفست باز قابل ارسال است.")
+   lines=c.execute("SELECT order_id FROM dist_dispatch_manifest_lines WHERE tenant_id=? AND manifest_id=? ORDER BY id",(t,manifest_id)).fetchall()
+   if not lines:raise HTTPException(409,"مانیفست خالی قابل ارسال نیست.")
+   for line in lines:
+    results.append(dispatch_sale(c,t,line["order_id"],m["dispatch_date"],m["manifest_no"],"ارسال گروهی مانیفست "+m["manifest_no"],u.get("id")))
+   audit(c,t,"distribution.dispatch_manifest.dispatched:"+m["manifest_no"])
+  return {"manifest_id":manifest_id,"manifest_no":m["manifest_no"],"status":"DISPATCHED","invoice_count":len(results),"cost_of_goods":money(sum(minor(x["cost_of_goods"]) for x in results)),"invoices":results}
 
  @r.post("/dispatch/manifests/{manifest_id}/collections")
  def record_dispatch_collection(manifest_id:int,b:DispatchCollectionIn,u=Depends(user_dep)):
@@ -626,7 +640,7 @@ def create_router(db,user_dep):
   with db() as c:
    order=c.execute("SELECT * FROM dist_sales WHERE tenant_id=? AND id=?",(t,b.order_id)).fetchone()
    if not order:raise HTTPException(404,"فاکتور در شرکت شما یافت نشد.")
-   if order["status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"فقط فاکتور نهایی‌شده قابل برگشت است.")
+   if order["status"]!="DELIVERED":raise HTTPException(409,"فقط کالای ارسال‌شده قابل برگشت است.")
    sold=c.execute("SELECT product_id,SUM(quantity) quantity FROM dist_sale_lines WHERE tenant_id=? AND order_id=? GROUP BY product_id",(t,b.order_id)).fetchall()
    sold_by={x["product_id"]:Decimal(str(x["quantity"])) for x in sold}
    for line in b.lines:
@@ -647,7 +661,7 @@ def create_router(db,user_dep):
    ret=c.execute("SELECT r.*,s.order_no,s.status order_status FROM dist_sales_returns r JOIN dist_sales s ON s.id=r.order_id AND s.tenant_id=r.tenant_id WHERE r.tenant_id=? AND r.id=?",(t,return_id)).fetchone()
    if not ret:raise HTTPException(404,"برگشت کالا یافت نشد.")
    if ret["status"]!="DRAFT":raise HTTPException(409,"فقط برگشت پیش‌نویس قابل تأیید است.")
-   if ret["order_status"] not in ("POSTED","DELIVERED"):raise HTTPException(409,"وضعیت فاکتور اجازه تأیید برگشت نمی‌دهد.")
+   if ret["order_status"]!="DELIVERED":raise HTTPException(409,"فقط کالای ارسال‌شده قابل تأیید برگشت است.")
    lines=c.execute("SELECT * FROM dist_sales_return_lines WHERE tenant_id=? AND return_id=? ORDER BY id",(t,return_id)).fetchall()
    revenue_total=0;cost_total=0;stock_updates=[]
    for line in lines:
