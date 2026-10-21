@@ -42,6 +42,49 @@ def init_db():
         """)
 init_db()
 
+# Additive licensing and tenant-owned bank-account metadata; never reset the persistent DB.
+with db() as _conn:
+    _conn.executescript("""
+    CREATE TABLE IF NOT EXISTS tenant_licenses(
+      tenant_id INTEGER PRIMARY KEY REFERENCES tenants(id),
+      status TEXT NOT NULL DEFAULT 'trial' CHECK(status IN ('trial','active','expired','suspended')),
+      trial_started_at TEXT NOT NULL,
+      trial_ends_at TEXT NOT NULL,
+      edition TEXT NOT NULL DEFAULT 'standard',
+      activated_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS activation_keys(
+      id INTEGER PRIMARY KEY,
+      tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+      key_hash TEXT NOT NULL UNIQUE,
+      edition TEXT NOT NULL DEFAULT 'standard',
+      created_by_user_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at TEXT,
+      redeemed_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tenant_bank_accounts(
+      id INTEGER PRIMARY KEY,
+      tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+      label TEXT NOT NULL,
+      institution TEXT NOT NULL DEFAULT '',
+      account_holder TEXT NOT NULL DEFAULT '',
+      iban_masked TEXT NOT NULL DEFAULT '',
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      provider TEXT NOT NULL DEFAULT 'manual',
+      connection_status TEXT NOT NULL DEFAULT 'not_configured',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_bank_accounts_tenant ON tenant_bank_accounts(tenant_id,id);
+    """)
+    # Preserve existing tenants and create a maximum 90-day trial for legacy accounts without a license row.
+    _now = datetime.now(timezone.utc) if 'datetime' in globals() else __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+    _start = _now.isoformat()
+    _end = (_now + __import__('datetime').timedelta(days=90)).isoformat()
+    _conn.execute("INSERT OR IGNORE INTO tenant_licenses(tenant_id,status,trial_started_at,trial_ends_at) SELECT id,'trial',?,? FROM tenants", (_start,_end))
+
 def pw_hash(password, salt):
     return hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 180000).hex()
 
@@ -150,6 +193,9 @@ def register(body: RegisterIn):
             tid=c.execute("INSERT INTO tenants(name,industry) VALUES(?,?)",(company_name,industry)).lastrowid
             uid=c.execute("INSERT INTO users(tenant_id,email,salt,password_hash) VALUES(?,?,?,?)",(tid,email,salt,pw_hash(body.password,salt))).lastrowid
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"tenant.registered"))
+            _trial_start = datetime.now(timezone.utc)
+            c.execute("INSERT OR IGNORE INTO tenant_licenses(tenant_id,status,trial_started_at,trial_ends_at) VALUES(?,?,?,?)",
+                      (tid,"trial",_trial_start.isoformat(),(_trial_start+timedelta(days=90)).isoformat()))
         except sqlite3.IntegrityError:
             raise HTTPException(409,"این ایمیل قبلاً برای این شرکت ثبت شده است.")
     return {"token":token(uid,tid),"tenant":{"id":tid,"name":company_name,"industry":industry},"user":{"id":uid,"email":email}}
@@ -1430,3 +1476,140 @@ def plans_page():
 @app.get("/ai-command-center")
 def ai_command_center_page():
     return FileResponse(ROOT / "static" / "ai-command-center.html")
+
+
+# --- Product licensing and company-owned bank accounts ---
+# Trial duration is server-controlled. No bank login credentials are accepted or stored.
+from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel, Field
+
+def _platform_owner(user):
+    allowed = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
+    if not allowed or str(user.get("id")) not in allowed:
+        raise HTTPException(403, "این عملیات فقط برای مالک پلتفرم مجاز است.")
+    return True
+
+def _license_for_tenant(tenant_id):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM tenant_licenses WHERE tenant_id=?", (tenant_id,)).fetchone()
+        if row is None:
+            now = datetime.now(timezone.utc)
+            conn.execute("INSERT OR IGNORE INTO tenant_licenses(tenant_id,status,trial_started_at,trial_ends_at) VALUES(?,?,?,?)",
+                         (tenant_id,"trial",now.isoformat(),(now+timedelta(days=90)).isoformat()))
+            row = conn.execute("SELECT * FROM tenant_licenses WHERE tenant_id=?", (tenant_id,)).fetchone()
+        result = dict(row)
+        if result["status"] == "trial":
+            try:
+                end = datetime.fromisoformat(result["trial_ends_at"])
+                if end.tzinfo is None: end = end.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) >= end:
+                    conn.execute("UPDATE tenant_licenses SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE tenant_id=?", (tenant_id,))
+                    result["status"] = "expired"
+            except (TypeError, ValueError):
+                result["status"] = "expired"
+                conn.execute("UPDATE tenant_licenses SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE tenant_id=?", (tenant_id,))
+        return result
+
+class LicenseIssueIn(BaseModel):
+    tenant_id: int = Field(gt=0)
+    edition: str = Field(default="standard", min_length=1, max_length=40)
+    expires_at: str | None = Field(default=None, max_length=40)
+
+class LicenseActivateIn(BaseModel):
+    activation_key: str = Field(min_length=12, max_length=160)
+
+class BankAccountIn(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+    institution: str = Field(default="", max_length=120)
+    account_holder: str = Field(default="", max_length=120)
+    iban_masked: str = Field(default="", max_length=40)
+    currency: str = Field(default="EUR", min_length=3, max_length=8)
+    is_default: bool = False
+    provider: str = Field(default="manual", max_length=40)
+
+@app.get("/api/account/license")
+def account_license(user=Depends(user_from_header)):
+    lic = _license_for_tenant(user["tenant_id"])
+    return {k: lic[k] for k in ("tenant_id","status","trial_started_at","trial_ends_at","edition","activated_at","updated_at")}
+
+@app.post("/api/account/license/activate")
+def activate_license(body: LicenseActivateIn, user=Depends(user_from_header)):
+    key_hash = hashlib.sha256(body.activation_key.strip().encode()).hexdigest()
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as conn:
+        key = conn.execute("SELECT id,tenant_id,edition,expires_at,redeemed_at FROM activation_keys WHERE key_hash=?", (key_hash,)).fetchone()
+        if not key or key["tenant_id"] != user["tenant_id"] or key["redeemed_at"]:
+            raise HTTPException(400, "کلید فعال‌سازی معتبر نیست یا قبلاً استفاده شده است.")
+        if key["expires_at"]:
+            try:
+                expiry = datetime.fromisoformat(key["expires_at"])
+                if expiry.tzinfo is None: expiry = expiry.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) >= expiry:
+                    raise HTTPException(400, "مهلت استفاده از کلید فعال‌سازی تمام شده است.")
+            except ValueError:
+                raise HTTPException(400, "تاریخ انقضای کلید معتبر نیست.")
+        conn.execute("UPDATE activation_keys SET redeemed_at=? WHERE id=? AND redeemed_at IS NULL", (now,key["id"]))
+        conn.execute("UPDATE tenant_licenses SET status='active',edition=?,activated_at=?,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=?",
+                     (key["edition"],now,user["tenant_id"]))
+        conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)", (user["tenant_id"],"license.activated"))
+    return {"status":"active","edition":key["edition"],"activated_at":now,"message":"مجوز نرم‌افزار فعال شد."}
+
+@app.post("/api/platform/licenses")
+def issue_activation_key(body: LicenseIssueIn, user=Depends(user_from_header)):
+    _platform_owner(user)
+    with db() as conn:
+        if not conn.execute("SELECT 1 FROM tenants WHERE id=?", (body.tenant_id,)).fetchone():
+            raise HTTPException(404, "شرکت موردنظر یافت نشد.")
+        raw_key = "LDR-" + secrets.token_urlsafe(27)
+        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+        conn.execute("INSERT INTO activation_keys(tenant_id,key_hash,edition,created_by_user_id,expires_at) VALUES(?,?,?,?,?)",
+                     (body.tenant_id,key_hash,body.edition, user["id"], body.expires_at))
+        conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)", (body.tenant_id,"license.key_issued"))
+    # Plaintext key is returned once only; only its hash is stored.
+    return {"activation_key":raw_key,"tenant_id":body.tenant_id,"edition":body.edition,"expires_at":body.expires_at,
+            "warning":"این کلید فقط اکنون نمایش داده می‌شود؛ آن را امن به شرکت تحویل دهید."}
+
+@app.get("/api/platform/licenses")
+def list_platform_licenses(user=Depends(user_from_header)):
+    _platform_owner(user)
+    with db() as conn:
+        rows = conn.execute("""SELECT t.id tenant_id,t.name company_name,l.status,l.trial_started_at,l.trial_ends_at,l.edition,l.activated_at
+          FROM tenants t LEFT JOIN tenant_licenses l ON l.tenant_id=t.id ORDER BY t.id DESC LIMIT 500""").fetchall()
+    return [dict(row) for row in rows]
+
+@app.get("/api/bank-accounts")
+def list_bank_accounts(user=Depends(user_from_header)):
+    with db() as conn:
+        rows = conn.execute("""SELECT id,label,institution,account_holder,iban_masked,currency,is_default,provider,connection_status,created_at
+          FROM tenant_bank_accounts WHERE tenant_id=? ORDER BY is_default DESC,id DESC""", (user["tenant_id"],)).fetchall()
+    return [dict(row) for row in rows]
+
+@app.post("/api/bank-accounts")
+def add_bank_account(body: BankAccountIn, user=Depends(user_from_header)):
+    label, institution, holder, iban = body.label.strip(), body.institution.strip(), body.account_holder.strip(), body.iban_masked.strip()
+    if not label: raise HTTPException(422, "عنوان حساب بانکی الزامی است.")
+    if body.provider != "manual":
+        raise HTTPException(501, "اتصال مستقیم این ارائه‌دهنده هنوز پیاده‌سازی و تأیید نشده است؛ حساب دستی فقط اطلاعات نمایشی را ذخیره می‌کند.")
+    with db() as conn:
+        if body.is_default:
+            conn.execute("UPDATE tenant_bank_accounts SET is_default=0 WHERE tenant_id=?", (user["tenant_id"],))
+        cur = conn.execute("""INSERT INTO tenant_bank_accounts(tenant_id,label,institution,account_holder,iban_masked,currency,is_default,provider,connection_status)
+          VALUES(?,?,?,?,?,?,?,?,?)""", (user["tenant_id"],label,institution,holder,iban,body.currency.upper(),int(body.is_default),"manual","not_configured"))
+        conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)", (user["tenant_id"],"bank_account.created"))
+        account_id = cur.lastrowid
+    return {"id":account_id,"message":"اطلاعات حساب ثبت شد؛ انتقال وجه بانکی از این ثبت دستی انجام نمی‌شود."}
+
+@app.delete("/api/bank-accounts/{account_id}")
+def delete_bank_account(account_id: int, user=Depends(user_from_header)):
+    with db() as conn:
+        cur = conn.execute("DELETE FROM tenant_bank_accounts WHERE id=? AND tenant_id=?", (account_id,user["tenant_id"]))
+        if cur.rowcount == 0: raise HTTPException(404, "حساب بانکی یافت نشد.")
+        conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)", (user["tenant_id"],"bank_account.deleted"))
+    return {"message":"حساب بانکی حذف شد."}
+
+@app.get("/api/bank-accounts/status")
+def bank_accounts_status(user=Depends(user_from_header)):
+    with db() as conn:
+        count = conn.execute("SELECT COUNT(*) n FROM tenant_bank_accounts WHERE tenant_id=?", (user["tenant_id"],)).fetchone()["n"]
+    return {"accounts":count,"provider_integration":"not_configured","real_transfers_enabled":False,
+            "message":"ثبت حساب و مشخصات آن فعال است؛ انتقال واقعی تا زمان اتصال درگاه بانکی معتبر و تأیید تراکنش فعال نیست."}
