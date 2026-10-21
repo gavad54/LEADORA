@@ -184,19 +184,19 @@ def create_router(db, user_dep):
             run_id=c.execute("INSERT INTO payroll_runs(tenant_id,period,created_by) VALUES(?,?,?)",(t,b.period,u.get("id"))).lastrowid
             for emp in emps:
                 basis=emp["basis"] or "BOOKED_SALES";rate=emp["rate_bps"] or 0
-                sales=c.execute("""SELECT s.id,s.total_minor FROM payroll_sale_assignments a
+                assigned_sales=c.execute("""SELECT s.id,s.total_minor,s.order_date FROM payroll_sale_assignments a
                   JOIN dist_sales s ON s.id=a.order_id AND s.tenant_id=a.tenant_id
                   WHERE a.tenant_id=? AND a.employee_id=? AND s.status IN ('POSTED','DELIVERED')
-                    AND s.order_date>=? AND s.order_date<?""",(t,emp["id"],start,end)).fetchall()
-                order_ids=[x["id"] for x in sales]
-                receipts_period=0;returns_period=0;returns_all=0;receipts_all_by_order={}
+                  ORDER BY s.id""",(t,emp["id"])).fetchall()
+                sales=[x for x in assigned_sales if start<=x["order_date"]<end]
+                order_ids=[x["id"] for x in assigned_sales]
+                receipts_period=0;returns_period=0
                 outstanding_basis=0
                 for sale in sales:
                     receipts_all=c.execute("SELECT COALESCE(SUM(amount_minor),0) FROM dist_customer_receipts WHERE tenant_id=? AND order_id=?",(t,sale["id"])).fetchone()[0]
                     returns_all_one=c.execute("""SELECT COALESCE(SUM(l.revenue_minor),0) FROM dist_sales_return_lines l
                       JOIN dist_sales_returns r ON r.id=l.return_id AND r.tenant_id=l.tenant_id
                       WHERE r.tenant_id=? AND r.order_id=? AND r.status='APPROVED'""",(t,sale["id"])).fetchone()[0]
-                    receipts_all_by_order[sale["id"]]=(receipts_all,returns_all_one)
                     outstanding_basis+=max(0,sale["total_minor"]-receipts_all-returns_all_one)
                 if order_ids:
                     marks=",".join("?" for _ in order_ids)
@@ -204,7 +204,6 @@ def create_router(db, user_dep):
                     returns_period=c.execute("""SELECT COALESCE(SUM(l.revenue_minor),0) FROM dist_sales_return_lines l
                       JOIN dist_sales_returns r ON r.id=l.return_id AND r.tenant_id=l.tenant_id
                       WHERE r.tenant_id=? AND r.order_id IN ("""+marks+""") AND r.status='APPROVED' AND r.return_date>=? AND r.return_date<?""",(t,*order_ids,start,end)).fetchone()[0]
-                    returns_all=sum(v[1] for v in receipts_all_by_order.values())
                 booked=sum(x["total_minor"] for x in sales)
                 if basis=="BOOKED_SALES":amount=max(0,booked-returns_period)
                 elif basis=="COLLECTED_SALES":amount=receipts_period
