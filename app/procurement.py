@@ -105,6 +105,13 @@ def install_procurement(app, db, user_from_header, ROOT):
           method TEXT NOT NULL DEFAULT 'manual', reference TEXT NOT NULL DEFAULT '',
           status TEXT NOT NULL DEFAULT 'recorded_not_transferred',
           created_by INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS procurement_receipts(
+          id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, order_id INTEGER NOT NULL,
+          quantity REAL NOT NULL CHECK(quantity>0), amount REAL NOT NULL CHECK(amount>0),
+          currency TEXT NOT NULL DEFAULT 'IRR', journal_id INTEGER,
+          accepted_by INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE INDEX IF NOT EXISTS idx_proc_receipts_tenant_order ON procurement_receipts(tenant_id,order_id,id);
         """)
 
     def tenant_row(table, row_id, tenant_id, columns="*"):
@@ -309,6 +316,11 @@ def install_procurement(app, db, user_from_header, ROOT):
             raise HTTPException(409, "برای ثبت ورود انبار، تأیید صریح پذیرش کالا لازم است.")
         if body.quantity_received + order["received_qty"] > order["quantity"]:
             raise HTTPException(422, "مقدار دریافتی از مقدار سفارش بیشتر است.")
+        need = tenant_row("procurement_needs", order["need_id"], u["tenant_id"])
+        # Procurement ledger amounts are currently native-currency values; only IRR can be
+        # posted to the base ledger until a controlled FX-rate/valuation module exists.
+        receipt_amount = round(body.quantity_received * order["unit_price"] +
+                                order["shipping_cost"] * body.quantity_received / order["quantity"], 2)
         with db() as c:
             received = order["received_qty"] + body.quantity_received
             status = "received" if received == order["quantity"] else "partially_received"
@@ -316,16 +328,59 @@ def install_procurement(app, db, user_from_header, ROOT):
                       (received,status,body.note.strip(),order_id,u["tenant_id"]))
             c.execute("UPDATE procurement_needs SET status=? WHERE id=? AND tenant_id=?",
                       ("fulfilled" if status=="received" else "partially_received",order["need_id"],u["tenant_id"]))
-            # Inventory stock is updated only if the SKU already maps to a tenant-owned product.
-            need = c.execute("SELECT sku,product_name FROM procurement_needs WHERE id=? AND tenant_id=?", (order["need_id"],u["tenant_id"])).fetchone()
-            if need and need["sku"]:
+            product = None
+            if need["sku"]:
                 product = c.execute("SELECT id FROM products WHERE tenant_id=? AND sku=?", (u["tenant_id"],need["sku"])).fetchone()
                 if product:
                     c.execute("UPDATE products SET stock=stock+? WHERE id=? AND tenant_id=?", (body.quantity_received,product["id"],u["tenant_id"]))
+            cur = c.execute("""INSERT INTO procurement_receipts
+              (tenant_id,order_id,quantity,amount,currency,accepted_by,note)
+              VALUES(?,?,?,?,?,?,?)""",
+              (u["tenant_id"],order_id,body.quantity_received,receipt_amount,order["currency"],u["id"],body.note.strip()))
+            receipt_id = cur.lastrowid
+            journal = None
+            if order["currency"] == "IRR":
+                # Receipt is automatically journaled as a DRAFT. Posting requires the company's
+                # normal accounting approval workflow. No supplier payment is initiated here.
+                count = c.execute("SELECT COUNT(*)+1 n FROM gl_journals WHERE tenant_id=?", (u["tenant_id"],)).fetchone()["n"]
+                journal_no = f"GL-{u['tenant_id']}-{count:06d}"
+                source_ref = f"procurement-receipt-{receipt_id}"
+                journal_cur = c.execute("""INSERT INTO gl_journals
+                  (tenant_id,journal_no,journal_date,description,source_type,source_ref,status,created_by)
+                  VALUES(?,?,?,?,? ,?,'draft',?)""",
+                  (u["tenant_id"],journal_no,datetime.now(timezone.utc).date().isoformat(),
+                   f"ورود خرید کالا - سفارش {order_id} - رسید {receipt_id}","receipt",source_ref,u["id"]))
+                journal_id = journal_cur.lastrowid
+                c.execute("""INSERT INTO gl_lines
+                  (tenant_id,journal_id,line_no,account_code,memo,debit,credit,party_name)
+                  VALUES(?,?,?,?,?,?,?,?)""",
+                  (u["tenant_id"],journal_id,1,"1200","موجودی کالای دریافتی",f"{receipt_amount:.2f}","0.00",""))
+                c.execute("""INSERT INTO gl_lines
+                  (tenant_id,journal_id,line_no,account_code,memo,debit,credit,party_name)
+                  VALUES(?,?,?,?,?,?,?,?)""",
+                  (u["tenant_id"],journal_id,2,"2000","حساب پرداختنی تأمین‌کننده","0.00",f"{receipt_amount:.2f}",""))
+                c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)", (u["tenant_id"],"accounting.journal.draft:"+journal_no))
+                c.execute("UPDATE procurement_receipts SET journal_id=? WHERE id=? AND tenant_id=?", (journal_id,receipt_id,u["tenant_id"]))
+                journal = {"id":journal_id,"journal_no":journal_no,"status":"draft","amount":receipt_amount}
             c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)", (u["tenant_id"],"procurement.receipt.accepted"))
-        return {"order_id":order_id,"received_qty":received,"status":status,
-                "inventory_stock_updated":bool(need and need["sku"] and product),
-                "message":"ورود کالا پس از پذیرش ثبت شد؛ ثبت سند حسابداری خرید/بهای تمام‌شده نیازمند اتصال به دفترکل است."}
+        return {"order_id":order_id,"receipt_id":receipt_id,"received_qty":received,"status":status,
+                "receipt_amount":receipt_amount,"currency":order["currency"],
+                "inventory_stock_updated":bool(product),
+                "accounting_journal":journal,
+                "message":"ورود کالا ثبت شد. برای ریال، پیش‌نویس سند موجودی/حساب پرداختنی ساخته شد و نیازمند تأیید حسابداری است."
+                if journal else "ورود کالا ثبت شد؛ برای ارز غیرریالی، ثبت حسابداری تا تعیین نرخ تبدیل تأییدشده ایجاد نشد."}
+
+    @app.get("/api/procurement/orders/{order_id}/receipts")
+    def list_receipts(order_id: int, u=Depends(user_from_header)):
+        tenant_row("procurement_orders", order_id, u["tenant_id"])
+        with db() as c:
+            rows = c.execute("""SELECT r.id,r.order_id,r.quantity,r.amount,r.currency,r.journal_id,
+              r.accepted_by,r.note,r.created_at,j.journal_no,j.status journal_status
+              FROM procurement_receipts r LEFT JOIN gl_journals j
+              ON j.id=r.journal_id AND j.tenant_id=r.tenant_id
+              WHERE r.tenant_id=? AND r.order_id=? ORDER BY r.id DESC""",
+              (u["tenant_id"],order_id)).fetchall()
+        return [dict(r) for r in rows]
 
     @app.post("/api/procurement/orders/{order_id}/payments")
     def record_payment(order_id: int, amount: float, reference: str = "", u=Depends(user_from_header)):
