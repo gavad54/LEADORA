@@ -1,5 +1,5 @@
 """Additive tenant-isolated double-entry accounting for LEADORA."""
-import sqlite3
+import sqlite3, csv, io
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -53,8 +53,11 @@ class QuickVoucher(BaseModel):
     document_ref:str=Field(min_length=1,max_length=100)
     party:str=Field(default="",max_length=160)
     amount:Decimal=Field(gt=0,max_digits=18,decimal_places=2)
-    account_code:str=Field(default="4000",min_length=3,max_length=20)
+    account_code:str=Field(default="",max_length=20)
     description:str=Field(default="ثبت پیشنهادی خودکار",max_length=240)
+
+class CSVImportIn(BaseModel):
+    content:str=Field(min_length=1,max_length=2_000_000)
 
 def install_accounting(app, db, user_from_header, root:Path):
     def seed(c,tid):
@@ -89,7 +92,13 @@ def install_accounting(app, db, user_from_header, root:Path):
         for i,x in enumerate(p.lines,1):
             c.execute("INSERT INTO gl_lines(tenant_id,journal_id,line_no,account_code,memo,debit,credit,party_name) VALUES(?,?,?,?,?,?,?,?)",(tid,jid,i,x.account_code,x.memo,amount(x.debit),amount(x.credit),x.party_name))
         c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"accounting.journal.draft:"+no))
-        return {"id":jid,"journal_no":no,"status":"draft","debit_total":amount(d),"credit_total":amount(cr)}
+        settings=c.execute("SELECT require_approval FROM gl_automation_settings WHERE tenant_id=?",(tid,)).fetchone()
+        status="draft"
+        if settings and not settings["require_approval"] and p.source_type in ("sales","purchase","receipt","payment","import"):
+            c.execute("UPDATE gl_journals SET status='posted',posted_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",(jid,tid))
+            c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"accounting.journal.auto_post:"+no))
+            status="posted"
+        return {"id":jid,"journal_no":no,"status":status,"debit_total":amount(d),"credit_total":amount(cr)}
     @app.get("/accounting")
     def accounting_page():return FileResponse(root/"static"/"accounting.html")
     @app.get("/api/accounting/overview")
@@ -164,14 +173,74 @@ def install_accounting(app, db, user_from_header, root:Path):
         rev=sum(x["credit"]-x["debit"] for x in tb["items"] if x["account_type"]=="revenue")
         exp=sum(x["debit"]-x["credit"] for x in tb["items"] if x["account_type"]=="expense")
         return {"revenue":round(rev,2),"expenses":round(exp,2),"net_profit":round(rev-exp,2)}
+    def account_type(c,tid,code):
+        row=c.execute("SELECT account_type FROM gl_accounts WHERE tenant_id=? AND code=? AND is_active=1",(tid,code)).fetchone()
+        if not row:raise HTTPException(422,"کد حساب نامعتبر است: "+code)
+        return row["account_type"]
     @app.post("/api/accounting/automation/sales-voucher")
     def sales_voucher(p:QuickVoucher,u=Depends(user_from_header)):
-        q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="sales",source_ref=p.document_ref,lines=[LineIn(account_code="1100",debit=p.amount,memo="حساب دریافتنی",party_name=p.party),LineIn(account_code=p.account_code,credit=p.amount,memo="درآمد فروش",party_name=p.party)])
-        with db() as c:return make_journal(c,u,q)
+        revenue=p.account_code or "4000"
+        with db() as c:
+            if account_type(c,u["tenant_id"],revenue)!="revenue":raise HTTPException(422,"حساب فروش باید از گروه درآمد باشد.")
+            q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="sales",source_ref=p.document_ref,lines=[LineIn(account_code="1100",debit=p.amount,memo="حساب دریافتنی",party_name=p.party),LineIn(account_code=revenue,credit=p.amount,memo="درآمد فروش",party_name=p.party)])
+            return make_journal(c,u,q)
     @app.post("/api/accounting/automation/expense-voucher")
     def expense_voucher(p:QuickVoucher,u=Depends(user_from_header)):
-        q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="purchase",source_ref=p.document_ref,lines=[LineIn(account_code=p.account_code,debit=p.amount,memo="هزینه/خرید",party_name=p.party),LineIn(account_code="2000",credit=p.amount,memo="حساب پرداختنی",party_name=p.party)])
-        with db() as c:return make_journal(c,u,q)
+        expense=p.account_code or "6300"
+        with db() as c:
+            if account_type(c,u["tenant_id"],expense)!="expense":raise HTTPException(422,"حساب هزینه باید از گروه هزینه باشد.")
+            q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="purchase",source_ref=p.document_ref,lines=[LineIn(account_code=expense,debit=p.amount,memo="هزینه/خرید",party_name=p.party),LineIn(account_code="2000",credit=p.amount,memo="حساب پرداختنی",party_name=p.party)])
+            return make_journal(c,u,q)
+    @app.post("/api/accounting/automation/receipt-voucher")
+    def receipt_voucher(p:QuickVoucher,u=Depends(user_from_header)):
+        cash_bank=p.account_code or "1010"
+        with db() as c:
+            if account_type(c,u["tenant_id"],cash_bank)!="asset":raise HTTPException(422,"حساب دریافت وجه باید از گروه دارایی باشد.")
+            q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="receipt",source_ref=p.document_ref,lines=[LineIn(account_code=cash_bank,debit=p.amount,memo="دریافت وجه",party_name=p.party),LineIn(account_code="1100",credit=p.amount,memo="تسویه دریافتنی",party_name=p.party)])
+            return make_journal(c,u,q)
+    @app.post("/api/accounting/automation/payment-voucher")
+    def payment_voucher(p:QuickVoucher,u=Depends(user_from_header)):
+        cash_bank=p.account_code or "1010"
+        with db() as c:
+            if account_type(c,u["tenant_id"],cash_bank)!="asset":raise HTTPException(422,"حساب پرداخت وجه باید از گروه دارایی باشد.")
+            q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="payment",source_ref=p.document_ref,lines=[LineIn(account_code="2000",debit=p.amount,memo="تسویه پرداختنی",party_name=p.party),LineIn(account_code=cash_bank,credit=p.amount,memo="پرداخت وجه",party_name=p.party)])
+            return make_journal(c,u,q)
+    @app.post("/api/accounting/import/csv")
+    def import_csv(p:CSVImportIn,u=Depends(user_from_header)):
+        reader=csv.DictReader(io.StringIO(p.content.lstrip("\\ufeff")))
+        required={"date","document_ref","type","amount"}
+        if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
+            raise HTTPException(422,"ستون‌های لازم: date,document_ref,type,amount؛ ستون‌های اختیاری: party,account_code,description")
+        rows=list(reader)
+        if not rows or len(rows)>500:raise HTTPException(422,"تعداد ردیف باید بین ۱ تا ۵۰۰ باشد.")
+        prepared=[]
+        for i,row in enumerate(rows, start=2):
+            try:
+                typ=(row.get("type") or "").strip().lower()
+                if typ not in ("sales","expense","receipt","payment"):raise ValueError("type باید sales/expense/receipt/payment باشد")
+                p=QuickVoucher(journal_date=date.fromisoformat((row.get("date") or "").strip()),document_ref=(row.get("document_ref") or "").strip(),party=(row.get("party") or "").strip(),amount=Decimal((row.get("amount") or "").strip()),account_code=(row.get("account_code") or "").strip(),description=(row.get("description") or "ورود CSV").strip())
+                prepared.append((typ,p))
+            except Exception as e:
+                raise HTTPException(422,f"خطای ردیف {i}: {str(e)[:180]}")
+        created=[]
+        with db() as c:
+            tid=u["tenant_id"]
+            for typ,p in prepared:
+                code=p.account_code or {"sales":"4000","expense":"6300","receipt":"1010","payment":"1010"}[typ]
+                group=account_type(c,tid,code)
+                expected="revenue" if typ=="sales" else "expense" if typ=="expense" else "asset"
+                if group!=expected:raise HTTPException(422,f"حساب {code} با نوع {typ} سازگار نیست.")
+                if typ=="sales":
+                    q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="sales",source_ref=p.document_ref,lines=[LineIn(account_code="1100",debit=p.amount,party_name=p.party),LineIn(account_code=code,credit=p.amount,party_name=p.party)])
+                elif typ=="expense":
+                    q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="purchase",source_ref=p.document_ref,lines=[LineIn(account_code=code,debit=p.amount,party_name=p.party),LineIn(account_code="2000",credit=p.amount,party_name=p.party)])
+                elif typ=="receipt":
+                    q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="receipt",source_ref=p.document_ref,lines=[LineIn(account_code=code,debit=p.amount,party_name=p.party),LineIn(account_code="1100",credit=p.amount,party_name=p.party)])
+                else:
+                    q=JournalIn(journal_date=p.journal_date,description=p.description,source_type="payment",source_ref=p.document_ref,lines=[LineIn(account_code="2000",debit=p.amount,party_name=p.party),LineIn(account_code=code,credit=p.amount,party_name=p.party)])
+                created.append(make_journal(c,u,q))
+            c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",(tid,"accounting.csv.import:"+str(len(created))))
+        return {"created":created,"count":len(created),"all_drafts":all(x["status"]=="draft" for x in created)}
     @app.get("/api/accounting/automation/settings")
     def get_settings(u=Depends(user_from_header)):
         with db() as c:
