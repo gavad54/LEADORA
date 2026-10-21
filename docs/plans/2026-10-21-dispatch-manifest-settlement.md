@@ -84,7 +84,7 @@ git commit -m "feat: add tenant-scoped dispatch manifests"
 - Add `POST /api/distribution/dispatch/manifests/{manifest_id}/settlements` accepting settlement date and invoice-level actuals: cash received, checks received, credit remaining, and an optional reference/note.
 - Add `GET /api/distribution/dispatch/manifests/{manifest_id}/settlements` returning settlement history and outstanding differences.
 - Settlement records are append-only; corrections are separate records, not silent edits.
-- Cash actually received must reference a tenant-owned `dist_cash_accounts` code and create exactly one matching cash movement and balanced journal. Checks must be recorded as pending instruments, not treated as cleared cash; they must not increase the cash/bank balance. Credit remaining stays a customer receivable.
+- Customer collection and distributor remittance are separate accounting events. On customer collection, cash collected by the distributor debits a dedicated `cash-in-distributor` clearing asset (recommended account code `1010`) and credits accounts receivable; checks debit a separate pending-check asset (recommended `1020`) and credit accounts receivable; uncollected credit remains in accounts receivable. Neither cash held by the distributor nor a pending check may be reported as cleared company bank/cash. Add `POST /api/distribution/dispatch/manifests/{manifest_id}/remittances` to record cash actually handed to the company: it must reference a tenant-owned `dist_cash_accounts` code, debit company cash/bank, and credit cash-in-distributor. Transfer of physical checks into company custody records custody/status only; it does not mark them cleared or increase cash/bank. Never trigger a real bank transfer.
 - The sum of cash received, check received, and credit remaining must reconcile to the allocated invoice amount, adjusted only by a separately approved return/credit-note flow. Since returns are outside this milestone, do not accept an unapproved return offset.
 - Repeated submission with the same idempotency key must return the original result; a conflicting reuse of the key must return HTTP 409.
 
@@ -106,7 +106,7 @@ Expected: new settlement tests fail before implementation.
 
 - [ ] **Step 3: Implement the minimum behavior**
 
-Add append-only settlement and check-instrument tables with tenant-scoped foreign references, idempotency key uniqueness, and audit events. Use one SQLite transaction for settlement rows and all associated accounting/cash records. Reuse the existing `post` helper only after confirming its source type/source ID uniqueness behavior; otherwise add a unique settlement source identity before posting. Pending checks must use a dedicated status and never be included in cleared cash totals. Preserve existing customer-receipt semantics rather than writing to them twice.
+Add append-only collection, check-instrument, and remittance tables with tenant-scoped foreign references, idempotency key uniqueness, and audit events. Ensure tenant ledger accounts `1010` (cash held by distributor) and `1020` (pending checks) are created safely and are not mislabeled as company bank/cash. Use one SQLite transaction for each collection/remittance and its accounting effects. Reuse the existing `post` helper only after confirming source type/source ID uniqueness behavior; otherwise add a unique source identity before posting. Pending checks must have a dedicated status and never be included in cleared cash totals. Preserve existing customer-receipt semantics rather than writing to them twice.
 
 - [ ] **Step 4: Verify the focused pass**
 
@@ -157,7 +157,7 @@ Correct transaction boundaries, source IDs, tenant filters, and aggregate calcul
 
 Run: `python -m pytest -q tests/test_distribution_erp.py -k dispatch_flow`
 
-Expected: the full workflow passes with balanced accounting and no duplicated stock/revenue/receipt effects.
+Expected: the full workflow passes with balanced accounting and no duplicated stock/revenue/collection effects; distributor-held cash is separate from company cash/bank, and pending checks remain uncleared.
 
 - [ ] **Step 5: Run repository verification**
 
@@ -185,5 +185,5 @@ git commit -m "test: verify dispatch settlement workflow"
 
 1. **Currency rounding:** the existing ERP stores amounts in hundredths. This plan retains that behavior; confirm whether every tenant currency should use two fractional digits or whether currency-specific precision is required before multi-currency support.
 2. **Distributor identity:** this first milestone uses a tenant-owned distributor display name because the current schema does not expose a verified distributor/employee directory interface. Before payroll/commission integration, replace or map it to a dedicated tenant-scoped distributor ID.
-3. **Check handling:** checks are pending instruments and do not count as cleared cash. Endorsement, deposit, bounce, and clearance lifecycle are a separate follow-on plan.
+3. **Check handling:** checks are pending instruments and do not count as cleared cash. Endorsement, deposit, bounce, and clearance lifecycle are a separate follow-on plan. Cash collected by the distributor and cash remitted to the company are separate accounting events.
 4. **Return handling:** returns cannot be netted against a manifest settlement until the separate approved return/credit-note workflow exists.
