@@ -1561,7 +1561,9 @@ def activate_license(body: LicenseActivateIn, user=Depends(user_from_header)):
                     raise HTTPException(400, "مهلت استفاده از کلید فعال‌سازی تمام شده است.")
             except ValueError:
                 raise HTTPException(400, "تاریخ انقضای کلید معتبر نیست.")
-        conn.execute("UPDATE activation_keys SET redeemed_at=? WHERE id=? AND redeemed_at IS NULL", (now,key["id"]))
+        redeemed = conn.execute("UPDATE activation_keys SET redeemed_at=? WHERE id=? AND redeemed_at IS NULL", (now,key["id"]))
+        if redeemed.rowcount != 1:
+            raise HTTPException(409, "این کلید هم‌زمان در درخواست دیگری مصرف شده است.")
         conn.execute("UPDATE tenant_licenses SET status='active',edition=?,activated_at=?,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=?",
                      (key["edition"],now,user["tenant_id"]))
         conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)", (user["tenant_id"],"license.activated"))
