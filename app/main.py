@@ -613,9 +613,21 @@ def import_rows(body: ImportRowsIn, user=Depends(user_from_header)):
                 with db() as c: c.execute("INSERT INTO expenses(tenant_id,title,category,amount,due_date,status) VALUES(?,?,?,?,?,?)",(tid,title,category,amount,due_date,"pending" if status=="planned" else status))
             elif body.dataset=="opportunities":
                 x=OpportunityIn(**row)
+                if x.customer_id is not None:
+                    with db() as c:
+                        if not c.execute("SELECT 1 FROM customers WHERE id=? AND tenant_id=?",(x.customer_id,tid)).fetchone():
+                            raise HTTPException(422,"مشتری متعلق به این شرکت نیست.")
+                if x.expected_close_date and not _date_ok(x.expected_close_date):
+                    raise HTTPException(422,"تاریخ بستن فرصت معتبر نیست.")
+                if x.last_contact_date and not _date_ok(x.last_contact_date):
+                    raise HTTPException(422,"تاریخ آخرین تماس معتبر نیست.")
                 with db() as c: c.execute("INSERT INTO opportunities(tenant_id,title,customer_id,source,stage,estimated_value,expected_close_date,last_contact_date,lost_reason) VALUES(?,?,?,?,?,?,?,?,?)",(tid,x.title.strip(),x.customer_id,x.source,x.stage,x.estimated_value,x.expected_close_date,x.last_contact_date,x.lost_reason))
             else:
                 x=CampaignIn(**row)
+                if (x.start_date and not _date_ok(x.start_date)) or (x.end_date and not _date_ok(x.end_date)):
+                    raise HTTPException(422,"تاریخ شروع یا پایان کمپین معتبر نیست.")
+                if x.start_date and x.end_date and x.end_date < x.start_date:
+                    raise HTTPException(422,"تاریخ پایان کمپین نباید قبل از شروع باشد.")
                 with db() as c: c.execute("INSERT INTO campaigns(tenant_id,name,channel,spend,leads,conversions,revenue,start_date,end_date) VALUES(?,?,?,?,?,?,?,?,?)",(tid,x.name.strip(),x.channel,x.spend,x.leads,x.conversions,x.revenue,x.start_date,x.end_date))
             count+=1
         except Exception as exc:
@@ -743,9 +755,10 @@ def resolve_agent_action(action_id: int, user=Depends(user_from_header)):
 @app.get("/api/import/template/{dataset}.csv")
 def import_template(dataset: str, user=Depends(user_from_header)):
     templates={
-      "invoices":["invoice_number","customer_id","issue_date(YYYY-MM-DD)","due_date(YYYY-MM-DD)","amount","note"],
-      "expenses":["title","category","amount","due_date(YYYY-MM-DD)","status(pending/paid)"],
-      "opportunities":["title","customer_id","source","stage","estimated_value","expected_close_date(YYYY-MM-DD)","last_contact_date(YYYY-MM-DD)","lost_reason"]
+      "invoices":["invoice_number","customer_id","issue_date","due_date","amount","note"],
+      "expenses":["title","category","amount","due_date","status"],
+      "opportunities":["title","customer_id","source","stage","estimated_value","expected_close_date","last_contact_date","lost_reason"],
+      "campaigns":["name","channel","spend","leads","conversions","revenue","start_date","end_date"]
     }
     if dataset not in templates: raise HTTPException(404,"قالب برای این نوع داده وجود ندارد.")
     stream=io.StringIO(newline=""); csv.writer(stream).writerow(templates[dataset])
