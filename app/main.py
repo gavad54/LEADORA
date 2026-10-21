@@ -1602,7 +1602,7 @@ def add_bank_account(body: BankAccountIn, user=Depends(user_from_header)):
     label, institution, holder, iban = body.label.strip(), body.institution.strip(), body.account_holder.strip(), body.iban_masked.strip()
     # Persist only a masked account reference, never a full IBAN/account number.
     if iban and not any(marker in iban for marker in ("•", "*", "x", "X")):
-        compact_iban = re.sub(r"\\s+", "", iban)
+        compact_iban = re.sub(r"\s+", "", iban)
         iban = ("••••" + compact_iban[-4:]) if len(compact_iban) > 4 else compact_iban
     if not label: raise HTTPException(422, "عنوان حساب بانکی الزامی است.")
     if body.provider != "manual":
