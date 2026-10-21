@@ -38,12 +38,22 @@ def test_customer_can_request_accounting_without_automatic_activation():
     accounting_after = next(m for m in after.json()["modules"] if m["module_key"] == "accounting")
     assert accounting_after["status"] == "requested"
 
-def test_owner_pricing_requires_secret_and_can_update(monkeypatch):
+def _owner_headers(client, monkeypatch):
+    monkeypatch.delenv("LEADORA_OWNER_KEY", raising=False)
+    headers = _account(client)
+    identity = client.get("/api/finance/identity", headers=headers)
+    assert identity.status_code == 200, identity.text
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(identity.json()["user_id"]))
+    return headers
+
+def test_owner_pricing_requires_owner_identity_and_can_update(monkeypatch):
     client = TestClient(app)
+    monkeypatch.delenv("LEADORA_OWNER_KEY", raising=False)
+    monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
     denied = client.get("/api/owner/pricing")
     assert denied.status_code == 403
-    monkeypatch.setenv("LEADORA_OWNER_KEY", "test-owner-key-with-more-than-24-chars")
-    headers = {"X-LEADORA-OWNER-KEY": "test-owner-key-with-more-than-24-chars"}
+
+    headers = _owner_headers(client, monkeypatch)
     current = client.get("/api/owner/pricing", headers=headers)
     assert current.status_code == 200
     old = current.json()
@@ -61,8 +71,7 @@ def test_owner_pricing_requires_secret_and_can_update(monkeypatch):
 
 def test_owner_pricing_rejects_boolean_prices(monkeypatch):
     client = TestClient(app)
-    monkeypatch.setenv("LEADORA_OWNER_KEY", "test-owner-key-with-more-than-24-chars")
-    headers = {"X-LEADORA-OWNER-KEY": "test-owner-key-with-more-than-24-chars"}
+    headers = _owner_headers(client, monkeypatch)
     current = client.get("/api/owner/pricing", headers=headers)
     assert current.status_code == 200
     body = {
