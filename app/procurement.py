@@ -77,7 +77,7 @@ def install_procurement(app, db, user_from_header, ROOT):
           website TEXT NOT NULL DEFAULT '', contact_channel TEXT NOT NULL DEFAULT '',
           notes TEXT NOT NULL DEFAULT '', discovery_source TEXT NOT NULL DEFAULT 'manual',
           source_url TEXT NOT NULL DEFAULT '', verification_status TEXT NOT NULL DEFAULT 'unverified',
-          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(tenant_id,website));
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
         CREATE INDEX IF NOT EXISTS idx_proc_suppliers_tenant ON procurement_suppliers(tenant_id,id);
         CREATE TABLE IF NOT EXISTS procurement_quotes(
           id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, need_id INTEGER NOT NULL,
@@ -154,6 +154,8 @@ def install_procurement(app, db, user_from_header, ROOT):
         if website and not re.match(r"^https?://[^\s]+$", website, re.I):
             raise HTTPException(422, "نشانی وب باید با http:// یا https:// شروع شود.")
         with db() as c:
+            if website and c.execute("SELECT 1 FROM procurement_suppliers WHERE tenant_id=? AND website=?", (u["tenant_id"],website)).fetchone():
+                raise HTTPException(409, "این وب‌سایت قبلاً برای این شرکت ثبت شده است.")
             try:
                 cur = c.execute("""INSERT INTO procurement_suppliers
                   (tenant_id,name,website,contact_channel,notes,discovery_source,source_url)
