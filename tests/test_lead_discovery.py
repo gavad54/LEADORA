@@ -25,14 +25,17 @@ def test_text_source_generates_customer_and_supplier_queries(monkeypatch):
     assert d["run_id"]>0
 
 def test_discovered_leads_are_tenant_isolated(monkeypatch):
-    monkeypatch.setenv("TAVILY_API_KEY","")
+    import app.lead_discovery as discovery
+    monkeypatch.setenv("TAVILY_API_KEY","test-key")
+    monkeypatch.setattr(discovery,"_search_tavily",lambda query,limit:[{"name":"Example Wholesale","url":"https://example.org/business","summary":"Public business listing","source":"web_search","score":0.91}])
     c,a=make_account(); _,b=make_account()
     r=c.post("/api/lead-discovery/run",headers=a,json={
         "sources":[{"kind":"text","label":"profile","content":"Wholesale coffee beans and espresso machines"}],
         "goal":"customers","industry":"coffee wholesale","limit":5
     })
     assert r.status_code==200,r.text
-    assert c.get("/api/lead-discovery/leads",headers=a).status_code==200
+    assert r.json()["result_count"]==1
+    assert len(c.get("/api/lead-discovery/leads",headers=a).json())==1
     assert c.get("/api/lead-discovery/leads",headers=b).json()==[]
 
 def test_public_url_validation_rejects_private_hosts(monkeypatch):
