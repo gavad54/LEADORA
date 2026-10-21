@@ -65,7 +65,7 @@ def test_accepted_irr_receipt_updates_stock_and_creates_balanced_draft():
     journals = c.get("/api/accounting/journals?status=draft", headers=h).json()
     journal = next(j for j in journals if j["id"] == data["accounting_journal"]["id"])
     assert sum(float(line["debit"]) for line in journal["lines"]) == 420
-    assert sum(float(line["credit"]) for line in journal["lines"]) == 410
+    assert sum(float(line["credit"]) for line in journal["lines"]) == 420
     assert journal["status"] == "draft"
 
 def test_foreign_currency_receipt_does_not_post_unconverted_ledger_amount():
