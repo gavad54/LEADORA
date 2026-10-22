@@ -39,6 +39,7 @@ def test_health_and_security_headers():
     assert response.json()["database"] == "ok"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
+    assert "microphone=(self)" in response.headers["permissions-policy"]
     assert response.headers["cache-control"] == "no-store, max-age=0"
     assert response.headers["strict-transport-security"].startswith("max-age=")
 
