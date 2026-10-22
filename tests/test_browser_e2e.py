@@ -63,9 +63,7 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page.on("pageerror", lambda error: browser_errors.append(str(error)))
         page.goto(live_app, wait_until="networkidle")
         assert page.locator("#view-dashboard").is_visible()
-        assert page.locator("#authOverlay").is_hidden()
-        assert page.get_by_text("با دید روشن‌تر").is_visible()
-        page.locator("#authOpenBtn").click()
+        assert page.locator("#authOverlay").is_visible()
         assert page.get_by_text("به فضای کاری خود خوش آمدید").is_visible()
 
         page.locator('[data-auth-mode="register"]').click()
@@ -85,6 +83,16 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         assert page.locator("#runtimeError").is_hidden()
 
         page.locator('[data-view="settings"]:visible').click()
+        page.locator("#densitySetting").select_option("compact")
+        page.locator("#motionSetting").select_option("reduced")
+        page.locator("#saveSettingsBtn").click()
+        assert "compact" in page.locator("body").get_attribute("class")
+        assert "reduce-motion" in page.locator("body").get_attribute("class")
+        assert "leadora_preferences" in page.evaluate("Object.keys(localStorage).join(',')")
+        page.reload(wait_until="networkidle")
+        page.locator('[data-view="settings"]:visible').click()
+        assert page.locator("#densitySetting").input_value() == "compact"
+        assert page.locator("#motionSetting").input_value() == "reduced"
         page.locator("#logoutBtn").click()
         assert page.locator("#authOverlay").is_visible()
         page.locator("#company").fill(company)
