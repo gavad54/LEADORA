@@ -251,6 +251,7 @@ def create_router(db, user_from_header):
             out=[]
             for run in runs:
                 item=dict(run)
+                item["run_id"] = item.pop("id")
                 item["steps"]=[dict(s) for s in c.execute("SELECT * FROM commercial_workflow_steps WHERE tenant_id=? AND run_id=? ORDER BY id",(user["tenant_id"],run["id"])).fetchall()]
                 out.append(item)
         return out
