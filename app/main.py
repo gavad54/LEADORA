@@ -18,10 +18,26 @@ app = FastAPI(title="LEADORA MVP", version="0.5.0", description="Persian-first b
 @app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
+
+    # Browser hardening that does not block the app's existing inline UI assets.
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+    response.headers["X-DNS-Prefetch-Control"] = "off"
+
+    # Tell browsers not to retain authenticated API payloads in shared caches.
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+
+    # Railway terminates HTTPS before forwarding requests. Only set HSTS when
+    # the request arrived over HTTPS; browsers ignore it on plain HTTP anyway.
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    if request.url.scheme == "https" or forwarded_proto == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
     return response
 
 def db():
