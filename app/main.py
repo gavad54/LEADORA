@@ -1747,3 +1747,8 @@ install_lead_discovery(app, db, user_from_header, ROOT)
 # Additive tenant-isolated smart procurement workflow.
 from app.procurement import install_procurement
 install_procurement(app, db, user_from_header, ROOT)
+
+
+# Additive tenant-isolated commercial licensing, support desk, and cross-module workflow queue.
+from app.commercial_ops import create_router as create_commercial_ops_router
+app.include_router(create_commercial_ops_router(db, user_from_header))
