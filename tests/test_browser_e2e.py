@@ -66,6 +66,10 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         assert page.locator("#authOverlay").is_visible()
         assert page.get_by_text("به فضای کاری خود خوش آمدید").is_visible()
 
+        # Refreshing while unauthenticated must never dismiss the sign-in overlay.
+        page.locator("#refreshBtn").click()
+        assert page.locator("#authOverlay").is_visible()
+
         page.locator('[data-auth-mode="register"]').click()
         page.locator("#company").fill(company)
         page.locator("#industry").fill("retail")
