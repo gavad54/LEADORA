@@ -2,15 +2,11 @@ services:
   - type: web
     name: leadora
     runtime: docker
-    plan: starter
+    plan: free
     region: singapore
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     autoDeploy: true
-    disk:
-      name: leadora-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: LEADORA_ENV
         value: production
