@@ -25,11 +25,14 @@ jobs:
       - name: Install application and test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest httpx
+          pip install -r requirements.txt pytest httpx playwright
+      - name: Install Chromium for browser regression tests
+        run: python -m playwright install --with-deps chromium
       - name: Compile Python sources
         run: python -m compileall -q app
       - name: Run regression and security tests
         env:
+          PYTHONPATH: .
           LEADORA_ENV: test
           LEADORA_SECRET: test-secret-that-is-long-enough-for-regression-tests
         run: pytest -q
