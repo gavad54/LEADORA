@@ -92,12 +92,12 @@ def test_tenant_backup_does_not_include_user_credentials():
     client.post("/api/products", headers=auth(token), json={
         "sku": "SAFE-1", "name": "Backup item", "price": 5, "stock": 2,
     })
-    response = client.get("/api/backup.json", headers=auth(token))
+    response = client.get("/api/backup/full.json", headers=auth(token))
     assert response.status_code == 200
     payload = response.json()
     assert payload["format"] == "leadora-tenant-backup-v2"
     assert "users" not in payload["tables"]
     assert "login_attempts" not in payload["tables"]
-    assert any(row["sku"] == "SAFE-1" for row in payload["products"])
+    assert any(row["sku"] == "SAFE-1" for row in payload["tables"]["products"])
     assert "password_hash" not in response.text
     assert "LEADORA_SECRET" not in response.text
