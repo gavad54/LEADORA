@@ -157,3 +157,17 @@ def test_platform_license_management_rejects_regular_tenant_users():
     response = client.get("/api/platform/licenses", headers=auth(token))
     assert response.status_code == 403
 
+
+
+def test_participation_contract_api_is_retired_and_accounting_remains_available():
+    token = register("Legacy Contract Company", "legacy-contract@example.test")
+
+    # The former participation endpoints must no longer be mounted.
+    response = client.get("/api/finance/identity", headers=auth(token))
+    assert response.status_code == 404
+
+    # The old finance UI is redirected to the general accounting module.
+    retired_page = client.get("/finance", follow_redirects=False)
+    assert retired_page.status_code == 307
+    assert retired_page.headers["location"] == "/accounting"
+    assert client.get("/accounting", follow_redirects=False).status_code == 200
