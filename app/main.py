@@ -1,6 +1,6 @@
 import os, sqlite3, secrets, hashlib, hmac, time, re
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 import csv, io, json
 from fastapi.staticfiles import StaticFiles
@@ -1188,6 +1188,131 @@ def storage_status(user=Depends(user_from_header)):
           "note":"برای پایداری پس از راه‌اندازی مجدد، مسیر data و backups باید روی volume پایدار سرور نگاشت شوند؛ این endpoint وجود مسیر را تضمین نمی‌کند."}
     except sqlite3.Error:
         raise HTTPException(500,"بررسی وضعیت پایگاه داده ناموفق بود.")
+
+
+# Verified full-database backup and isolated restore verification.
+# These endpoints are platform-owner-only because a full SQLite image contains
+# all tenants and authentication records. Keep an off-volume copy of downloads.
+import tempfile
+
+@app.post("/api/platform/backup/database")
+def create_full_database_backup(user=Depends(user_from_header)):
+    _platform_owner(user)
+    source_path = Path(DB_PATH)
+    if not source_path.is_file():
+        raise HTTPException(503, "فایل پایگاه داده پیدا نشد؛ نسخه پشتیبان ساخته نشد.")
+    backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (source_path.parent / "backups"))
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        target = backup_dir / f"leadora-db-{stamp}.sqlite3"
+        # SQLite's online backup API creates a transactionally consistent copy,
+        # including committed data, without copying a live WAL file by hand.
+        with db() as source:
+            with sqlite3.connect(str(target), timeout=30) as destination:
+                source.backup(destination)
+                integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
+                if integrity != "ok":
+                    raise sqlite3.DatabaseError("integrity_check failed")
+                tables = {row[0] for row in destination.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()}
+                if not {"tenants", "users", "products"}.issubset(tables):
+                    raise sqlite3.DatabaseError("required tables missing")
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        sidecar = target.with_suffix(target.suffix + ".sha256")
+        with sidecar.open("x", encoding="ascii") as handle:
+            handle.write(f"{digest}  {target.name}\n")
+        with db() as conn:
+            conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                         (user["tenant_id"], "backup.full_database.created"))
+        return {
+            "status": "verified",
+            "filename": target.name,
+            "sha256": digest,
+            "bytes": target.stat().st_size,
+            "integrity_check": integrity,
+            "download_path": f"/api/platform/backup/database/{target.name}",
+            "checksum_path": f"/api/platform/backup/database/{sidecar.name}",
+            "storage_path": str(target),
+            "offsite_copy_required": True,
+            "message": "نسخه کامل ساخته و بررسی شد؛ فایل دانلودشده را خارج از سرور نگه دارید."
+        }
+    except HTTPException:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(500, "ساخت یا بررسی نسخه پشتیبان کامل ناموفق بود؛ فضای Volume و مجوز نوشتن را بررسی کنید.") from exc
+
+@app.get("/api/platform/backup/database/{filename}")
+def download_full_database_backup(filename: str, user=Depends(user_from_header)):
+    _platform_owner(user)
+    if not re.fullmatch(r"leadora-db-[0-9]{8}T[0-9]{6}Z\\.sqlite3(?:\\.sha256)?", filename):
+        raise HTTPException(404, "فایل پشتیبان پیدا نشد.")
+    backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (Path(DB_PATH).parent / "backups"))
+    target = backup_dir / filename
+    if not target.is_file():
+        raise HTTPException(404, "فایل پشتیبان پیدا نشد.")
+    media_type = "text/plain; charset=utf-8" if filename.endswith(".sha256") else "application/vnd.sqlite3"
+    return FileResponse(target, media_type=media_type,
+        filename=filename, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+@app.post("/api/platform/backup/verify")
+async def verify_uploaded_database_backup(file: UploadFile = File(...), user=Depends(user_from_header)):
+    _platform_owner(user)
+    # Verify an uploaded backup in an isolated temporary file. This never replaces
+    # or writes to the live production database.
+    temp_path = None
+    try:
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in {".sqlite3", ".db", ".sqlite"}:
+            raise HTTPException(415, "فقط فایل پشتیبان SQLite با پسوند db، sqlite یا sqlite3 پذیرفته می‌شود.")
+        total = 0
+        with tempfile.NamedTemporaryFile(prefix="leadora-restore-check-", suffix=".sqlite3", delete=False) as temp:
+            temp_path = Path(temp.name)
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 1024 * 1024 * 1024:
+                    raise HTTPException(413, "حجم فایل پشتیبان بیش از سقف ۱ گیگابایت است.")
+                temp.write(chunk)
+        if total == 0:
+            raise HTTPException(400, "فایل پشتیبان خالی است.")
+        with sqlite3.connect(f"file:{temp_path}?mode=ro", uri=True, timeout=15) as check:
+            integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+            tables = {row[0] for row in check.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            missing = sorted({"tenants", "users", "products"}.difference(tables))
+            if integrity != "ok" or missing:
+                raise HTTPException(422, "نسخه پشتیبان معتبر نیست یا جدول‌های اصلی را ندارد.")
+            counts = {}
+            for table in ("tenants", "users", "products", "customers"):
+                if table in tables:
+                    counts[table] = check.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        return {
+            "status": "verified",
+            "integrity_check": integrity,
+            "bytes": total,
+            "sha256": hashlib.sha256(temp_path.read_bytes()).hexdigest(),
+            "core_tables_present": True,
+            "record_counts": counts,
+            "production_database_changed": False,
+            "message": "فایل در پایگاه داده موقت باز شد و بررسی سلامت موفق بود؛ پایگاه داده تولیدی تغییر نکرد."
+        }
+    except HTTPException:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(422, "فایل پشتیبان قابل بازکردن یا بررسی نیست.") from exc
+    finally:
+        await file.close()
+        if temp_path:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
 
 # Unified order/invoice tracking with tenant-scoped status history.
 from datetime import date, timedelta
