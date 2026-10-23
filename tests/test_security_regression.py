@@ -104,6 +104,21 @@ def test_tenant_backup_does_not_include_user_credentials():
     assert "LEADORA_SECRET" not in response.text
 
 
+def test_logout_revokes_the_bearer_token_server_side():
+    token = register("Logout Revocation Company", "logout-revocation@example.test")
+    headers = auth(token)
+    assert client.get("/api/products", headers=headers).status_code == 200
+
+    logged_out = client.post("/api/logout", headers=headers)
+    assert logged_out.status_code == 200, logged_out.text
+    assert logged_out.json()["ok"] is True
+
+    # Clearing localStorage alone is not enough: the previously issued bearer token
+    # must no longer authorize API requests after the server confirms logout.
+    assert client.get("/api/products", headers=headers).status_code == 401
+    assert client.post("/api/logout", headers=headers).status_code == 401
+
+
 def test_customers_are_isolated_between_tenants_and_ids():
     token_a = register("Customer Company A", "customer-a@example.test")
     token_b = register("Customer Company B", "customer-b@example.test")
