@@ -152,7 +152,6 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
                                 (token_hash, int(time.time()))).fetchone()
             if revoked:
                 raise ValueError("revoked token")
-            c.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (int(time.time()),))
             u = c.execute("SELECT id,tenant_id,email FROM users WHERE id=? AND tenant_id=?", (int(uid),int(tid))).fetchone()
         if not u: raise ValueError()
         user = dict(u)
