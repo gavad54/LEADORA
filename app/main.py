@@ -1257,7 +1257,7 @@ def create_full_database_backup(user=Depends(user_from_header)):
 @app.get("/api/platform/backup/database/{filename}")
 def download_full_database_backup(filename: str, user=Depends(user_from_header)):
     _platform_owner(user)
-    if not re.fullmatch(r"leadora-db-[0-9]{8}T[0-9]{6}Z\\.sqlite3(?:\\.sha256)?", filename):
+    if not re.fullmatch(r"leadora-db-[0-9]{8}T[0-9]{6}Z\.sqlite3(?:\.sha256)?", filename):
         raise HTTPException(404, "فایل پشتیبان پیدا نشد.")
     backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (Path(DB_PATH).parent / "backups"))
     target = backup_dir / filename
