@@ -113,6 +113,41 @@ def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
     assert rerun.status_code == 409
 
 
+def test_contract_edit_is_owner_only_validated_and_locked_after_activation(monkeypatch):
+    client = TestClient(app)
+    owner_headers, owner = register(client, "Contract Edit Owner")
+    company_headers, company = register(client, "Contract Edit Company")
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
+    payload = {
+        "tenant_id": company["tenant"]["id"],
+        "trial_start": "2026-01-01", "trial_end": "2026-03-31",
+        "contract_start": "2026-01-01", "contract_end": "2026-12-31",
+        "goal_name": "Increase net sales", "baseline": "100", "target": "120",
+        "share_percent": "10", "direct_costs": ["direct_costs"], "notes": "initial terms",
+    }
+    created = client.post("/api/finance/contracts", headers=owner_headers, json=payload)
+    assert created.status_code == 200, created.text
+    contract_id = created.json()["id"]
+
+    changed = {**payload, "goal_name": "Increase verified net sales", "share_percent": "15", "notes": "revised draft"}
+    updated = client.put(f"/api/finance/contracts/{contract_id}", headers=owner_headers, json=changed)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["goal_name"] == "Increase verified net sales"
+    assert updated.json()["share_percent"] == "15.00"
+
+    invalid_dates = {**changed, "trial_end": "2025-12-31"}
+    invalid = client.put(f"/api/finance/contracts/{contract_id}", headers=owner_headers, json=invalid_dates)
+    assert invalid.status_code == 422
+    assert client.get("/api/finance/contracts", headers=owner_headers).status_code == 200
+
+    activated = client.post(f"/api/finance/contracts/{contract_id}/activate", headers=owner_headers, json={})
+    assert activated.status_code == 200, activated.text
+    locked = client.put(f"/api/finance/contracts/{contract_id}", headers=owner_headers, json={**changed, "share_percent": "20"})
+    assert locked.status_code == 409
+    denied = client.put(f"/api/finance/contracts/{contract_id}", headers=company_headers, json={**changed, "share_percent": "20"})
+    assert denied.status_code == 403
+
+
 def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatch):
     client = TestClient(app)
     headers, _ = register(client, "Finance Access")
