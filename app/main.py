@@ -1210,6 +1210,8 @@ def create_full_database_backup(user=Depends(user_from_header)):
     if not source_path.is_file():
         raise HTTPException(503, "فایل پایگاه داده پیدا نشد؛ نسخه پشتیبان ساخته نشد.")
     backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (source_path.parent / "backups"))
+    target = None
+    sidecar = None
     try:
         backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -1255,6 +1257,14 @@ def create_full_database_backup(user=Depends(user_from_header)):
     except HTTPException:
         raise
     except (OSError, sqlite3.Error) as exc:
+        # Remove only artifacts created by this attempt; never leave an empty or
+        # incomplete snapshot that could be mistaken for a valid recovery point.
+        for artifact in (sidecar, target):
+            if artifact is not None:
+                try:
+                    artifact.unlink(missing_ok=True)
+                except OSError:
+                    pass
         raise HTTPException(500, "ساخت یا بررسی نسخه پشتیبان کامل ناموفق بود؛ فضای Volume و مجوز نوشتن را بررسی کنید.") from exc
 
 @app.get("/api/platform/backup/database/{filename}")
