@@ -180,10 +180,6 @@ def create_router(db_factory, user_dependency):
         if not is_owner(user):
             raise HTTPException(403, "این عملیات فقط برای مالک سامانه مجاز است.")
 
-    def tenant_contract(c, tid):
-        row = c.execute("SELECT * FROM finance_contracts WHERE tenant_id=? ORDER BY id DESC LIMIT 1", (tid,)).fetchone()
-        return dict(row) if row else None
-
     class SettingsIn(BaseModel):
         methods: list[str] = Field(min_length=1, max_length=3)
         integration_provider: str = Field(default="", max_length=120)
@@ -193,27 +189,6 @@ def create_router(db_factory, user_dependency):
         def valid_methods(cls, value):
             if len(set(value)) != len(value) or not set(value).issubset(METHODS):
                 raise ValueError("روش‌ها باید از manual، csv و integration انتخاب شوند و تکراری نباشند.")
-            return value
-
-    class ContractIn(BaseModel):
-        tenant_id: int = Field(ge=1)
-        trial_start: date
-        trial_end: date
-        contract_start: date
-        contract_end: date | None = None
-        goal_name: str = Field(min_length=3, max_length=300)
-        baseline: Decimal = Field(ge=0)
-        target: Decimal = Field(ge=0)
-        share_percent: Decimal = Field(ge=0, le=100)
-        direct_costs: list[str] = Field(default_factory=lambda: ["direct_costs"], max_length=10)
-        notes: str = Field(default="", max_length=3000)
-
-        @field_validator("direct_costs")
-        @classmethod
-        def valid_costs(cls, value):
-            allowed = {"direct_costs"}
-            if len(set(value)) != len(value) or not set(value).issubset(allowed):
-                raise ValueError("مبنای هزینه فقط می‌تواند هزینه‌های مستقیم توافق‌شده باشد.")
             return value
 
     class EntryIn(BaseModel):
@@ -249,10 +224,6 @@ def create_router(db_factory, user_dependency):
 
     class ObjectionIn(BaseModel):
         reason: str = Field(min_length=5, max_length=2000)
-
-    class GoalDecisionIn(BaseModel):
-        achieved: bool
-        evidence: str = Field(min_length=5, max_length=2000)
 
     class SettlementIn(BaseModel):
         amount: Decimal = Field(gt=0)
