@@ -112,7 +112,7 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page.locator("#email").fill(email)
         page.locator("#password").fill(password)
         page.locator("#authSubmit").click()
-        page.wait_for_function("document.getElementById('authOverlay').style.display === 'none'")
+        page.wait_for_function("document.getElementById('authOverlay').hidden === true")
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
 
         assert browser_errors == [], "Browser JavaScript errors: " + "; ".join(browser_errors)
