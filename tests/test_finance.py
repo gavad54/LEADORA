@@ -95,6 +95,29 @@ def test_participation_contract_routes_removed_and_legacy_share_disabled():
     assert report.json()["owner_share"] == "0.00"
     assert report.json()["contract_id"] is None
 
+def test_legacy_participation_settlement_and_owner_share_metrics_are_disabled(monkeypatch):
+    client = TestClient(app)
+    owner_headers, owner = register(client, "Retired Contract Owner")
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
+
+    # Historical contract settlement endpoint remains non-destructive but cannot
+    # create new payouts, including when a legacy report ID is supplied.
+    response = client.post("/api/finance/reports/999999/settlement", headers=owner_headers, json={
+        "amount": "1.00", "note": "legacy regression",
+    })
+    assert response.status_code == 410, response.text
+
+    overview = client.get("/api/finance/owner/overview", headers=owner_headers)
+    assert overview.status_code == 200, overview.text
+    counts = overview.json()["counts"]
+    assert counts["contracts"] == 0
+    assert counts["pending_contracts"] == 0
+    assert counts["unsettled_reports"] == 0
+    assert counts["approved_share"] == 0
+    assert counts["unpaid_share"] == 0
+    assert all(row["owner_share"] == 0 for row in overview.json()["by_month"])
+    assert all(row["contract_status"] is None for row in overview.json()["companies"])
+
 def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatch):
     client = TestClient(app)
     headers, _ = register(client, "Finance Access")
