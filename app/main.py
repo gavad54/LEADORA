@@ -55,6 +55,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS customers(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id), name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '');
         CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, action TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS login_attempts(attempt_key TEXT PRIMARY KEY, attempts INTEGER NOT NULL, window_start INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS revoked_tokens(token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, revoked_at INTEGER NOT NULL);
         """)
 init_db()
 
@@ -146,6 +147,12 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
         uid, tid, exp, _ = raw.split(":", 3)
         if int(exp) < int(time.time()): raise ValueError()
         with db() as c:
+            token_hash = hashlib.sha256(authorization[7:].encode()).hexdigest()
+            revoked = c.execute("SELECT 1 FROM revoked_tokens WHERE token_hash=? AND expires_at>=?",
+                                (token_hash, int(time.time()))).fetchone()
+            if revoked:
+                raise ValueError("revoked token")
+            c.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (int(time.time()),))
             u = c.execute("SELECT id,tenant_id,email FROM users WHERE id=? AND tenant_id=?", (int(uid),int(tid))).fetchone()
         if not u: raise ValueError()
         user = dict(u)
@@ -256,6 +263,28 @@ def login(body: LoginIn):
         raise HTTPException(401,"اطلاعات ورود صحیح نیست.")
     clear_login_failures(attempt_key)
     return {"token":token(row["id"],row["tenant_id"]),"user":{"email":row["email"]}}
+
+@app.post("/api/logout")
+def logout_session(authorization: str | None = Header(default=None), user=Depends(user_from_header)):
+    """Revoke the current signed bearer token server-side until its original expiry."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "ابتدا وارد شوید.")
+    token_value = authorization[7:]
+    try:
+        raw = token_value.rsplit(".", 1)[0]
+        expires_at = int(raw.split(":", 3)[2])
+    except (IndexError, ValueError):
+        raise HTTPException(401, "نشست نامعتبر یا منقضی است.")
+    now = int(time.time())
+    token_hash = hashlib.sha256(token_value.encode()).hexdigest()
+    with db() as c:
+        c.execute("INSERT OR REPLACE INTO revoked_tokens(token_hash,expires_at,revoked_at) VALUES(?,?,?)",
+                  (token_hash, expires_at, now))
+        c.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (now,))
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                  (user["tenant_id"], "auth.logout"))
+    return {"ok": True, "message": "نشست پایان یافت."}
+
 
 @app.get("/api/products")
 def products(user=Depends(user_from_header)):
