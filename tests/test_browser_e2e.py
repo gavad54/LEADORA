@@ -115,5 +115,17 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page.wait_for_function("document.getElementById('authOverlay').hidden === true")
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
 
+        # Mobile viewport smoke test: public landing stays visible and the auth dialog is opt-in.
+        mobile = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+        mobile_errors = []
+        mobile.on("pageerror", lambda error: mobile_errors.append(str(error)))
+        mobile.goto(live_app, wait_until="networkidle")
+        assert mobile.locator("#publicHome").is_visible()
+        assert mobile.locator("#authOverlay").is_hidden()
+        assert mobile.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        mobile.locator("#publicLoginBtn").click()
+        assert mobile.locator("#authOverlay").is_visible()
+        assert mobile_errors == [], "Mobile browser JavaScript errors: " + "; ".join(mobile_errors)
+
         assert browser_errors == [], "Browser JavaScript errors: " + "; ".join(browser_errors)
         browser.close()
