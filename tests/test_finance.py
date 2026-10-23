@@ -140,6 +140,14 @@ def test_contract_edit_is_owner_only_validated_and_locked_after_activation(monke
     assert invalid.status_code == 422
     assert client.get("/api/finance/contracts", headers=owner_headers).status_code == 200
 
+    # A contract remains attached to its original tenant; editing cannot reassign it.
+    reassigned = client.put(
+        f"/api/finance/contracts/{contract_id}",
+        headers=owner_headers,
+        json={**changed, "tenant_id": owner["tenant"]["id"]},
+    )
+    assert reassigned.status_code == 422
+
     activated = client.post(f"/api/finance/contracts/{contract_id}/activate", headers=owner_headers, json={})
     assert activated.status_code == 200, activated.text
     locked = client.put(f"/api/finance/contracts/{contract_id}", headers=owner_headers, json={**changed, "share_percent": "20"})
