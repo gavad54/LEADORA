@@ -464,6 +464,12 @@ def create_router(db_factory, user_dependency):
             row = c.execute("SELECT * FROM finance_contracts WHERE id=?", (contract_id,)).fetchone()
             if not row:
                 raise HTTPException(404, "قرارداد پیدا نشد.")
+            active = c.execute(
+                "SELECT id FROM finance_contracts WHERE tenant_id=? AND status='active' AND id<>? LIMIT 1",
+                (row["tenant_id"], contract_id),
+            ).fetchone()
+            if active:
+                raise HTTPException(409, "برای این شرکت یک قرارداد فعال وجود دارد؛ ابتدا وضعیت قرارداد فعلی را تعیین تکلیف کنید.")
             c.execute("UPDATE finance_contracts SET status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?", (contract_id,))
             audit(c, user, "finance.contract.activated", {"contract_id": contract_id, "tenant_id": row["tenant_id"]})
         return {"ok": True, "status": "active"}
