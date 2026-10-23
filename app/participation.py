@@ -181,8 +181,15 @@ def create_router(db_factory, user_dependency):
             raise HTTPException(403, "این عملیات فقط برای مالک سامانه مجاز است.")
 
     def tenant_contract(c, tid):
-        row = c.execute("SELECT * FROM finance_contracts WHERE tenant_id=? ORDER BY id DESC LIMIT 1", (tid,)).fetchone()
-        return dict(row) if row else None
+        # Pending/draft contracts must not override the active terms used for
+        # financial calculations. Fail closed if multiple active contracts exist.
+        rows = c.execute(
+            "SELECT * FROM finance_contracts WHERE tenant_id=? AND status='active' ORDER BY id DESC LIMIT 2",
+            (tid,),
+        ).fetchall()
+        if len(rows) > 1:
+            raise HTTPException(409, "برای این شرکت بیش از یک قرارداد فعال وجود دارد؛ پیش از محاسبه گزارش، وضعیت قراردادها را اصلاح کنید.")
+        return dict(rows[0]) if rows else None
 
     class SettingsIn(BaseModel):
         methods: list[str] = Field(min_length=1, max_length=3)
