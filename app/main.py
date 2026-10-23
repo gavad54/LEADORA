@@ -1162,7 +1162,7 @@ def create_backup_snapshot(user=Depends(user_from_header)):
     backup_dir=Path(os.getenv("LEADORA_BACKUP_DIR") or (Path(DB_PATH).parent/"backups"))
     try:
         backup_dir.mkdir(parents=True,exist_ok=True)
-        stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         target=backup_dir/f"leadora-tenant-{user['tenant_id']}-{stamp}.json"
         raw=json.dumps(_tenant_backup_payload(user["tenant_id"]),ensure_ascii=False,indent=2).encode("utf-8")
         # Exclusive creation avoids overwriting a previous backup if two requests arrive in the same second.
@@ -1214,6 +1214,9 @@ def create_full_database_backup(user=Depends(user_from_header)):
         backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         target = backup_dir / f"leadora-db-{stamp}.sqlite3"
+        # Refuse to overwrite a prior snapshot even if clocks or requests collide.
+        with target.open("xb"):
+            pass
         # SQLite's online backup API creates a transactionally consistent copy,
         # including committed data, without copying a live WAL file by hand.
         with db() as source:
@@ -1257,7 +1260,7 @@ def create_full_database_backup(user=Depends(user_from_header)):
 @app.get("/api/platform/backup/database/{filename}")
 def download_full_database_backup(filename: str, user=Depends(user_from_header)):
     _platform_owner(user)
-    if not re.fullmatch(r"leadora-db-[0-9]{8}T[0-9]{6}Z\.sqlite3(?:\.sha256)?", filename):
+    if not re.fullmatch(r"leadora-db-[0-9]{8}T[0-9]{12}Z\.sqlite3(?:\.sha256)?", filename):
         raise HTTPException(404, "فایل پشتیبان پیدا نشد.")
     backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (Path(DB_PATH).parent / "backups"))
     target = backup_dir / filename
