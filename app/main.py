@@ -1159,7 +1159,7 @@ def full_tenant_backup(user=Depends(user_from_header)):
 
 @app.post("/api/backup/snapshot")
 def create_backup_snapshot(user=Depends(user_from_header)):
-    backup_dir=Path(os.getenv("LEADORA_BACKUP_DIR",str(ROOT.parent/"backups")))
+    backup_dir=Path(os.getenv("LEADORA_BACKUP_DIR") or (Path(DB_PATH).parent/"backups"))
     try:
         backup_dir.mkdir(parents=True,exist_ok=True)
         stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -1184,7 +1184,7 @@ def storage_status(user=Depends(user_from_header)):
                 except sqlite3.OperationalError: counts[table]=0
         return {"database":"sqlite","persistent_path_configured":bool(os.getenv("LEADORA_DB")),"database_bytes":p.stat().st_size if p.exists() else 0,
           "integrity":integrity,"records_by_table":counts,"backup_directory_configured":bool(os.getenv("LEADORA_BACKUP_DIR")),
-          "backup_directory":os.getenv("LEADORA_BACKUP_DIR",str(ROOT.parent/"backups")),
+          "backup_directory":os.getenv("LEADORA_BACKUP_DIR") or str(Path(DB_PATH).parent/"backups"),
           "note":"برای پایداری پس از راه‌اندازی مجدد، مسیر data و backups باید روی volume پایدار سرور نگاشت شوند؛ این endpoint وجود مسیر را تضمین نمی‌کند."}
     except sqlite3.Error:
         raise HTTPException(500,"بررسی وضعیت پایگاه داده ناموفق بود.")
