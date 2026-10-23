@@ -1212,7 +1212,7 @@ def create_full_database_backup(user=Depends(user_from_header)):
     backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (source_path.parent / "backups"))
     try:
         backup_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         target = backup_dir / f"leadora-db-{stamp}.sqlite3"
         # Refuse to overwrite a prior snapshot even if clocks or requests collide.
         with target.open("xb"):
