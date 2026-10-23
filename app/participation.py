@@ -464,13 +464,19 @@ def create_router(db_factory, user_dependency):
             row = c.execute("SELECT * FROM finance_contracts WHERE id=?", (contract_id,)).fetchone()
             if not row:
                 raise HTTPException(404, "قرارداد پیدا نشد.")
-            active = c.execute(
-                "SELECT id FROM finance_contracts WHERE tenant_id=? AND status='active' AND id<>? LIMIT 1",
-                (row["tenant_id"], contract_id),
-            ).fetchone()
-            if active:
+            # Enforce the single-active-contract rule atomically in the UPDATE itself.
+            # SQLite serializes writes, so concurrent activation requests cannot both
+            # pass a separate pre-check and activate two contracts for the same tenant.
+            changed = c.execute(
+                """UPDATE finance_contracts SET status='active',updated_at=CURRENT_TIMESTAMP
+                   WHERE id=? AND NOT EXISTS (
+                     SELECT 1 FROM finance_contracts other
+                     WHERE other.tenant_id=? AND other.status='active' AND other.id<>?
+                   )""",
+                (contract_id, row["tenant_id"], contract_id),
+            )
+            if changed.rowcount != 1:
                 raise HTTPException(409, "برای این شرکت یک قرارداد فعال وجود دارد؛ ابتدا وضعیت قرارداد فعلی را تعیین تکلیف کنید.")
-            c.execute("UPDATE finance_contracts SET status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?", (contract_id,))
             audit(c, user, "finance.contract.activated", {"contract_id": contract_id, "tenant_id": row["tenant_id"]})
         return {"ok": True, "status": "active"}
 
