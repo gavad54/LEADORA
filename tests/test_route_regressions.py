@@ -118,7 +118,7 @@ def test_business_module_read_routes_require_authentication():
         "/api/prospecting/source-runs", "/api/prospecting/settings",
         "/api/prospecting/worker/status", "/api/prospecting/business-leads/export.csv",
         # Financial participation and owner-only operations.
-        "/api/finance/identity", "/api/finance/settings", "/api/finance/contracts",
+        "/api/finance/identity", "/api/finance/settings",
         "/api/finance/integration/status", "/api/finance/entries",
         "/api/finance/reports", "/api/finance/adjustments",
         "/api/finance/owner/overview", "/api/finance/owner/audit",
@@ -145,3 +145,18 @@ def test_business_module_read_routes_require_authentication():
             failures.append((path, response.status_code, response.text[:120]))
 
     assert failures == [], f"Protected GET routes did not reject anonymous requests: {failures}"
+
+
+def test_removed_participation_contract_routes_are_not_registered():
+    removed = {
+        ("GET", "/api/finance/contracts"),
+        ("POST", "/api/finance/contracts"),
+        ("POST", "/api/finance/contracts/{contract_id}/goal"),
+        ("POST", "/api/finance/contracts/{contract_id}/activate"),
+    }
+    registered = {
+        (method, getattr(route, "path", None))
+        for route in app.routes
+        for method in (getattr(route, "methods", set()) or set())
+    }
+    assert not (removed & registered)
