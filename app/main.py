@@ -1,7 +1,7 @@
 import os, sqlite3, secrets, hashlib, hmac, time, re
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
-from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
+from fastapi.responses import FileResponse, StreamingResponse
 import csv, io, json
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, AliasChoices
@@ -94,13 +94,7 @@ with db() as _conn:
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_bank_accounts_tenant ON tenant_bank_accounts(tenant_id,id);
-    -- Keep platform-owner identity for licensing/admin authorization without mounting the legacy participation API.
-    CREATE TABLE IF NOT EXISTS finance_platform_owner(
-      singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-      user_id TEXT NOT NULL UNIQUE,
-      email TEXT NOT NULL DEFAULT '',
-      claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+
     """)
     # Preserve existing tenants and create a maximum 90-day trial for legacy accounts without a license row.
     _now = datetime.now(timezone.utc) if 'datetime' in globals() else __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
@@ -1546,8 +1540,9 @@ def export_business_leads(user=Depends(user_from_header)):
         headers={"Content-Disposition":"attachment; filename=leadora-business-leads.csv"})
 
 
-# Legacy financial-participation tables and source files are retained for historical data compatibility,
-# but the active participation API is intentionally not mounted.
+# Financial participation API and responsive browser/PWA page.
+from app.participation import create_router
+app.include_router(create_router(db, user_from_header))
 from app.distribution_erp import create_router as create_distribution_router
 from app.payroll import create_router as create_payroll_router
 app.include_router(create_distribution_router(db, user_from_header))
@@ -1575,8 +1570,7 @@ def payroll_page():
 
 @app.get("/finance")
 def finance_page():
-    # Retire the former participation-contract UI; keep general accounting available.
-    return RedirectResponse(url="/accounting", status_code=307)
+    return FileResponse(ROOT / "static" / "finance.html")
 
 @app.get("/owner/pricing")
 def owner_pricing_page():
