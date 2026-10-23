@@ -422,13 +422,15 @@ def create_router(db_factory, user_dependency):
                 raise HTTPException(409, "قرارداد فعال یا نهایی‌شده قابل ویرایش نیست؛ برای تغییر شرایط، قرارداد جدید ثبت کنید.")
             if body.tenant_id != existing["tenant_id"]:
                 raise HTTPException(422, "شرکت قرارداد پس از ایجاد قابل تغییر نیست.")
-            c.execute("""UPDATE finance_contracts SET trial_start=?,trial_end=?,contract_start=?,contract_end=?,
+            updated = c.execute("""UPDATE finance_contracts SET trial_start=?,trial_end=?,contract_start=?,contract_end=?,
               goal_name=?,baseline=?,target=?,share_percent=?,direct_costs_json=?,notes=?,updated_at=CURRENT_TIMESTAMP
               WHERE id=? AND status IN ('draft','pending')""",
               (body.trial_start.isoformat(), body.trial_end.isoformat(), body.contract_start.isoformat(),
                body.contract_end.isoformat() if body.contract_end else "", body.goal_name.strip(),
                decimal_text(body.baseline), decimal_text(body.target), decimal_text(body.share_percent),
                json.dumps(body.direct_costs), body.notes.strip(), contract_id))
+            if updated.rowcount != 1:
+                raise HTTPException(409, "وضعیت قرارداد تغییر کرده است؛ صفحه را تازه‌سازی و دوباره بررسی کنید.")
             audit(c, user, "finance.contract.updated", {
                 "contract_id": contract_id, "tenant_id": existing["tenant_id"],
                 "changed_fields": ["trial_start", "trial_end", "contract_start", "contract_end",
