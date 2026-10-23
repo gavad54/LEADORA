@@ -1195,6 +1195,14 @@ def storage_status(user=Depends(user_from_header)):
 # all tenants and authentication records. Keep an off-volume copy of downloads.
 import tempfile
 
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @app.post("/api/platform/backup/database")
 def create_full_database_backup(user=Depends(user_from_header)):
     _platform_owner(user)
@@ -1209,7 +1217,8 @@ def create_full_database_backup(user=Depends(user_from_header)):
         # SQLite's online backup API creates a transactionally consistent copy,
         # including committed data, without copying a live WAL file by hand.
         with db() as source:
-            with sqlite3.connect(str(target), timeout=30) as destination:
+            destination = sqlite3.connect(str(target), timeout=30)
+            try:
                 source.backup(destination)
                 integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
                 if integrity != "ok":
@@ -1219,7 +1228,9 @@ def create_full_database_backup(user=Depends(user_from_header)):
                 ).fetchall()}
                 if not {"tenants", "users", "products"}.issubset(tables):
                     raise sqlite3.DatabaseError("required tables missing")
-        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+            finally:
+                destination.close()
+        digest = _sha256_file(target)
         sidecar = target.with_suffix(target.suffix + ".sha256")
         with sidecar.open("x", encoding="ascii") as handle:
             handle.write(f"{digest}  {target.name}\n")
@@ -1295,7 +1306,7 @@ async def verify_uploaded_database_backup(file: UploadFile = File(...), user=Dep
             "status": "verified",
             "integrity_check": integrity,
             "bytes": total,
-            "sha256": hashlib.sha256(temp_path.read_bytes()).hexdigest(),
+            "sha256": _sha256_file(temp_path),
             "core_tables_present": True,
             "record_counts": counts,
             "production_database_changed": False,
