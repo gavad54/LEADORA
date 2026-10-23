@@ -74,30 +74,16 @@ def test_csv_import_reports_duplicate_rows():
     assert len(response.json()["rejected"]) == 1
 
 
-def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
+def test_participation_contract_routes_removed_and_legacy_share_disabled():
     client = TestClient(app)
-    owner_email = f"leadora-owner-{uuid.uuid4().hex[:8]}@example.com"
-    owner_headers, owner = register(client, "LEADORA Owner", owner_email)
-    company_headers, company = register(client, "Profit Share Company")
-    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
+    company_headers, _ = register(client, "No Contract Share")
 
-    contract = client.post("/api/finance/contracts", headers=owner_headers, json={
-        "tenant_id": company["tenant"]["id"],
-        "trial_start": "2026-01-01", "trial_end": "2026-03-31",
-        "contract_start": "2026-01-01", "contract_end": "2026-12-31",
-        "goal_name": "Increase net sales", "baseline": "100", "target": "120",
-        "share_percent": "10", "direct_costs": ["direct_costs"], "notes": "test agreement",
-    })
-    assert contract.status_code == 200, contract.text
-    contract_id = contract.json()["id"]
-    assert client.post(f"/api/finance/contracts/{contract_id}/activate", headers=owner_headers, json={}).status_code == 200
-    goal = client.post(f"/api/finance/contracts/{contract_id}/goal", headers=owner_headers, json={
-        "achieved": True, "evidence": "Reviewed and verified monthly sales records",
-    })
-    assert goal.status_code == 200, goal.text
+    # Contract management endpoints are intentionally no longer exposed.
+    assert client.get("/api/finance/contracts", headers=company_headers).status_code == 404
+    assert client.post("/api/finance/contracts", headers=company_headers, json={}).status_code == 404
 
     entry = client.post("/api/finance/entries", headers=company_headers, json={
-        "period": "2026-05", "document_ref": "SHARE-1", "sales": "1000",
+        "period": "2026-05", "document_ref": "NO-SHARE-1", "sales": "1000",
         "discounts": "100", "returns": "0", "cogs": "600",
         "direct_costs": "50", "currency": "IRT",
     })
@@ -105,13 +91,9 @@ def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
     report = client.post("/api/finance/reports/calculate?period=2026-05", headers=company_headers, json={})
     assert report.status_code == 200, report.text
     assert report.json()["eligible_profit"] == "250.00"
-    assert report.json()["owner_share"] == "25.00"
-
-    approved = client.post(f"/api/finance/reports/{report.json()['id']}/approve", headers=owner_headers, json={})
-    assert approved.status_code == 200, approved.text
-    rerun = client.post("/api/finance/reports/calculate?period=2026-05", headers=company_headers, json={})
-    assert rerun.status_code == 409
-
+    assert report.json()["share_percent"] == "0.00"
+    assert report.json()["owner_share"] == "0.00"
+    assert report.json()["contract_id"] is None
 
 def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatch):
     client = TestClient(app)
