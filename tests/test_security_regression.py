@@ -102,3 +102,58 @@ def test_tenant_backup_does_not_include_user_credentials():
     assert any(row["sku"] == "SAFE-1" for row in payload["tables"]["products"])
     assert "password_hash" not in response.text
     assert "LEADORA_SECRET" not in response.text
+
+
+def test_customers_are_isolated_between_tenants_and_ids():
+    token_a = register("Customer Company A", "customer-a@example.test")
+    token_b = register("Customer Company B", "customer-b@example.test")
+
+    created = client.post("/api/customers", headers=auth(token_a), json={
+        "name": "Private customer", "phone": "12345",
+    })
+    assert created.status_code == 200, created.text
+    customer_id = created.json()["id"]
+
+    assert client.get("/api/customers", headers=auth(token_b)).json() == []
+    assert client.put(f"/api/customers/{customer_id}", headers=auth(token_b), json={
+        "name": "Unauthorized edit", "phone": "99999",
+    }).status_code == 404
+    assert client.delete(f"/api/customers/{customer_id}", headers=auth(token_b)).status_code == 404
+
+    own = client.get("/api/customers", headers=auth(token_a)).json()
+    assert len(own) == 1
+    assert own[0]["name"] == "Private customer"
+
+
+def test_bank_accounts_are_tenant_scoped_and_account_numbers_are_masked():
+    token_a = register("Bank Company A", "bank-a@example.test")
+    token_b = register("Bank Company B", "bank-b@example.test")
+
+    created = client.post("/api/bank-accounts", headers=auth(token_a), json={
+        "label": "Business account",
+        "institution": "Test Bank",
+        "account_holder": "Company A",
+        "iban_masked": "DE89370400440532013000",
+        "currency": "EUR",
+        "is_default": True,
+        "provider": "manual",
+    })
+    assert created.status_code == 200, created.text
+    account_id = created.json()["id"]
+
+    own = client.get("/api/bank-accounts", headers=auth(token_a))
+    assert own.status_code == 200
+    assert len(own.json()) == 1
+    assert own.json()[0]["iban_masked"].endswith("3000")
+    assert "DE89370400440532013000" not in own.text
+
+    assert client.get("/api/bank-accounts", headers=auth(token_b)).json() == []
+    assert client.delete(f"/api/bank-accounts/{account_id}", headers=auth(token_b)).status_code == 404
+    assert len(client.get("/api/bank-accounts", headers=auth(token_a)).json()) == 1
+
+
+def test_platform_license_management_rejects_regular_tenant_users():
+    token = register("License Tenant", "license-tenant@example.test")
+    response = client.get("/api/platform/licenses", headers=auth(token))
+    assert response.status_code == 403
+
