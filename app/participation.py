@@ -550,24 +550,10 @@ def create_router(db_factory, user_dependency):
 
     @router.post("/reports/{report_id}/settlement")
     def settle_report(report_id: int, body: SettlementIn, user=Depends(user_dependency)):
+        # Participation-contract payouts are retired. Keep historical settlement
+        # records intact, but prevent any new settlement against legacy owner_share.
         require_owner(user)
-        amount = money(body.amount)
-        with db_factory() as c:
-            row = c.execute("SELECT * FROM finance_reports WHERE id=?", (report_id,)).fetchone()
-            if not row:
-                raise HTTPException(404, "گزارش پیدا نشد.")
-            if row["status"] not in ("approved", "closed"):
-                raise HTTPException(409, "تسویه فقط پس از تأیید گزارش مجاز است.")
-            total = money(row["settled_amount"]) + amount
-            due = money(row["owner_share"])
-            if total > due:
-                raise HTTPException(422, "مبلغ پرداختی از سهم مصوب بیشتر است.")
-            status = "paid" if total == due else "partial"
-            c.execute("UPDATE finance_reports SET settled_amount=?,settlement_status=? WHERE id=?", (format(total, "f"), status, report_id))
-            if status == "paid":
-                c.execute("UPDATE finance_reports SET status='closed' WHERE id=?", (report_id,))
-            audit(c, user, "finance.settlement.recorded", {"report_id": report_id, "amount": str(amount), "note": body.note})
-        return {"ok": True, "settled_amount": format(total, "f"), "settlement_status": status}
+        raise HTTPException(410, "تسویه سهم قرارداد مشارکت غیرفعال است؛ سوابق تاریخی حفظ شده‌اند.")
 
     @router.post("/reports/{report_id}/adjustments")
     def request_adjustment(report_id: int, body: AdjustmentIn, user=Depends(user_dependency)):
@@ -624,21 +610,22 @@ def create_router(db_factory, user_dependency):
         require_owner(user)
         with db_factory() as c:
             counts = c.execute("""SELECT
-              (SELECT COUNT(*) FROM finance_contracts) AS contracts,
-              (SELECT COUNT(*) FROM finance_contracts WHERE status='pending') AS pending_contracts,
+              0 AS contracts,
+              0 AS pending_contracts,
               (SELECT COUNT(*) FROM finance_reports WHERE status IN ('pending','disputed')) AS pending_reports,
-              (SELECT COUNT(*) FROM finance_reports WHERE settlement_status IN ('unsettled','partial')) AS unsettled_reports,
-              (SELECT COALESCE(SUM(CAST(owner_share AS REAL)),0) FROM finance_reports WHERE status IN ('approved','closed')) AS approved_share,
-              (SELECT COALESCE(SUM(CAST(owner_share AS REAL)-CAST(settled_amount AS REAL)),0) FROM finance_reports WHERE status IN ('approved','closed')) AS unpaid_share""").fetchone()
+              0 AS unsettled_reports,
+              0.0 AS approved_share,
+              0.0 AS unpaid_share""").fetchone()
             by_month = c.execute("""SELECT period,COUNT(*) AS reports,
               SUM(CAST(net_sales AS REAL)) AS net_sales,
               SUM(CAST(eligible_profit AS REAL)) AS eligible_profit,
-              SUM(CAST(owner_share AS REAL)) AS owner_share
+              0.0 AS owner_share
               FROM finance_reports GROUP BY period ORDER BY period DESC LIMIT 12""").fetchall()
-            companies = c.execute("""SELECT t.id AS tenant_id,t.name AS company_name,fc.status AS contract_status,
-              fc.share_percent,fc.goal_name,fc.goal_achieved,fs.integration_status,fs.updated_at AS source_updated_at
-              FROM tenants t LEFT JOIN finance_contracts fc ON fc.id=(SELECT MAX(id) FROM finance_contracts WHERE tenant_id=t.id)
-              LEFT JOIN finance_settings fs ON fs.tenant_id=t.id ORDER BY t.name LIMIT 500""").fetchall()
+            companies = c.execute("""SELECT t.id AS tenant_id,t.name AS company_name,
+              NULL AS contract_status,NULL AS share_percent,NULL AS goal_name,NULL AS goal_achieved,
+              fs.integration_status,fs.updated_at AS source_updated_at
+              FROM tenants t LEFT JOIN finance_settings fs ON fs.tenant_id=t.id
+              ORDER BY t.name LIMIT 500""").fetchall()
         return {"counts": dict(counts), "by_month": [dict(x) for x in by_month], "companies": [dict(x) for x in companies]}
 
     @router.get("/owner/audit")
