@@ -176,7 +176,7 @@ def test_full_database_backup_is_owner_only_and_can_be_verified_offline(monkeypa
 
     downloaded = client.get(metadata["download_path"], headers=auth(token))
     assert downloaded.status_code == 200
-    assert downloaded.content[:16] == b"SQLite format 3\\x00"
+    assert downloaded.content[:16] == b"SQLite format 3\x00"
     assert len(downloaded.content) == metadata["bytes"]
 
     verified = client.post("/api/platform/backup/verify", headers=auth(token),
