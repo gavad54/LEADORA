@@ -404,6 +404,38 @@ def create_router(db_factory, user_dependency):
             audit(c, user, "finance.contract.created", {"contract_id": cur.lastrowid, "tenant_id": body.tenant_id})
             return dict(c.execute("SELECT * FROM finance_contracts WHERE id=?", (cur.lastrowid,)).fetchone())
 
+    @router.put("/contracts/{contract_id}")
+    def update_contract(contract_id: int, body: ContractIn, user=Depends(user_dependency)):
+        """Edit a draft/pending contract without rewriting activated commercial terms."""
+        require_owner(user)
+        if body.trial_end < body.trial_start or body.contract_start < body.trial_start:
+            raise HTTPException(422, "بازه دوره رایگان یا تاریخ شروع قرارداد معتبر نیست.")
+        if body.contract_end and body.contract_end < body.contract_start:
+            raise HTTPException(422, "تاریخ پایان قرارداد باید بعد از شروع آن باشد.")
+        if body.target < body.baseline:
+            raise HTTPException(422, "هدف قرارداد نباید کمتر از خط مبنا باشد.")
+        with db_factory() as c:
+            existing = c.execute("SELECT * FROM finance_contracts WHERE id=?", (contract_id,)).fetchone()
+            if not existing:
+                raise HTTPException(404, "قرارداد پیدا نشد.")
+            if existing["status"] not in ("draft", "pending"):
+                raise HTTPException(409, "قرارداد فعال یا نهایی‌شده قابل ویرایش نیست؛ برای تغییر شرایط، قرارداد جدید ثبت کنید.")
+            if body.tenant_id != existing["tenant_id"]:
+                raise HTTPException(422, "شرکت قرارداد پس از ایجاد قابل تغییر نیست.")
+            c.execute("""UPDATE finance_contracts SET trial_start=?,trial_end=?,contract_start=?,contract_end=?,
+              goal_name=?,baseline=?,target=?,share_percent=?,direct_costs_json=?,notes=?,updated_at=CURRENT_TIMESTAMP
+              WHERE id=? AND status IN ('draft','pending')""",
+              (body.trial_start.isoformat(), body.trial_end.isoformat(), body.contract_start.isoformat(),
+               body.contract_end.isoformat() if body.contract_end else "", body.goal_name.strip(),
+               decimal_text(body.baseline), decimal_text(body.target), decimal_text(body.share_percent),
+               json.dumps(body.direct_costs), body.notes.strip(), contract_id))
+            audit(c, user, "finance.contract.updated", {
+                "contract_id": contract_id, "tenant_id": existing["tenant_id"],
+                "changed_fields": ["trial_start", "trial_end", "contract_start", "contract_end",
+                                   "goal_name", "baseline", "target", "share_percent", "direct_costs", "notes"]
+            })
+            return dict(c.execute("SELECT * FROM finance_contracts WHERE id=?", (contract_id,)).fetchone())
+
     @router.post("/contracts/{contract_id}/goal")
     def decide_goal(contract_id: int, body: GoalDecisionIn, user=Depends(user_dependency)):
         require_owner(user)
