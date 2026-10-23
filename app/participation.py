@@ -373,60 +373,6 @@ def create_router(db_factory, user_dependency):
             audit(c, user, "finance.settings.updated", {"methods": body.methods, "integration_provider": provider, "integration_status": status})
         return {"ok": True, "methods": body.methods, "integration_status": status, "message": "تنظیمات ذخیره شد؛ اتصال خودکار تا زمان پیکربندی API مجاز فعال نیست."}
 
-    @router.get("/contracts")
-    def get_contracts(user=Depends(user_dependency)):
-        with db_factory() as c:
-            if is_owner(user):
-                rows = c.execute("""SELECT fc.*,t.name AS company_name FROM finance_contracts fc
-                  JOIN tenants t ON t.id=fc.tenant_id ORDER BY fc.id DESC LIMIT 500""").fetchall()
-            else:
-                rows = c.execute("SELECT * FROM finance_contracts WHERE tenant_id=? ORDER BY id DESC LIMIT 50", (user["tenant_id"],)).fetchall()
-        return [dict(x) for x in rows]
-
-    @router.post("/contracts")
-    def create_contract(body: ContractIn, user=Depends(user_dependency)):
-        require_owner(user)
-        if body.trial_end < body.trial_start or body.contract_start < body.trial_start:
-            raise HTTPException(422, "بازه دوره رایگان یا تاریخ شروع قرارداد معتبر نیست.")
-        if body.contract_end and body.contract_end < body.contract_start:
-            raise HTTPException(422, "تاریخ پایان قرارداد باید بعد از شروع آن باشد.")
-        if body.target < body.baseline:
-            raise HTTPException(422, "هدف قرارداد نباید کمتر از خط مبنا باشد.")
-        with db_factory() as c:
-            if not c.execute("SELECT id FROM tenants WHERE id=?", (body.tenant_id,)).fetchone():
-                raise HTTPException(404, "شرکت انتخاب‌شده پیدا نشد.")
-            cur = c.execute("""INSERT INTO finance_contracts
-              (tenant_id,trial_start,trial_end,contract_start,contract_end,goal_name,baseline,target,share_percent,direct_costs_json,notes,status)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending')""",
-              (body.tenant_id, body.trial_start.isoformat(), body.trial_end.isoformat(), body.contract_start.isoformat(),
-               body.contract_end.isoformat() if body.contract_end else "", body.goal_name.strip(), decimal_text(body.baseline),
-               decimal_text(body.target), decimal_text(body.share_percent), json.dumps(body.direct_costs), body.notes.strip()))
-            audit(c, user, "finance.contract.created", {"contract_id": cur.lastrowid, "tenant_id": body.tenant_id})
-            return dict(c.execute("SELECT * FROM finance_contracts WHERE id=?", (cur.lastrowid,)).fetchone())
-
-    @router.post("/contracts/{contract_id}/goal")
-    def decide_goal(contract_id: int, body: GoalDecisionIn, user=Depends(user_dependency)):
-        require_owner(user)
-        with db_factory() as c:
-            row = c.execute("SELECT * FROM finance_contracts WHERE id=?", (contract_id,)).fetchone()
-            if not row:
-                raise HTTPException(404, "قرارداد پیدا نشد.")
-            c.execute("UPDATE finance_contracts SET goal_achieved=?,achieved_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                      (int(body.achieved), datetime.utcnow().isoformat(timespec="seconds") if body.achieved else "", contract_id))
-            audit(c, user, "finance.contract.goal_decided", {"contract_id": contract_id, "achieved": body.achieved, "evidence": body.evidence})
-        return {"ok": True, "goal_achieved": body.achieved, "message": "نتیجه هدف با ثبت مستندات ذخیره شد."}
-
-    @router.post("/contracts/{contract_id}/activate")
-    def activate_contract(contract_id: int, user=Depends(user_dependency)):
-        require_owner(user)
-        with db_factory() as c:
-            row = c.execute("SELECT * FROM finance_contracts WHERE id=?", (contract_id,)).fetchone()
-            if not row:
-                raise HTTPException(404, "قرارداد پیدا نشد.")
-            c.execute("UPDATE finance_contracts SET status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?", (contract_id,))
-            audit(c, user, "finance.contract.activated", {"contract_id": contract_id, "tenant_id": row["tenant_id"]})
-        return {"ok": True, "status": "active"}
-
     def insert_entry(c, user, body, source):
         tid = user["tenant_id"]
         settings = c.execute("SELECT methods_json FROM finance_settings WHERE tenant_id=?", (tid,)).fetchone()
@@ -568,20 +514,11 @@ def create_router(db_factory, user_dependency):
                     totals[key] += money(adjustment[key + "_adjustment"])
             net_sales = totals["sales"] - totals["discounts"] - totals["returns"]
             eligible = net_sales - totals["cogs"] - totals["direct_costs"]
-            contract = tenant_contract(c, user["tenant_id"])
+            # Legacy participation-contract records are preserved for historical data,
+            # but the removed contract feature no longer assigns an owner revenue share.
             share_percent = Decimal("0")
             contract_id = None
             owner_share = Decimal("0")
-            month_start = period_start(period)
-            month_end = date(month_start.year + (month_start.month == 12), 1 if month_start.month == 12 else month_start.month + 1, 1)
-            if contract and contract["status"] == "active" and contract["goal_achieved"]:
-                in_contract = month_start.isoformat() >= contract["contract_start"] and (not contract["contract_end"] or month_start.isoformat() <= contract["contract_end"])
-                after_trial = month_start.isoformat() > contract["trial_end"]
-                if in_contract and after_trial:
-                    share_percent = money(contract["share_percent"])
-                    owner_share = max(Decimal("0"), eligible) * share_percent / Decimal("100")
-                    owner_share = owner_share.quantize(CENT, rounding=ROUND_HALF_UP)
-                    contract_id = contract["id"]
             values = [format(x.quantize(CENT, rounding=ROUND_HALF_UP), "f") for x in (totals["sales"], totals["discounts"], totals["returns"], net_sales, totals["cogs"], totals["direct_costs"], eligible, share_percent, owner_share)]
             try:
                 c.execute("""INSERT INTO finance_reports(tenant_id,period,currency,gross_sales,discounts,returns,net_sales,cogs,direct_costs,eligible_profit,share_percent,owner_share,contract_id,status)
