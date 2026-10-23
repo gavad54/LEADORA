@@ -156,3 +156,39 @@ def test_platform_license_management_rejects_regular_tenant_users():
     token = register("License Tenant", "license-tenant@example.test")
     response = client.get("/api/platform/licenses", headers=auth(token))
     assert response.status_code == 403
+
+def test_full_database_backup_is_owner_only_and_can_be_verified_offline(monkeypatch, tmp_path):
+    token = register("Platform Backup Owner", "platform-owner-backup@example.test")
+    user_id = token.split(".", 1)[0].split(":", 1)[0]
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", user_id)
+    monkeypatch.setenv("LEADORA_BACKUP_DIR", str(tmp_path / "backups"))
+    client.post("/api/products", headers=auth(token), json={
+        "sku": "DB-BACKUP-1", "name": "Backup validation item", "price": 7, "stock": 4,
+    })
+
+    created = client.post("/api/platform/backup/database", headers=auth(token))
+    assert created.status_code == 200, created.text
+    metadata = created.json()
+    assert metadata["status"] == "verified"
+    assert metadata["integrity_check"] == "ok"
+    assert metadata["bytes"] > 0
+    assert len(metadata["sha256"]) == 64
+
+    downloaded = client.get(metadata["download_path"], headers=auth(token))
+    assert downloaded.status_code == 200
+    assert downloaded.content[:16] == b"SQLite format 3\\x00"
+    assert len(downloaded.content) == metadata["bytes"]
+
+    verified = client.post("/api/platform/backup/verify", headers=auth(token),
+                           files={"file": ("leadora-backup.sqlite3", downloaded.content, "application/vnd.sqlite3")})
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["integrity_check"] == "ok"
+    assert verified.json()["production_database_changed"] is False
+
+
+def test_full_database_backup_endpoints_reject_regular_tenant(monkeypatch):
+    token = register("Regular Backup Tenant", "regular-backup@example.test")
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", "not-the-user")
+    assert client.post("/api/platform/backup/database", headers=auth(token)).status_code == 403
+    assert client.post("/api/platform/backup/verify", headers=auth(token),
+                       files={"file": ("backup.sqlite3", b"not a database", "application/octet-stream")}).status_code == 403
