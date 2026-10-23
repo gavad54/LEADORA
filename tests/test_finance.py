@@ -106,6 +106,12 @@ def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
     })
     assert pending_contract.status_code == 200, pending_contract.text
     assert pending_contract.json()["status"] == "pending"
+    # A second contract for the same company must not become active while the
+    # existing contract remains active, otherwise report generation is ambiguous.
+    duplicate_activation = client.post(
+        f"/api/finance/contracts/{pending_contract.json()['id']}/activate", headers=owner_headers, json={}
+    )
+    assert duplicate_activation.status_code == 409, duplicate_activation.text
 
     entry = client.post("/api/finance/entries", headers=company_headers, json={
         "period": "2026-05", "document_ref": "SHARE-1", "sales": "1000",
