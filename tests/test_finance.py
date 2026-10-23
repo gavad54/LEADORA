@@ -96,6 +96,17 @@ def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
     })
     assert goal.status_code == 200, goal.text
 
+    # A newer pending contract must not override the terms of the active contract.
+    pending_contract = client.post("/api/finance/contracts", headers=owner_headers, json={
+        "tenant_id": company["tenant"]["id"],
+        "trial_start": "2026-04-01", "trial_end": "2026-04-30",
+        "contract_start": "2026-04-01", "contract_end": "2027-12-31",
+        "goal_name": "Future sales goal", "baseline": "120", "target": "150",
+        "share_percent": "90", "direct_costs": ["direct_costs"], "notes": "pending renewal",
+    })
+    assert pending_contract.status_code == 200, pending_contract.text
+    assert pending_contract.json()["status"] == "pending"
+
     entry = client.post("/api/finance/entries", headers=company_headers, json={
         "period": "2026-05", "document_ref": "SHARE-1", "sales": "1000",
         "discounts": "100", "returns": "0", "cogs": "600",
