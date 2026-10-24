@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 LICENSE_STATUSES = {"draft", "issued", "paid", "active", "expired", "cancelled"}
 SUPPORT_STATUSES = {"open", "in_progress", "waiting_customer", "waiting_team", "resolved", "closed"}
@@ -90,7 +90,7 @@ def create_router(db, user_from_header):
         tenant_id: int = Field(gt=0)
         edition: str = Field(min_length=1, max_length=40)
         term_months: int = Field(ge=1, le=120)
-        amount: float = Field(ge=0, le=1_000_000_000)
+        amount: StrictInt = Field(ge=0, le=1_000_000_000)
         currency: str = Field(default="IRR", pattern="^IRR$")
         invoice_ref: str = Field(default="", max_length=100)
         support_until: str = Field(default="", max_length=40)
