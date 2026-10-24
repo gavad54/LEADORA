@@ -162,7 +162,7 @@ def test_bank_accounts_are_tenant_scoped_and_account_numbers_are_masked():
         "institution": "Test Bank",
         "account_holder": "Company A",
         "iban_masked": "DE89370400440532013000",
-        "currency": "EUR",
+        "currency": "IRR",
         "is_default": True,
         "provider": "manual",
     })
