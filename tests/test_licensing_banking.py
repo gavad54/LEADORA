@@ -24,10 +24,10 @@ def test_bank_accounts_are_tenant_scoped_and_never_claim_transfers():
         "currency": "IRR", "is_default": True,
     })
     assert created.status_code == 200, created.text
-    assert created.json()["currency"] == "IRR"
     rows_a = client.get("/api/bank-accounts", headers=a_headers)
     rows_b = client.get("/api/bank-accounts", headers=b_headers)
     assert len(rows_a.json()) == 1
+    assert rows_a.json()[0]["currency"] == "IRR"
     assert rows_b.json() == []
     status = client.get("/api/bank-accounts/status", headers=a_headers).json()
     assert status["real_transfers_enabled"] is False
