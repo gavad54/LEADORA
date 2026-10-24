@@ -53,11 +53,25 @@ jobs:
         run: |
           set -euo pipefail
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           test -s "$APK"
           mkdir -p release
           cp "$APK" release/LEADORA-Android.apk
+          # Verify the package signature and parse the binary manifest instead of
+          # treating a successful Gradle task or a non-empty file as sufficient.
+          "$BUILD_TOOLS/apksigner" verify --verbose release/LEADORA-Android.apk
+          "$BUILD_TOOLS/aapt" dump badging release/LEADORA-Android.apk > release/LEADORA-Android-metadata.txt
+          {
+            echo "source_commit=$GITHUB_SHA"
+            echo "application_id=$(sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" release/LEADORA-Android-metadata.txt | head -n 1)"
+            echo "version_code=$(sed -n "s/^package:.*versionCode='\\([^']*\\)'.*/\\1/p" release/LEADORA-Android-metadata.txt | head -n 1)"
+            echo "version_name=$(sed -n "s/^package:.*versionName='\\([^']*\\)'.*/\\1/p" release/LEADORA-Android-metadata.txt | head -n 1)"
+            echo "apk_size_bytes=$(stat -c '%s' release/LEADORA-Android.apk)"
+            sha256sum release/LEADORA-Android.apk
+          } > release/LEADORA-Android-build-info.txt
           sha256sum release/LEADORA-Android.apk > release/LEADORA-Android.apk.sha256
           file release/LEADORA-Android.apk
+          cat release/LEADORA-Android-build-info.txt
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -78,5 +92,6 @@ jobs:
           files: |
             release/LEADORA-Android.apk
             release/LEADORA-Android.apk.sha256
+            release/LEADORA-Android-build-info.txt
           prerelease: true
           make_latest: false
