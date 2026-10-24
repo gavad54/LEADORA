@@ -71,26 +71,8 @@ def create_router(db_factory, user_dependency):
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           rotated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
-        CREATE TABLE IF NOT EXISTS finance_contracts(
-          id INTEGER PRIMARY KEY,
-          tenant_id INTEGER NOT NULL REFERENCES tenants(id),
-          trial_start TEXT NOT NULL,
-          trial_end TEXT NOT NULL,
-          contract_start TEXT NOT NULL,
-          contract_end TEXT NOT NULL DEFAULT '',
-          goal_name TEXT NOT NULL,
-          baseline TEXT NOT NULL DEFAULT '0.00',
-          target TEXT NOT NULL DEFAULT '0.00',
-          goal_achieved INTEGER NOT NULL DEFAULT 0 CHECK(goal_achieved IN (0,1)),
-          achieved_at TEXT NOT NULL DEFAULT '',
-          share_percent TEXT NOT NULL,
-          direct_costs_json TEXT NOT NULL DEFAULT '["direct_costs"]',
-          status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','pending','active','suspended','terminated')),
-          notes TEXT NOT NULL DEFAULT '',
-          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS finance_contracts_tenant_idx ON finance_contracts(tenant_id,id DESC);
+        -- finance_contracts is legacy-only: do not create or use it for new installs.
+        -- Existing historical rows are preserved in place; no destructive migration is run.
         CREATE TABLE IF NOT EXISTS finance_entries(
           id INTEGER PRIMARY KEY,
           tenant_id INTEGER NOT NULL REFERENCES tenants(id),
@@ -440,7 +422,7 @@ def create_router(db_factory, user_dependency):
                         "returns": data.get("returns", "0") or "0",
                         "cogs": data.get("cogs", ""),
                         "direct_costs": data.get("direct_costs", "0") or "0",
-                        "currency": data.get("currency", "IRT") or "IRT",
+                        "currency": data.get("currency", "IRR") or "IRR",
                         "source_key": data.get("source_key", ""),
                     })
                     insert_entry(c, user, entry, "csv")
