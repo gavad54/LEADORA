@@ -119,6 +119,19 @@ def test_logout_revokes_the_bearer_token_server_side():
     assert client.post("/api/logout", headers=headers).status_code == 401
 
 
+def test_expired_license_does_not_block_server_side_logout():
+    token = register("Expired License Logout", "expired-logout@example.test")
+    raw = token.split(".", 1)[0]
+    tenant_id = int(raw.split(":", 3)[1])
+    with __import__("app.main", fromlist=["db"]).db() as conn:
+        conn.execute("UPDATE tenant_licenses SET status='expired' WHERE tenant_id=?", (tenant_id,))
+
+    headers = auth(token)
+    logged_out = client.post("/api/logout", headers=headers)
+    assert logged_out.status_code == 200, logged_out.text
+    assert client.get("/api/products", headers=headers).status_code == 401
+
+
 def test_customers_are_isolated_between_tenants_and_ids():
     token_a = register("Customer Company A", "customer-a@example.test")
     token_b = register("Customer Company B", "customer-b@example.test")
