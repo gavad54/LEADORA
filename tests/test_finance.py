@@ -41,7 +41,7 @@ def test_finance_settings_and_manual_entry_calculation():
     assert report.status_code == 200, report.text
     assert report.json()["net_sales"] == "850.00"
     assert report.json()["eligible_profit"] == "325.00"
-    assert report.json()["owner_share"] == "0.00"
+    assert "owner_share" not in report.json()
 
 
 def test_finance_tenant_isolation():
@@ -82,7 +82,7 @@ def test_owner_financial_participation_is_retired_and_finance_stays_in_irr(monke
 
     assert client.get("/api/finance/contracts", headers=owner_headers).status_code == 404
     assert client.post("/api/finance/contracts", headers=owner_headers, json={}).status_code == 404
-    assert client.get("/api/finance/owner/overview", headers=owner_headers).status_code == 404
+    assert client.get("/api/finance/owner/audit", headers=owner_headers).status_code == 404
     assert client.post("/api/finance/reports/999/settlement", headers=owner_headers,
                        json={"amount": "1", "note": "legacy"}).status_code == 404
 
@@ -113,8 +113,8 @@ def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatc
     headers, _ = register(client, "Finance Access")
     missing_provider = client.put("/api/finance/settings", headers=headers, json={"methods": ["manual", "integration"]})
     assert missing_provider.status_code == 422
-    denied = client.get("/api/finance/owner/overview", headers=headers)
-    assert denied.status_code == 404
+    denied = client.get("/api/finance/owner/audit", headers=headers)
+    assert denied.status_code == 403
 
 
 def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(monkeypatch):
@@ -176,9 +176,9 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
 
     duplicate = client.post("/api/finance/owner/claim", headers=other_headers, json={"token": bootstrap})
     assert duplicate.status_code == 403
-    denied = client.get("/api/finance/owner/overview", headers=other_headers)
+    denied = client.get("/api/finance/owner/audit", headers=other_headers)
     assert denied.status_code == 403
-    allowed = client.get("/api/finance/owner/overview", headers=owner_headers)
+    allowed = client.get("/api/finance/owner/audit", headers=owner_headers)
     assert allowed.status_code == 200
 
     # Recovery is an explicit, separately gated path for a wrongly claimed owner account.
@@ -236,8 +236,8 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
     assert recovered.json()["is_platform_owner"] is True
     assert client.get("/api/finance/identity", headers=recovery_headers).json()["is_platform_owner"] is True
     assert client.get("/api/finance/identity", headers=owner_headers).json()["is_platform_owner"] is False
-    assert client.get("/api/finance/owner/overview", headers=owner_headers).status_code == 403
-    assert client.get("/api/finance/owner/overview", headers=recovery_headers).status_code == 200
+    assert client.get("/api/finance/owner/audit", headers=owner_headers).status_code == 403
+    assert client.get("/api/finance/owner/audit", headers=recovery_headers).status_code == 200
 
 
 def test_integration_webhook_key_rotation_ingest_and_tenant_isolation():
