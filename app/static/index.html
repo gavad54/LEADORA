@@ -134,6 +134,50 @@ body.compact .panel{padding:14px}body.compact .stat{padding:13px}body.compact td
 .public-card{position:relative;width:min(100%,350px);padding:30px;border:1px solid #fff;background:#ffffffdf;border-radius:26px;box-shadow:0 25px 75px #384d991c;backdrop-filter:blur(12px)}.public-card-icon{display:grid;place-items:center;width:45px;height:45px;border-radius:14px;background:#edf0ff;color:#5b63dc;font-size:25px}.public-card small{display:block;margin-top:22px;color:#7985a0;font-size:10px;letter-spacing:1.5px}.public-card strong{display:block;margin-top:7px;font-size:20px}.public-bars{height:80px;display:flex;align-items:end;gap:10px;margin:24px 0}.public-bars i{display:block;flex:1;border-radius:8px 8px 3px 3px;background:linear-gradient(#7b8cff,#6dd9cc)}.public-bars i:nth-child(1){height:38%}.public-bars i:nth-child(2){height:65%}.public-bars i:nth-child(3){height:48%}.public-bars i:nth-child(4){height:84%}.public-bars i:nth-child(5){height:100%}.public-card-foot{display:flex;justify-content:space-between;gap:8px;color:#73809b;font-size:10px}
 .public-features{max-width:1180px;margin:0 auto;padding:0 24px 50px}.public-features h2{font-size:24px}.public-feature-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px}.public-feature-grid article{background:#fff;border:1px solid #e6eaf7;border-radius:17px;padding:22px}.public-feature-grid b{font-size:15px}.public-feature-grid p{color:#75809a;line-height:2;font-size:12px;margin-bottom:0}.public-footnote{color:#8791a8;font-size:11px;margin-top:20px}
 @media(max-width:760px){.public-nav{padding:16px}.public-main{grid-template-columns:1fr;padding:38px 20px 45px;gap:10px}.public-copy h1{font-size:36px}.public-copy>p{font-size:14px}.public-visual{min-height:280px}.orbit-one{width:260px;height:210px}.orbit-two{width:300px;height:250px}.public-card{width:min(100%,310px);padding:24px}.public-features{padding:0 20px 35px}.public-feature-grid{grid-template-columns:1fr}.public-proof{gap:10px}}
+
+/* LEADORA Neon Glass landing — public first, authentication only on explicit action */
+:root{color-scheme:dark;--neon-cyan:#62f4df;--neon-blue:#7b8cff;--neon-violet:#c18aff}
+html{background:#090f22;scroll-behavior:smooth}
+body{color:#edf3ff;background:radial-gradient(ellipse at 82% 8%,#5542a54d 0,transparent 32%),radial-gradient(ellipse at 12% 45%,#126b9b30 0,transparent 35%),linear-gradient(135deg,#080e20 0%,#101a38 55%,#1c1c45 100%);background-attachment:fixed}
+.public-home{min-height:100svh;color:#eff4ff;background:transparent;overflow:hidden;position:relative}
+.public-home:before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(120deg,transparent 20%,#7a8bff08 50%,transparent 80%);mask-image:linear-gradient(#000,transparent 85%)}
+.public-nav{position:relative;z-index:2;max-width:1240px;padding:22px clamp(16px,4vw,42px);border-bottom:1px solid #ffffff16;background:#0b1326a8;backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)}
+.public-brand{gap:13px}.public-brand b{color:#f5f7ff;font-size:21px;letter-spacing:2.5px;text-shadow:0 0 22px #91a2ff4d}.public-brand small{color:#aab8da;letter-spacing:1.5px}
+.public-mark{border:1px solid #ffffff65;background:linear-gradient(135deg,#5df4db,#7c8cff 60%,#d68aff);box-shadow:0 0 24px #7e86ff65, inset 0 1px #fff9;color:#111833}
+.public-main{position:relative;z-index:1;max-width:1240px;min-height:clamp(520px,70svh,780px);padding:clamp(38px,7vw,92px) clamp(16px,4vw,42px);gap:clamp(24px,5vw,72px)}
+.public-eyebrow{border:1px solid #74e8f34a;background:#74e8f310;color:#8df8e5;box-shadow:inset 0 1px #ffffff14,0 0 24px #4debd30d}
+.public-copy h1{color:#f5f6ff;font-size:clamp(34px,5.3vw,64px);line-height:1.48;text-wrap:balance;text-shadow:0 8px 40px #0005}
+.public-copy h1 em{color:#8a9bff;text-shadow:0 0 28px #7b8cff5c}
+.public-copy>p{color:#bdc8e5;font-size:clamp(14px,1.35vw,17px);line-height:2.15}
+.public-actions{gap:16px}.public-actions a{color:#8cefe2}
+.public-proof{color:#aab7d7;gap:12px}.public-proof span{padding:8px 11px;border:1px solid #ffffff1b;border-radius:999px;background:#ffffff08}
+.public-visual{min-height:350px;isolation:isolate}
+.public-orbit{border-color:#7c8cff55;box-shadow:0 0 32px #7386ff13,inset 0 0 28px #6e82ff0b}
+.orbit-two{border-color:#5cebd14f}
+.public-card{width:min(100%,380px);padding:clamp(22px,3vw,34px);color:#eff3ff;border:1px solid #ffffff35;background:linear-gradient(145deg,#ffffff1b,#ffffff08);border-radius:28px;box-shadow:0 28px 90px #0207177d,inset 0 1px #ffffff38;backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);transform:rotate(-1.5deg)}
+.public-card-icon{color:#82fff0;background:linear-gradient(135deg,#6df4dd24,#9385ff30);border:1px solid #a4fff23d;box-shadow:0 0 28px #5cebd125}
+.public-card small{color:#9aace1;letter-spacing:2px}.public-card strong{font-size:clamp(18px,2vw,23px);color:#f5f7ff}
+.public-bars i{background:linear-gradient(180deg,#67f5dd,#7185ff 72%,#bc83ff);box-shadow:0 0 18px #7185ff35}
+.public-card-foot{color:#b8c7e9}
+.public-features{position:relative;z-index:1;padding-bottom:60px}.public-features h2{color:#f2f4ff;font-size:clamp(22px,3vw,30px);margin-bottom:20px}
+.public-feature-grid article{color:#edf2ff;border:1px solid #ffffff28;background:linear-gradient(145deg,#ffffff15,#ffffff07);border-radius:20px;box-shadow:0 18px 42px #0207184d,inset 0 1px #ffffff20;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);transition:transform .2s,border-color .2s,box-shadow .2s}
+.public-feature-grid article:hover{transform:translateY(-4px);border-color:#81eede75;box-shadow:0 20px 45px #02071865,0 0 28px #5cebd10c}
+.public-feature-grid b{color:#eaf5ff}.public-feature-grid p,.public-footnote{color:#b5c2e1}
+.btn.primary{background:linear-gradient(115deg,#6d80ff,#986bff);color:#fff;border:1px solid #ffffff50;box-shadow:0 10px 30px #786bff4a,inset 0 1px #ffffff45}
+.btn.primary:hover{box-shadow:0 12px 35px #786bff70,0 0 24px #6cddf02a}
+.auth{background:#060b1edb;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);padding:18px}
+.authcard{width:min(100%,470px);padding:clamp(22px,5vw,34px);color:#eff3ff;background:linear-gradient(145deg,#1a2545f5,#101a35f5);border:1px solid #ffffff35;border-radius:26px;box-shadow:0 30px 100px #0009,inset 0 1px #ffffff28}
+.authcard .brand strong{color:#f2f6ff!important}.authcard .brand small{color:#aab8dc!important}
+.authcard h2{color:#f4f6ff}.authcard p{color:#bdc8e5}
+.authcard .tabs{background:#080f25;border:1px solid #ffffff1d;border-radius:14px;padding:5px}
+.authcard .tabs button{color:#aeb9d9}.authcard .tabs button.active{background:linear-gradient(120deg,#6d80ff38,#5cebd122);color:#fff;border:1px solid #ffffff27}
+.authcard .field label{color:#d7e0f7}.authcard .field input{color:#f4f6ff!important;background:#0a132b!important;border-color:#ffffff29!important}
+.authcard .field input::placeholder{color:#8290b4}.authcard .field input:focus{border-color:#76e9df!important;box-shadow:0 0 0 3px #5cebd122}
+.authcard .fineprint{color:#9baaca}
+.authcard .status{background:#ffffff0e;color:#dbe5ff;border:1px solid #ffffff1a}.authcard .status.error{background:#f8717118;color:#fecaca;border-color:#f8717140}
+@media(max-width:760px){.public-nav{padding:16px}.public-main{min-height:unset;padding:42px 20px 36px;gap:12px}.public-copy h1{font-size:clamp(33px,9vw,43px);line-height:1.55}.public-copy>p{font-size:14px}.public-visual{min-height:270px;margin-top:8px}.public-card{transform:none}.public-features{padding:0 20px 38px}.public-features h2{font-size:23px}.public-feature-grid{gap:11px}.public-feature-grid article{padding:19px}.public-proof{font-size:10px}.auth{align-items:start;padding:14px; padding-top:max(14px,env(safe-area-inset-top))}.authcard{margin:auto 0;border-radius:22px}}
+@media(prefers-reduced-motion:reduce){.public-feature-grid article,.public-card{transition:none;transform:none}}
+
 </style></head><body><div id="runtimeError" role="alert" style="display:none;position:sticky;top:0;z-index:10000;margin:10px;padding:14px;border:1px solid #d97706;border-radius:12px;background:#fff7ed;color:#7c2d12;font:14px/1.9 Tahoma,sans-serif"><strong>برنامه با خطای فنی روبه‌رو شد.</strong><div>صفحه را تازه‌سازی کنید. اگر مشکل تکرار شد، جزئیات خطای زیر را برای پشتیبانی بفرستید.</div><div data-runtime-detail style="margin-top:6px;direction:ltr;text-align:left;overflow-wrap:anywhere"></div><button type="button" onclick="location.reload()" style="margin-top:8px;padding:8px 12px;border:0;border-radius:8px;background:#7c2d12;color:white">تازه‌سازی صفحه</button></div>
 <section id="publicHome" class="public-home" aria-labelledby="publicTitle">
   <header class="public-nav"><div class="public-brand"><span class="public-mark">L</span><span><b>LEADORA</b><small>BUSINESS OPERATIONS</small></span></div><button class="btn primary" id="publicLoginBtn" type="button">ورود / ساخت حساب</button></header>
