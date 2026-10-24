@@ -74,3 +74,28 @@ def test_only_platform_owner_can_issue_keys(monkeypatch):
     monkeypatch.setenv("LEADORA_OWNER_USER_IDS", "")
     response = client.post("/api/platform/licenses", headers=headers, json={"tenant_id": 1})
     assert response.status_code == 403
+
+
+
+def test_platform_license_sales_accept_only_whole_irr_amounts(monkeypatch):
+    client = TestClient(app)
+    owner_headers, owner = register(client, "License Sale Owner")
+    company_headers, company = register(client, "License Sale Customer")
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
+
+    payload = {
+        "tenant_id": company["tenant"]["id"],
+        "edition": "business",
+        "term_months": 12,
+        "currency": "IRR",
+        "invoice_ref": "TEST-IRR-1",
+    }
+    fractional = client.post("/api/platform/license-sales", headers=owner_headers,
+                             json={**payload, "amount": 1250.5})
+    assert fractional.status_code == 422, fractional.text
+
+    whole = client.post("/api/platform/license-sales", headers=owner_headers,
+                        json={**payload, "amount": 1250})
+    assert whole.status_code == 200, whole.text
+    assert whole.json()["amount"] == 1250
+    assert whole.json()["currency"] == "IRR"
