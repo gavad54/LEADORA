@@ -3,7 +3,7 @@ name: Build LEADORA Android test APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, fix/public-home-optional-auth]
     paths:
       - "android/**"
       - "app/**"
@@ -59,6 +59,7 @@ jobs:
           path: release/*
           retention-days: 30
       - name: Publish APK release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-test-v1.0.${{ github.run_number }}
