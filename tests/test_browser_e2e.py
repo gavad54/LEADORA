@@ -129,3 +129,21 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
 
         assert browser_errors == [], "Browser JavaScript errors: " + "; ".join(browser_errors)
         browser.close()
+
+def test_finance_ui_is_irr_only_and_owner_participation_is_absent(live_app):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(live_app + "/finance", wait_until="networkidle")
+        assert page.locator("#currency").input_value() == "IRR"
+        assert page.locator("#currency option").count() == 1
+        assert page.locator("#adjCurrency").input_value() == "IRR"
+        body = page.locator("body").inner_text()
+        assert "سهم مالک" not in body
+        assert "ثبت رسید پرداخت" not in body
+        assert "تومان" not in body
+        assert "ریال ایران (IRR)" in body
+        assert errors == [], "Finance browser JavaScript errors: " + "; ".join(errors)
+        browser.close()
