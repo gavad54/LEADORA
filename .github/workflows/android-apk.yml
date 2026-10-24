@@ -63,9 +63,6 @@ jobs:
           "$BUILD_TOOLS/aapt" dump badging release/LEADORA-Android.apk > release/LEADORA-Android-metadata.txt
           {
             echo "source_commit=$GITHUB_SHA"
-            echo "application_id=$(sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" release/LEADORA-Android-metadata.txt | head -n 1)"
-            echo "version_code=$(sed -n "s/^package:.*versionCode='\\([^']*\\)'.*/\\1/p" release/LEADORA-Android-metadata.txt | head -n 1)"
-            echo "version_name=$(sed -n "s/^package:.*versionName='\\([^']*\\)'.*/\\1/p" release/LEADORA-Android-metadata.txt | head -n 1)"
             echo "apk_size_bytes=$(stat -c '%s' release/LEADORA-Android.apk)"
             sha256sum release/LEADORA-Android.apk
           } > release/LEADORA-Android-build-info.txt
