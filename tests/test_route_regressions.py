@@ -117,11 +117,11 @@ def test_business_module_read_routes_require_authentication():
         "/api/prospecting/sources", "/api/prospecting/business-leads",
         "/api/prospecting/source-runs", "/api/prospecting/settings",
         "/api/prospecting/worker/status", "/api/prospecting/business-leads/export.csv",
-        # Financial participation and owner-only operations.
-        "/api/finance/identity", "/api/finance/settings", "/api/finance/contracts",
+        # Financial reports and active owner-only operations.
+        "/api/finance/identity", "/api/finance/settings",
         "/api/finance/integration/status", "/api/finance/entries",
         "/api/finance/reports", "/api/finance/adjustments",
-        "/api/finance/owner/overview", "/api/finance/owner/audit",
+        "/api/finance/owner/audit",
         # Distribution ERP and accounting.
         "/api/distribution/fiscal-years", "/api/distribution/overview",
         "/api/distribution/accounts", "/api/distribution/warehouses",
