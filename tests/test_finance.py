@@ -44,6 +44,19 @@ def test_finance_settings_and_manual_entry_calculation():
     assert "owner_share" not in report.json()
 
 
+
+def test_finance_entry_rejects_fractional_irr_amounts():
+    client = TestClient(app)
+    headers, _ = register(client, "Fractional Rial")
+    response = client.post("/api/finance/entries", headers=headers, json={
+        "period": "2026-11", "document_ref": "FRACTIONAL-IRR",
+        "sales": "1000.5", "discounts": "0", "returns": "0",
+        "cogs": "500", "direct_costs": "0", "currency": "IRR",
+    })
+    assert response.status_code == 422, response.text
+    rows = client.get("/api/finance/entries", headers=headers).json()
+    assert all(row["document_ref"] != "FRACTIONAL-IRR" for row in rows)
+
 def test_finance_tenant_isolation():
     client = TestClient(app)
     headers_a, _ = register(client, "Finance A")
