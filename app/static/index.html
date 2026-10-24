@@ -178,6 +178,105 @@ body{color:#edf3ff;background:radial-gradient(ellipse at 82% 8%,#5542a54d 0,tran
 @media(max-width:760px){.public-nav{padding:16px}.public-main{min-height:unset;padding:42px 20px 36px;gap:12px}.public-copy h1{font-size:clamp(33px,9vw,43px);line-height:1.55}.public-copy>p{font-size:14px}.public-visual{min-height:270px;margin-top:8px}.public-card{transform:none}.public-features{padding:0 20px 38px}.public-features h2{font-size:23px}.public-feature-grid{gap:11px}.public-feature-grid article{padding:19px}.public-proof{font-size:10px}.auth{align-items:start;padding:14px; padding-top:max(14px,env(safe-area-inset-top))}.authcard{margin:auto 0;border-radius:22px}}
 @media(prefers-reduced-motion:reduce){.public-feature-grid article,.public-card{transition:none;transform:none}}
 
+
+/* Critical visibility fix: component display rules must never override the HTML hidden attribute. */
+[hidden], .auth[hidden], .shell[hidden], #publicHome[hidden] { display: none !important; }
+
+/* LEADORA neon-glass experience: public landing and authentication remain visually consistent. */
+.public-home {
+  color: #eef4ff;
+  background:
+    radial-gradient(ellipse at 82% 12%, #6d45ff45 0, transparent 36%),
+    radial-gradient(ellipse at 12% 68%, #18e4d12b 0, transparent 34%),
+    linear-gradient(145deg, #080d20 0%, #101a36 52%, #10112b 100%);
+  min-height: 100vh;
+}
+.public-brand b { color: #f4f7ff; }
+.public-brand small { color: #a6b4d6; }
+.public-mark {
+  color: #11152f;
+  background: linear-gradient(135deg, #55f4d5, #7685ff 58%, #c36cff);
+  box-shadow: 0 0 26px #786bff65, inset 0 1px 0 #ffffffa8;
+}
+.public-copy h1 { color: #f3f6ff; }
+.public-copy h1 em {
+  color: #68f5dc;
+  text-shadow: 0 0 26px #45e9d84a;
+}
+.public-copy > p, .public-proof { color: #b4c0df; }
+.public-eyebrow {
+  color: #8df7e6;
+  border-color: #6bf0dc50;
+  background: #61e9d40e;
+  box-shadow: inset 0 0 18px #52e9d20a;
+  backdrop-filter: blur(12px);
+}
+.public-orbit { border-color: #8e85ff55; box-shadow: 0 0 22px #8275ff12; }
+.orbit-two { border-color: #59f3d755; }
+.public-card, .public-feature-grid article {
+  color: #eef4ff;
+  background: linear-gradient(145deg, #ffffff17, #a8baff08);
+  border: 1px solid #dce6ff2d;
+  box-shadow: 0 24px 70px #0005, inset 0 1px 0 #ffffff20, 0 0 32px #716aff12;
+  backdrop-filter: blur(20px) saturate(145%);
+  -webkit-backdrop-filter: blur(20px) saturate(145%);
+}
+.public-card-icon {
+  color: #75f5e2;
+  background: linear-gradient(135deg, #54f2d526, #8c72ff35);
+  border: 1px solid #7df4e445;
+  box-shadow: 0 0 25px #5ef0d51c;
+}
+.public-card small, .public-card-foot, .public-feature-grid p { color: #aebbdc; }
+.public-features h2, .public-feature-grid b { color: #f0f4ff; }
+.public-feature-grid article { border-radius: 20px; }
+.public-footnote { color: #aebbdc; }
+.auth {
+  background: #060b1ce8;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.authcard {
+  color: #eff4ff;
+  background: linear-gradient(145deg, #202b4af2, #10182ff5);
+  border: 1px solid #c4d0ff35;
+  box-shadow: 0 28px 90px #0009, 0 0 45px #776cff20, inset 0 1px 0 #ffffff20;
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+.authcard h2 { color: #f2f5ff; }
+.authcard p, .fineprint { color: #b1bddb; }
+.tabs { background: #080f25aa; border: 1px solid #ffffff16; }
+.tabs button { color: #aab7d7; }
+.tabs button.active {
+  color: #8ff6e5;
+  background: linear-gradient(135deg, #6debd91c, #8c7cff25);
+  box-shadow: inset 0 0 0 1px #70eede55, 0 0 22px #69e9dc14;
+}
+.authcard .field label { color: #d7e0f8; }
+.authcard .field input {
+  color: #f5f7ff;
+  background: #070e22b8;
+  border: 1px solid #c7d3ff35;
+  box-shadow: inset 0 1px 10px #0002;
+}
+.authcard .field input::placeholder { color: #7f8caf; }
+.authcard .field input:focus {
+  outline: none;
+  border-color: #68efdc;
+  box-shadow: 0 0 0 3px #68efdc20, 0 0 22px #68efdc12;
+}
+.btn.primary {
+  border: 1px solid #8df7e480;
+  background: linear-gradient(120deg, #45d9c3, #7884ff 72%, #a66cff);
+  color: #0c1630;
+  box-shadow: 0 8px 28px #6b83ff35, inset 0 1px 0 #ffffff70;
+}
+.public-actions a { color: #8af5e4; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
 </style></head><body><div id="runtimeError" role="alert" style="display:none;position:sticky;top:0;z-index:10000;margin:10px;padding:14px;border:1px solid #d97706;border-radius:12px;background:#fff7ed;color:#7c2d12;font:14px/1.9 Tahoma,sans-serif"><strong>برنامه با خطای فنی روبه‌رو شد.</strong><div>صفحه را تازه‌سازی کنید. اگر مشکل تکرار شد، جزئیات خطای زیر را برای پشتیبانی بفرستید.</div><div data-runtime-detail style="margin-top:6px;direction:ltr;text-align:left;overflow-wrap:anywhere"></div><button type="button" onclick="location.reload()" style="margin-top:8px;padding:8px 12px;border:0;border-radius:8px;background:#7c2d12;color:white">تازه‌سازی صفحه</button></div>
 <section id="publicHome" class="public-home" aria-labelledby="publicTitle">
   <header class="public-nav"><div class="public-brand"><span class="public-mark">L</span><span><b>LEADORA</b><small>BUSINESS OPERATIONS</small></span></div><button class="btn primary" id="publicLoginBtn" type="button">ورود / ساخت حساب</button></header>
