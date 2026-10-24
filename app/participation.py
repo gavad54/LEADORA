@@ -11,7 +11,7 @@ import json
 import os
 import re
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from fastapi import APIRouter, Depends, Header, HTTPException
 from hmac import compare_digest as secrets_compare
@@ -453,7 +453,7 @@ def create_router(db_factory, user_dependency):
             if not row:
                 raise HTTPException(404, "قرارداد پیدا نشد.")
             c.execute("UPDATE finance_contracts SET goal_achieved=?,achieved_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                      (int(body.achieved), datetime.utcnow().isoformat(timespec="seconds") if body.achieved else "", contract_id))
+                      (int(body.achieved), datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") if body.achieved else "", contract_id))
             audit(c, user, "finance.contract.goal_decided", {"contract_id": contract_id, "achieved": body.achieved, "evidence": body.evidence})
         return {"ok": True, "goal_achieved": body.achieved, "message": "نتیجه هدف با ثبت مستندات ذخیره شد."}
 
