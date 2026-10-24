@@ -165,7 +165,7 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
                 is_platform_owner = bool(owner_row and str(owner_row["user_id"]) == str(user["id"]))
             except sqlite3.OperationalError:
                 is_platform_owner = False
-        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health"}
+        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health", "/api/logout"}
         if (request.url.path if request is not None else "") not in allowed_paths and not is_platform_owner:
             license_row = _license_for_tenant(user["tenant_id"])
             if license_row["status"] in ("expired", "suspended"):
