@@ -82,7 +82,7 @@ def test_owner_financial_participation_is_retired_and_finance_stays_in_irr(monke
 
     assert client.get("/api/finance/contracts", headers=owner_headers).status_code == 404
     assert client.post("/api/finance/contracts", headers=owner_headers, json={}).status_code == 404
-    assert client.get("/api/finance/owner/audit", headers=owner_headers).status_code == 404
+    assert client.get("/api/finance/owner/overview", headers=owner_headers).status_code == 404
     assert client.post("/api/finance/reports/999/settlement", headers=owner_headers,
                        json={"amount": "1", "note": "legacy"}).status_code == 404
 
