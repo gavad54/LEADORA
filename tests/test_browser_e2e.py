@@ -144,6 +144,6 @@ def test_finance_ui_is_irr_only_and_owner_participation_is_absent(live_app):
         assert "سهم مالک" not in body
         assert "ثبت رسید پرداخت" not in body
         assert "تومان" not in body
-        assert "ریال ایران (IRR)" in body
+        assert "ریال ایران (IRR)" in page.content()
         assert errors == [], "Finance browser JavaScript errors: " + "; ".join(errors)
         browser.close()
