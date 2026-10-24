@@ -47,7 +47,7 @@ def owner_user_ids():
 
 
 def create_router(db_factory, user_dependency):
-    router = APIRouter(prefix="/api/finance", tags=["financial-participation"])
+    router = APIRouter(prefix="/api/finance", tags=["financial"])
 
     with db_factory() as c:
         c.executescript("""
