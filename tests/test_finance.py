@@ -99,7 +99,7 @@ def test_owner_financial_participation_is_retired_and_finance_stays_in_irr(monke
     assert report.json()["owner_share"] == "0.00"
     assert report.json()["share_percent"] == "0.00"
 
-    for currency in ("IRR", "USD", "EUR"):
+    for currency in ("IRT", "USD", "EUR"):
         rejected = client.post("/api/finance/entries", headers=company_headers, json={
             "period": "2026-12", "document_ref": "BAD-" + currency, "sales": "100",
             "discounts": "0", "returns": "0", "cogs": "10",
@@ -114,7 +114,7 @@ def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatc
     missing_provider = client.put("/api/finance/settings", headers=headers, json={"methods": ["manual", "integration"]})
     assert missing_provider.status_code == 422
     denied = client.get("/api/finance/owner/overview", headers=headers)
-    assert denied.status_code == 403
+    assert denied.status_code == 404
 
 
 def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(monkeypatch):
