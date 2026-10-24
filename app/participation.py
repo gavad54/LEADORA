@@ -184,6 +184,13 @@ def create_router(db_factory, user_dependency):
         currency: str = Field(default="IRR", pattern="^IRR$")
         source_key: str = Field(default="", max_length=200)
 
+        @field_validator("sales", "discounts", "returns", "cogs", "direct_costs")
+        @classmethod
+        def whole_irr_amounts(cls, value):
+            if value != value.to_integral_value():
+                raise ValueError("مبالغ باید به ریال صحیح و بدون بخش اعشاری ثبت شوند.")
+            return value
+
         @field_validator("period")
         @classmethod
         def valid_period(cls, value):
@@ -216,6 +223,13 @@ def create_router(db_factory, user_dependency):
         direct_costs_adjustment: Decimal = Decimal("0")
         currency: str = Field(pattern="^IRR$")
         reason: str = Field(min_length=5, max_length=2000)
+
+        @field_validator("sales_adjustment", "discounts_adjustment", "returns_adjustment", "cogs_adjustment", "direct_costs_adjustment")
+        @classmethod
+        def whole_irr_adjustments(cls, value):
+            if value != value.to_integral_value():
+                raise ValueError("اصلاحیه‌ها باید به ریال صحیح و بدون بخش اعشاری ثبت شوند.")
+            return value
 
         @field_validator("adjustment_period")
         @classmethod
