@@ -104,7 +104,7 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         assert page.locator("#densitySetting").input_value() == "compact"
         assert page.locator("#motionSetting").input_value() == "reduced"
         page.locator("#logoutBtn").click()
-        assert page.locator("#publicHome").is_visible()
+        page.locator("#publicHome").wait_for(state="visible")
         assert page.locator("#authOverlay").is_hidden()
         page.locator("#publicLoginBtn").click()
         assert page.locator("#authOverlay").is_visible()
