@@ -180,17 +180,6 @@ def create_router(db_factory, user_dependency):
         if not is_owner(user):
             raise HTTPException(403, "این عملیات فقط برای مالک سامانه مجاز است.")
 
-    def tenant_contract(c, tid):
-        # Pending/draft contracts must not override the active terms used for
-        # financial calculations. Fail closed if multiple active contracts exist.
-        rows = c.execute(
-            "SELECT * FROM finance_contracts WHERE tenant_id=? AND status='active' ORDER BY id DESC LIMIT 2",
-            (tid,),
-        ).fetchall()
-        if len(rows) > 1:
-            raise HTTPException(409, "برای این شرکت بیش از یک قرارداد فعال وجود دارد؛ پیش از محاسبه گزارش، وضعیت قراردادها را اصلاح کنید.")
-        return dict(rows[0]) if rows else None
-
     class SettingsIn(BaseModel):
         methods: list[str] = Field(min_length=1, max_length=3)
         integration_provider: str = Field(default="", max_length=120)
@@ -200,27 +189,6 @@ def create_router(db_factory, user_dependency):
         def valid_methods(cls, value):
             if len(set(value)) != len(value) or not set(value).issubset(METHODS):
                 raise ValueError("روش‌ها باید از manual، csv و integration انتخاب شوند و تکراری نباشند.")
-            return value
-
-    class ContractIn(BaseModel):
-        tenant_id: int = Field(ge=1)
-        trial_start: date
-        trial_end: date
-        contract_start: date
-        contract_end: date | None = None
-        goal_name: str = Field(min_length=3, max_length=300)
-        baseline: Decimal = Field(ge=0)
-        target: Decimal = Field(ge=0)
-        share_percent: Decimal = Field(ge=0, le=100)
-        direct_costs: list[str] = Field(default_factory=lambda: ["direct_costs"], max_length=10)
-        notes: str = Field(default="", max_length=3000)
-
-        @field_validator("direct_costs")
-        @classmethod
-        def valid_costs(cls, value):
-            allowed = {"direct_costs"}
-            if len(set(value)) != len(value) or not set(value).issubset(allowed):
-                raise ValueError("مبنای هزینه فقط می‌تواند هزینه‌های مستقیم توافق‌شده باشد.")
             return value
 
     class EntryIn(BaseModel):
@@ -256,14 +224,6 @@ def create_router(db_factory, user_dependency):
 
     class ObjectionIn(BaseModel):
         reason: str = Field(min_length=5, max_length=2000)
-
-    class GoalDecisionIn(BaseModel):
-        achieved: bool
-        evidence: str = Field(min_length=5, max_length=2000)
-
-    class SettlementIn(BaseModel):
-        amount: Decimal = Field(gt=0)
-        note: str = Field(default="", max_length=1000)
 
     class AdjustmentIn(BaseModel):
         adjustment_period: str
@@ -541,7 +501,10 @@ def create_router(db_factory, user_dependency):
                   WHERE id=?""", (next(iter(currencies)), *values, contract_id, existing["id"]))
             report = c.execute("SELECT * FROM finance_reports WHERE tenant_id=? AND period=?", (user["tenant_id"], period)).fetchone()
             audit(c, user, "finance.report.calculated", {"period": period, "report_id": report["id"], "eligible_profit": report["eligible_profit"]})
-        return dict(report)
+        item = dict(report)
+        for key in ("share_percent", "owner_share", "contract_id", "settlement_status", "settled_amount"):
+            item.pop(key, None)
+        return item
 
     @router.get("/reports")
     def list_reports(period: str = "", user=Depends(user_dependency)):
@@ -558,7 +521,13 @@ def create_router(db_factory, user_dependency):
                 sql += " AND period=?" if is_owner(user) else " AND period=?"
                 args.append(period)
             rows = c.execute(sql + " ORDER BY period DESC,id DESC LIMIT 1000", args).fetchall()
-        return [dict(x) for x in rows]
+        output = []
+        for row in rows:
+            item = dict(row)
+            for key in ("share_percent", "owner_share", "contract_id", "settlement_status", "settled_amount"):
+                item.pop(key, None)
+            output.append(item)
+        return output
 
     @router.post("/reports/{report_id}/approve")
     def approve_report(report_id: int, user=Depends(user_dependency)):
