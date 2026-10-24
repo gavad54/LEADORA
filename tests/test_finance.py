@@ -96,8 +96,8 @@ def test_owner_financial_participation_is_retired_and_finance_stays_in_irr(monke
                          headers=company_headers, json={})
     assert report.status_code == 200, report.text
     assert report.json()["currency"] == "IRR"
-    assert report.json()["owner_share"] == "0.00"
-    assert report.json()["share_percent"] == "0.00"
+    assert "owner_share" not in report.json()
+    assert "share_percent" not in report.json()
 
     for currency in ("IRT", "USD", "EUR"):
         rejected = client.post("/api/finance/entries", headers=company_headers, json={
