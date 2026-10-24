@@ -62,14 +62,18 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page = browser.new_page()
         page.on("pageerror", lambda error: browser_errors.append(str(error)))
         page.goto(live_app, wait_until="networkidle")
-        assert page.locator("#view-dashboard").is_visible()
-        assert page.locator("#authOverlay").is_visible()
-        assert page.get_by_text("به فضای کاری خود خوش آمدید").is_visible()
+        assert page.locator("#publicHome").is_visible()
+        assert page.locator("#workspaceShell").is_hidden()
+        assert page.locator("#authOverlay").is_hidden()
+        assert page.get_by_text("کسب‌وکار خود را", exact=False).is_visible()
 
-        # Refreshing while unauthenticated must never dismiss the sign-in overlay.
+        # Refreshing as a visitor keeps the public landing visible without forcing authentication.
         page.reload(wait_until="networkidle")
-        assert page.locator("#authOverlay").is_visible()
+        assert page.locator("#publicHome").is_visible()
+        assert page.locator("#authOverlay").is_hidden()
 
+        page.locator("#publicStartBtn").click()
+        assert page.locator("#authOverlay").is_visible()
         page.locator('[data-auth-mode="register"]').click()
         page.locator("#company").fill(company)
         page.locator("#industry").fill("retail")
@@ -77,12 +81,14 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page.locator("#password").fill(password)
         page.locator("#authSubmit").click()
 
-        page.wait_for_function("document.getElementById('authOverlay').style.display === 'none'")
+        page.wait_for_function("document.getElementById('authOverlay').hidden === true")
+        assert page.locator("#workspaceShell").is_visible()
+        assert page.locator("#publicHome").is_hidden()
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
         assert page.locator("#runtimeError").is_hidden()
 
         page.reload(wait_until="networkidle")
-        page.wait_for_function("document.getElementById('authOverlay').style.display === 'none'")
+        page.wait_for_function("document.getElementById('authOverlay').hidden === true")
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
         assert page.locator("#runtimeError").is_hidden()
 
@@ -98,13 +104,46 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         assert page.locator("#densitySetting").input_value() == "compact"
         assert page.locator("#motionSetting").input_value() == "reduced"
         page.locator("#logoutBtn").click()
+        page.locator("#publicHome").wait_for(state="visible")
+        assert page.locator("#authOverlay").is_hidden()
+        page.locator("#publicLoginBtn").click()
         assert page.locator("#authOverlay").is_visible()
         page.locator("#company").fill(company)
         page.locator("#email").fill(email)
         page.locator("#password").fill(password)
         page.locator("#authSubmit").click()
-        page.wait_for_function("document.getElementById('authOverlay').style.display === 'none'")
+        page.wait_for_function("document.getElementById('authOverlay').hidden === true")
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
 
+        # Mobile viewport smoke test: public landing stays visible and the auth dialog is opt-in.
+        mobile = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+        mobile_errors = []
+        mobile.on("pageerror", lambda error: mobile_errors.append(str(error)))
+        mobile.goto(live_app, wait_until="networkidle")
+        assert mobile.locator("#publicHome").is_visible()
+        assert mobile.locator("#authOverlay").is_hidden()
+        assert mobile.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        mobile.locator("#publicLoginBtn").click()
+        assert mobile.locator("#authOverlay").is_visible()
+        assert mobile_errors == [], "Mobile browser JavaScript errors: " + "; ".join(mobile_errors)
+
         assert browser_errors == [], "Browser JavaScript errors: " + "; ".join(browser_errors)
+        browser.close()
+
+def test_finance_ui_is_irr_only_and_owner_participation_is_absent(live_app):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(live_app + "/finance", wait_until="networkidle")
+        assert page.locator("#currency").input_value() == "IRR"
+        assert page.locator("#currency option").count() == 1
+        assert page.locator("#adjCurrency").input_value() == "IRR"
+        body = page.locator("body").inner_text()
+        assert "سهم مالک" not in body
+        assert "ثبت رسید پرداخت" not in body
+        assert "تومان" not in body
+        assert "ریال ایران (IRR)" in page.content()
+        assert errors == [], "Finance browser JavaScript errors: " + "; ".join(errors)
         browser.close()
