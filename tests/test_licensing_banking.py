@@ -21,9 +21,10 @@ def test_bank_accounts_are_tenant_scoped_and_never_claim_transfers():
     created = client.post("/api/bank-accounts", headers=a_headers, json={
         "label": "حساب اصلی", "institution": "Test Bank",
         "account_holder": "Company A", "iban_masked": "DE••••1234",
-        "currency": "EUR", "is_default": True,
+        "currency": "IRR", "is_default": True,
     })
     assert created.status_code == 200, created.text
+    assert created.json()["currency"] == "IRR"
     rows_a = client.get("/api/bank-accounts", headers=a_headers)
     rows_b = client.get("/api/bank-accounts", headers=b_headers)
     assert len(rows_a.json()) == 1

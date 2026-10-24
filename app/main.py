@@ -88,7 +88,7 @@ with db() as _conn:
       institution TEXT NOT NULL DEFAULT '',
       account_holder TEXT NOT NULL DEFAULT '',
       iban_masked TEXT NOT NULL DEFAULT '',
-      currency TEXT NOT NULL DEFAULT 'EUR',
+      currency TEXT NOT NULL DEFAULT 'IRR',
       is_default INTEGER NOT NULL DEFAULT 0,
       provider TEXT NOT NULL DEFAULT 'manual',
       connection_status TEXT NOT NULL DEFAULT 'not_configured',
@@ -1399,7 +1399,7 @@ class WorkflowDocumentIn(BaseModel):
  party_contact:str=Field(default="",max_length=200)
  direction:str=Field(default="outgoing",pattern="^(incoming|outgoing)$")
  amount:float=Field(default=0,ge=0,le=1000000000000)
- currency:str=Field(default="IRR",min_length=3,max_length=8)
+ currency:str=Field(default="IRR",pattern="^IRR$")
  issue_date:str=Field(default="",max_length=10)
  due_date:str=Field(default="",max_length=10)
  status:str=Field(default="registered",pattern="^(registered|review|approved|in_progress|sent|received|awaiting_customer|awaiting_supplier|awaiting_payment|partially_paid|paid|fulfilled|completed|on_hold|cancelled|overdue)$")
@@ -1815,7 +1815,7 @@ class BankAccountIn(BaseModel):
     institution: str = Field(default="", max_length=120)
     account_holder: str = Field(default="", max_length=120)
     iban_masked: str = Field(default="", max_length=40)
-    currency: str = Field(default="EUR", min_length=3, max_length=8)
+    currency: str = Field(default="IRR", pattern="^IRR$")
     is_default: bool = False
     provider: str = Field(default="manual", max_length=40)
 
