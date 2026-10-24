@@ -27,13 +27,13 @@ def test_finance_settings_and_manual_entry_calculation():
     entry = client.post("/api/finance/entries", headers=headers, json={
         "period": "2026-05", "document_ref": "INV-TEST-1", "sales": "1000",
         "discounts": "100", "returns": "50", "cogs": "500",
-        "direct_costs": "25", "currency": "IRT",
+        "direct_costs": "25", "currency": "IRR",
     })
     assert entry.status_code == 200, entry.text
     duplicate = client.post("/api/finance/entries", headers=headers, json={
         "period": "2026-05", "document_ref": "INV-TEST-1", "sales": "1000",
         "discounts": "100", "returns": "50", "cogs": "500",
-        "direct_costs": "25", "currency": "IRT",
+        "direct_costs": "25", "currency": "IRR",
     })
     assert duplicate.status_code == 409
 
@@ -51,7 +51,7 @@ def test_finance_tenant_isolation():
     response = client.post("/api/finance/entries", headers=headers_a, json={
         "period": "2026-06", "document_ref": "A-ONLY", "sales": "500",
         "discounts": "0", "returns": "0", "cogs": "200",
-        "direct_costs": "0", "currency": "IRT",
+        "direct_costs": "0", "currency": "IRR",
     })
     assert response.status_code == 200
     rows_a = client.get("/api/finance/entries", headers=headers_a).json()
@@ -65,8 +65,8 @@ def test_csv_import_reports_duplicate_rows():
     headers, _ = register(client, "Finance CSV")
     csv_content = (
         "period,document_ref,sales,discounts,returns,cogs,direct_costs,currency\n"
-        "2026-07,CSV-1,1000,0,0,600,20,IRT\n"
-        "2026-07,CSV-1,1000,0,0,600,20,IRT\n"
+        "2026-07,CSV-1,1000,0,0,600,20,IRR\n"
+        "2026-07,CSV-1,1000,0,0,600,20,IRR\n"
     )
     response = client.post("/api/finance/import/csv", headers=headers, json={"content": csv_content})
     assert response.status_code == 200, response.text
@@ -74,103 +74,38 @@ def test_csv_import_reports_duplicate_rows():
     assert len(response.json()["rejected"]) == 1
 
 
-def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
+def test_owner_financial_participation_is_retired_and_finance_stays_in_irr(monkeypatch):
     client = TestClient(app)
-    owner_email = f"leadora-owner-{uuid.uuid4().hex[:8]}@example.com"
-    owner_headers, owner = register(client, "LEADORA Owner", owner_email)
-    company_headers, company = register(client, "Profit Share Company")
+    owner_headers, owner = register(client, "Retired Participation Owner")
+    company_headers, _ = register(client, "IRR Only Company")
     monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
 
-    contract = client.post("/api/finance/contracts", headers=owner_headers, json={
-        "tenant_id": company["tenant"]["id"],
-        "trial_start": "2026-01-01", "trial_end": "2026-03-31",
-        "contract_start": "2026-01-01", "contract_end": "2026-12-31",
-        "goal_name": "Increase net sales", "baseline": "100", "target": "120",
-        "share_percent": "10", "direct_costs": ["direct_costs"], "notes": "test agreement",
-    })
-    assert contract.status_code == 200, contract.text
-    contract_id = contract.json()["id"]
-    assert client.post(f"/api/finance/contracts/{contract_id}/activate", headers=owner_headers, json={}).status_code == 200
-    goal = client.post(f"/api/finance/contracts/{contract_id}/goal", headers=owner_headers, json={
-        "achieved": True, "evidence": "Reviewed and verified monthly sales records",
-    })
-    assert goal.status_code == 200, goal.text
-
-    # A newer pending contract must not override the terms of the active contract.
-    pending_contract = client.post("/api/finance/contracts", headers=owner_headers, json={
-        "tenant_id": company["tenant"]["id"],
-        "trial_start": "2026-04-01", "trial_end": "2026-04-30",
-        "contract_start": "2026-04-01", "contract_end": "2027-12-31",
-        "goal_name": "Future sales goal", "baseline": "120", "target": "150",
-        "share_percent": "90", "direct_costs": ["direct_costs"], "notes": "pending renewal",
-    })
-    assert pending_contract.status_code == 200, pending_contract.text
-    assert pending_contract.json()["status"] == "pending"
-    # A second contract for the same company must not become active while the
-    # existing contract remains active, otherwise report generation is ambiguous.
-    duplicate_activation = client.post(
-        f"/api/finance/contracts/{pending_contract.json()['id']}/activate", headers=owner_headers, json={}
-    )
-    assert duplicate_activation.status_code == 409, duplicate_activation.text
+    assert client.get("/api/finance/contracts", headers=owner_headers).status_code == 404
+    assert client.post("/api/finance/contracts", headers=owner_headers, json={}).status_code == 404
+    assert client.get("/api/finance/owner/overview", headers=owner_headers).status_code == 404
+    assert client.post("/api/finance/reports/999/settlement", headers=owner_headers,
+                       json={"amount": "1", "note": "legacy"}).status_code == 404
 
     entry = client.post("/api/finance/entries", headers=company_headers, json={
-        "period": "2026-05", "document_ref": "SHARE-1", "sales": "1000",
-        "discounts": "100", "returns": "0", "cogs": "600",
-        "direct_costs": "50", "currency": "IRT",
+        "period": "2026-11", "document_ref": "IRR-ONLY-1", "sales": "1000000",
+        "discounts": "10000", "returns": "0", "cogs": "600000",
+        "direct_costs": "5000", "currency": "IRR",
     })
     assert entry.status_code == 200, entry.text
-    report = client.post("/api/finance/reports/calculate?period=2026-05", headers=company_headers, json={})
+    report = client.post("/api/finance/reports/calculate?period=2026-11",
+                         headers=company_headers, json={})
     assert report.status_code == 200, report.text
-    assert report.json()["eligible_profit"] == "250.00"
-    assert report.json()["owner_share"] == "25.00"
+    assert report.json()["currency"] == "IRR"
+    assert report.json()["owner_share"] == "0.00"
+    assert report.json()["share_percent"] == "0.00"
 
-    approved = client.post(f"/api/finance/reports/{report.json()['id']}/approve", headers=owner_headers, json={})
-    assert approved.status_code == 200, approved.text
-    rerun = client.post("/api/finance/reports/calculate?period=2026-05", headers=company_headers, json={})
-    assert rerun.status_code == 409
-
-
-def test_contract_edit_is_owner_only_validated_and_locked_after_activation(monkeypatch):
-    client = TestClient(app)
-    owner_headers, owner = register(client, "Contract Edit Owner")
-    company_headers, company = register(client, "Contract Edit Company")
-    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
-    payload = {
-        "tenant_id": company["tenant"]["id"],
-        "trial_start": "2026-01-01", "trial_end": "2026-03-31",
-        "contract_start": "2026-01-01", "contract_end": "2026-12-31",
-        "goal_name": "Increase net sales", "baseline": "100", "target": "120",
-        "share_percent": "10", "direct_costs": ["direct_costs"], "notes": "initial terms",
-    }
-    created = client.post("/api/finance/contracts", headers=owner_headers, json=payload)
-    assert created.status_code == 200, created.text
-    contract_id = created.json()["id"]
-
-    changed = {**payload, "goal_name": "Increase verified net sales", "share_percent": "15", "notes": "revised draft"}
-    updated = client.put(f"/api/finance/contracts/{contract_id}", headers=owner_headers, json=changed)
-    assert updated.status_code == 200, updated.text
-    assert updated.json()["goal_name"] == "Increase verified net sales"
-    assert updated.json()["share_percent"] == "15.00"
-
-    invalid_dates = {**changed, "trial_end": "2025-12-31"}
-    invalid = client.put(f"/api/finance/contracts/{contract_id}", headers=owner_headers, json=invalid_dates)
-    assert invalid.status_code == 422
-    assert client.get("/api/finance/contracts", headers=owner_headers).status_code == 200
-
-    # A contract remains attached to its original tenant; editing cannot reassign it.
-    reassigned = client.put(
-        f"/api/finance/contracts/{contract_id}",
-        headers=owner_headers,
-        json={**changed, "tenant_id": owner["tenant"]["id"]},
-    )
-    assert reassigned.status_code == 422
-
-    activated = client.post(f"/api/finance/contracts/{contract_id}/activate", headers=owner_headers, json={})
-    assert activated.status_code == 200, activated.text
-    locked = client.put(f"/api/finance/contracts/{contract_id}", headers=owner_headers, json={**changed, "share_percent": "20"})
-    assert locked.status_code == 409
-    denied = client.put(f"/api/finance/contracts/{contract_id}", headers=company_headers, json={**changed, "share_percent": "20"})
-    assert denied.status_code == 403
+    for currency in ("IRR", "USD", "EUR"):
+        rejected = client.post("/api/finance/entries", headers=company_headers, json={
+            "period": "2026-12", "document_ref": "BAD-" + currency, "sales": "100",
+            "discounts": "0", "returns": "0", "cogs": "10",
+            "direct_costs": "0", "currency": currency,
+        })
+        assert rejected.status_code == 422
 
 
 def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatch):
@@ -192,7 +127,7 @@ def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(m
     entry = client.post("/api/finance/entries", headers=company_headers, json={
         "period": "2026-05", "document_ref": "ADJ-BASE", "sales": "1000",
         "discounts": "0", "returns": "0", "cogs": "500",
-        "direct_costs": "0", "currency": "IRT",
+        "direct_costs": "0", "currency": "IRR",
     })
     assert entry.status_code == 200, entry.text
     report = client.post("/api/finance/reports/calculate?period=2026-05", headers=company_headers, json={})
@@ -204,7 +139,7 @@ def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(m
         "adjustment_period": "2026-06", "sales_adjustment": "-100",
         "discounts_adjustment": "0", "returns_adjustment": "0",
         "cogs_adjustment": "-50", "direct_costs_adjustment": "0",
-        "currency": "IRT", "reason": "Corrected invoice cost after review",
+        "currency": "IRR", "reason": "Corrected invoice cost after review",
     })
     assert request.status_code == 200, request.text
     adjustment_id = request.json()["id"]
@@ -320,13 +255,13 @@ def test_integration_webhook_key_rotation_ingest_and_tenant_isolation():
     missing = client.post("/api/finance/integration/ingest", json={"entries": [{
         "period": "2026-10", "document_ref": "WEB-1", "sales": "1000",
         "discounts": "0", "returns": "0", "cogs": "600", "direct_costs": "0",
-        "currency": "IRT"
+        "currency": "IRR"
     }]})
     assert missing.status_code == 401
 
     batch = client.post("/api/finance/integration/ingest", headers={"X-LEADORA-Integration-Key": key_a}, json={"entries": [
-        {"period": "2026-10", "document_ref": "WEB-1", "sales": "1000", "discounts": "0", "returns": "0", "cogs": "600", "direct_costs": "0", "currency": "IRT", "source_key": "erp-1"},
-        {"period": "2026-10", "document_ref": "WEB-1", "sales": "1000", "discounts": "0", "returns": "0", "cogs": "600", "direct_costs": "0", "currency": "IRT", "source_key": "erp-1"},
+        {"period": "2026-10", "document_ref": "WEB-1", "sales": "1000", "discounts": "0", "returns": "0", "cogs": "600", "direct_costs": "0", "currency": "IRR", "source_key": "erp-1"},
+        {"period": "2026-10", "document_ref": "WEB-1", "sales": "1000", "discounts": "0", "returns": "0", "cogs": "600", "direct_costs": "0", "currency": "IRR", "source_key": "erp-1"},
     ]})
     assert batch.status_code == 200, batch.text
     assert batch.json()["imported"] == 1
@@ -342,10 +277,10 @@ def test_integration_webhook_key_rotation_ingest_and_tenant_isolation():
     assert rotated.status_code == 200
     key_b = rotated.json()["integration_key"]
     old_key = client.post("/api/finance/integration/ingest", headers={"X-LEADORA-Integration-Key": key_a}, json={"entries": [
-        {"period": "2026-10", "document_ref": "WEB-2", "sales": "10", "discounts": "0", "returns": "0", "cogs": "5", "direct_costs": "0", "currency": "IRT"}
+        {"period": "2026-10", "document_ref": "WEB-2", "sales": "10", "discounts": "0", "returns": "0", "cogs": "5", "direct_costs": "0", "currency": "IRR"}
     ]})
     assert old_key.status_code == 401
     new_key = client.post("/api/finance/integration/ingest", headers={"X-LEADORA-Integration-Key": key_b}, json={"entries": [
-        {"period": "2026-10", "document_ref": "WEB-2", "sales": "10", "discounts": "0", "returns": "0", "cogs": "5", "direct_costs": "0", "currency": "IRT"}
+        {"period": "2026-10", "document_ref": "WEB-2", "sales": "10", "discounts": "0", "returns": "0", "cogs": "5", "direct_costs": "0", "currency": "IRR"}
     ]})
     assert new_key.status_code == 200, new_key.text
