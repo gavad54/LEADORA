@@ -58,7 +58,10 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           script: |
-            set -euo pipefail
+            # This action executes the script through /bin/sh, not necessarily Bash.
+            # Use POSIX shell options; each pipeline's final grep is the explicit assertion,
+            # and commands whose failures matter are checked directly with -e.
+            set -eu
             APK="android/app/build/outputs/apk/debug/app-debug.apk"
             mkdir -p release
             test -s "$APK"
