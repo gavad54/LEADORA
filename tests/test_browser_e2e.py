@@ -64,7 +64,7 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page.goto(live_app, wait_until="networkidle")
         assert page.locator("#view-dashboard").is_visible()
         assert page.locator("#authOverlay").is_hidden()
-        assert page.get_by_text("نمای کلی").is_visible()
+        assert page.get_by_role("heading", name="نمای کلی").is_visible()
 
         # An unauthenticated visit and refresh must show the dashboard, not a forced login overlay.
         page.reload(wait_until="networkidle")
