@@ -1,3 +1,45 @@
+# افزوده ممیزی جاری — 2026-10-25T06:40Z
+
+> این بخش خط مبنای جاری است. هر وضعیت قدیمی‌تر در ادامه سند فقط سابقه محسوب می‌شود و در صورت تعارض، این بخش و شواهد زنده GitHub/Railway ملاک‌اند. پس از هر تغییر جدید کد یا تنظیمات، نتایج مربوطه منقضی می‌شوند.
+
+## خط مبنای زنده
+
+- Repository: https://github.com/gavad54/LEADORA
+- PR #46: https://github.com/gavad54/LEADORA/pull/46 — باز و ادغام‌نشده.
+- Branch کاندید: `fix/public-home-optional-auth`
+- آخرین SHA کد بررسی‌شده: `9320596c1a3390478c7c40f77c03ac58a65c025a`
+- Base `main`: `ead6a400347314f16303520bc016fb988fd621de`
+- آخرین بررسی API: 2026-10-25؛ `main` بدون branch protection گزارش شده است. این مورد مجوز Merge/Deploy محسوب نمی‌شود.
+- فایل اصلی صفحه: `app/static/index.html`; راه‌اندازی فعلی ابتدا `showPublicHome()` را اجرا می‌کند و فقط پس از اعتبارسنجی نشست ذخیره‌شده، فضای کاری را باز می‌کند.
+
+## نتایج آزمون روی SHA کاندید
+
+| مورد | نتیجه | مدرک |
+|---|---|---|
+| LEADORA CI | PASS | [Run 40169583303](https://github.com/gavad54/LEADORA/actions/runs/40169583303), SHA `9320596...` |
+| LEADORA CI (اجرای تکراری خودکار) | PASS | [Run 40169580324](https://github.com/gavad54/LEADORA/actions/runs/40169580324), SHA `9320596...` |
+| Regression & Security | PASS | [Run 40169583265](https://github.com/gavad54/LEADORA/actions/runs/40169583265), SHA `9320596...`; `107 passed`, یک هشدار deprecation از Starlette/httpx |
+| Android APK + emulator smoke test | IN PROGRESS / NOT VERIFIED | [Run 40169583285](https://github.com/gavad54/LEADORA/actions/runs/40169583285); هنگام ثبت این افزوده، مرحله نصب/اجرای APK در Android emulator هنوز در حال اجراست |
+| نصب روی گوشی فیزیکی | NOT VERIFIED | ابزار/دستگاه فیزیکی در دسترس نیست |
+| امضای تجاری Android | NOT VERIFIED | شواهد موجود مربوط به APK آزمایشی/debug است؛ کلید مجاز Release اثبات نشده |
+| صفحه اصلی در Production | NOT VERIFIED | ابزار وب نتوانست URL را بخواند و دسترسی Railway به سرویس رد شد؛ نتیجه را از CI یا health قبلی استنتاج نکن |
+| تطبیق source/deployment در Railway | BLOCKED | ابزار متصل Railway برای سرویس‌ها و deploymentها خطای role `viewer` می‌دهد |
+| Backup خارج از Volume و Restore ایزوله | BLOCKED | دسترسی مجاز به فایل DB/میزبان و محیط Restore مستقل موجود نیست؛ هیچ داده زنده‌ای تغییر نکرده است |
+
+## Railway — مانع دسترسی جاری
+
+- Railway account connection شناسایی شد و فهرست پروژه‌ها شامل پروژه LEADORA است.
+- خواندن سرویس‌ها، deploymentها و وضعیت محیط با خطای `You don't have the required role (viewer) on this resource.` رد می‌شود.
+- این تناقض با گزارش قبلی کاربر مبنی بر Admin بودن، علت را به‌تنهایی مشخص نمی‌کند؛ ممکن است نقش پروژه یا اتصال/هویت مجاز متصل باشد. هیچ تغییری در تنظیمات یا deploy انجام نشده است.
+- Production URL: https://leadora-web-production.up.railway.app
+- آخرین مدرک تاریخی ثبت‌شده در پایین سند درباره deployment در 2026-10-21 است؛ تا دسترسی خواندن مجاز بازیابی نشود، آن را به‌عنوان نسخه فعلی قطعی تلقی نکن.
+
+## جلوگیری از تکرار
+
+در اجرای بعدی ابتدا همین سند و API زنده GitHub را بخوان؛ سپس فقط مواردی را دوباره اجرا کن که SHA، workflow، artifact، تنظیمات، مجوز، deployment یا پایگاه داده‌شان تغییر کرده یا شواهدشان منقضی شده است. هر نتیجه باید به SHA و Run ID مشخص گره بخورد. نتیجه CI سبز، وجود APK، آنلاین بودن سرویس یا وجود Volume جایگزین نصب واقعی، امضای تجاری، Production smoke test، Backup مستقل و Restore ایزوله نیست.
+
+---
+
 # LEADORA — وضعیت اجرایی انتشار و نقطه ادامه
 
 **وضعیت کلی: مسدود برای انتشار تجاری تا تکمیل دروازه‌های حیاتی.**  
