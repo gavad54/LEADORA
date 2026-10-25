@@ -130,6 +130,30 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         assert browser_errors == [], "Browser JavaScript errors: " + "; ".join(browser_errors)
         browser.close()
 
+def test_expired_local_session_recovers_to_public_home_without_login_loop(live_app):
+    """An invalid stored bearer token must not trap visitors on the workspace/auth screen."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(live_app, wait_until="networkidle")
+        page.evaluate("""() => {
+            localStorage.setItem('leadora_token', 'expired-or-invalid-token');
+            localStorage.setItem('leadora_email', 'stale@example.test');
+            localStorage.setItem('leadora_company', 'Stale workspace');
+        }""")
+        page.reload(wait_until="networkidle")
+        page.locator("#publicHome").wait_for(state="visible")
+        assert page.locator("#workspaceShell").is_hidden()
+        assert page.locator("#authOverlay").is_hidden()
+        assert page.evaluate("localStorage.getItem('leadora_token')") is None
+        assert page.evaluate("localStorage.getItem('leadora_email')") is None
+        assert page.evaluate("localStorage.getItem('leadora_company')") is None
+        assert errors == [], "Browser JavaScript errors: " + "; ".join(errors)
+        browser.close()
+
+
 def test_finance_ui_is_irr_only_and_owner_participation_is_absent(live_app):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
