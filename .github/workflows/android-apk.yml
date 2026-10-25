@@ -64,8 +64,9 @@ jobs:
             # Use POSIX shell options; each pipeline's final grep is the explicit assertion,
             # and commands whose failures matter are checked directly with -e.
             set -eu
-            APK="android/app/build/outputs/apk/debug/app-debug.apk"
-            mkdir -p release
+            APK="$(find "$GITHUB_WORKSPACE" -type f -path "*/build/outputs/apk/debug/*.apk" -print -quit)"
+            test -n "$APK" || { echo "ERROR: Gradle debug APK not found under $GITHUB_WORKSPACE"; exit 1; }
+            mkdir -p "$GITHUB_WORKSPACE/release"
             test -s "$APK"
             # Verify the public production API and Persian RTL landing contract from the runner.
             curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/api/health" -o /tmp/leadora-health.json
@@ -110,7 +111,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          APK="$(find "$GITHUB_WORKSPACE" -type f -path "*/build/outputs/apk/debug/*.apk" -print -quit)"
+          test -n "$APK" || { echo "ERROR: Gradle debug APK not found under $GITHUB_WORKSPACE"; exit 1; }
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           test -s "$APK"
           mkdir -p release
