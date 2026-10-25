@@ -1,7 +1,7 @@
 # LEADORA — وضعیت اجرایی انتشار و نقطه ادامه
 
 **وضعیت کلی: مسدود برای انتشار تجاری تا تکمیل دروازه‌های حیاتی.**  
-**آخرین بررسی شواهد:** 2026-10-25  
+**آخرین بررسی شواهد:** 2026-10-25؛ شواهد تازه برای Commit کاندید `633f5ffe4ffa9e18f764c870614135dd7d0dcd49`  
 **قاعده:** وضعیت VERIFIED فقط برای شواهدی است که در همین بازبینی یا اجرای مشخص CI قابل مشاهده بوده‌اند؛ موفقیت Build به معنی نصب/اجرای واقعی یا آمادگی تجاری نیست.
 
 ## نقطه ادامه فعلی
@@ -9,22 +9,22 @@
 - مخزن: https://github.com/gavad54/LEADORA
 - PR مرجع: https://github.com/gavad54/LEADORA/pull/46
 - شاخه کاری: fix/public-home-optional-auth
-- HEAD شاخه در شروع این بررسی: 4a588219a8ad9ae50a7bc205bbbb984f93180420
+- Commit کاندید تأییدشده برای این بررسی: `633f5ffe4ffa9e18f764c870614135dd7d0dcd49` (PR head)
 - Base/شاخه مقصد: main، SHA هنگام بررسی: ead6a400347314f16303520bc016fb988fd621de
 - وضعیت PR: باز، ادغام‌نشده و mergeable طبق API؛ تأیید انسانی و وضعیت کامل branch protection از اتصال فعلی قابل اثبات نیست.
-- تغییر این سند روی همان شاخه یک Commit مستندات ایجاد می‌کند؛ پس از آن باید SHA جدید شاخه و CI تازه دوباره خوانده شود.
+- CI و تست‌ها در ادامه این سند برای Commit کاندید بالا بررسی شده‌اند؛ تغییر این سند پس از آن فقط مستنداتی است و نباید به‌عنوان تغییر برنامه تلقی شود.
 
 ## فهرست اجرایی یکتا
 
 | شناسه | وضعیت | شواهد فعلی | اقدام بعدی و معیار پایان |
 |---|---|---|---|
 | REL-01 | VERIFIED | PR #46 باز و mergeable؛ SHA بالا | پس از تغییر مستندات، HEAD و وضعیت PR/CI را دوباره ثبت کن؛ merge فقط بعد از عبور دروازه‌ها |
-| CI-01 | VERIFIED | CI run [40162438526](https://github.com/gavad54/LEADORA/actions/runs/40162438526) موفق روی SHA 4a588... | اجرای تازه پس از Commit مستندات را بررسی کن؛ همه required checks باید روی کاندید نهایی موفق باشند |
-| SEC-01 | VERIFIED | Regression & Security run [40162438515](https://github.com/gavad54/LEADORA/actions/runs/40162438515) موفق روی SHA 4a588... | نتایج را پس از تغییر کد مرتبط دوباره اجرا کن؛ تأیید مستقل امنیتی/نفوذ هنوز انجام‌شده محسوب نمی‌شود |
-| APK-01 | VERIFIED | Android workflow [40162438567](https://github.com/gavad54/LEADORA/actions/runs/40162438567) موفق؛ Artifact ID 12587320566 موجود و منقضی نشده | APK موجود آزمایشی است؛ نصب/اجرای واقعی و تست گردش‌های اصلی هنوز لازم است |
-| APK-02 | BLOCKED | APK com.leadora.app، version 1.0.0، versionCode=1، debug/debbugable؛ SHA-256 گزارش‌شده 7c1d8827187eba5f71fb91eeb5098dd402ef30498fdec67753594431c04838e8؛ workflow امضای release در .github/workflows/android-release.yml وجود دارد | اجرای workflow فقط پس از تأیید مالکیت کلید و وجود امن Secrets لازم؛ نصب/اجرای واقعی APK نیز لازم است؛ وجود workflow به معنی وجود secrets یا امضای موفق نیست |
+| CI-01 | VERIFIED | [CI run 40164048187](https://github.com/gavad54/LEADORA/actions/runs/40164048187) موفق روی PR head `633f5ffe...`; pytest: 107 passed; Node syntax checks و Docker image build نیز موفق | پس از هر تغییر کد مرتبط، کنترل‌های لازم روی SHA جدید اجرا شوند |
+| SEC-01 | VERIFIED | [Regression & Security run 40164048177](https://github.com/gavad54/LEADORA/actions/runs/40164048177) موفق روی PR head `633f5ffe...`; pytest: 107 passed, یک هشدار deprecation از Starlette/httpx | بررسی امنیتی مستقل/نفوذ جداگانه انجام نشده است؛ هشدار وابستگی برای رسیدگی غیرمسدودکننده ثبت شود |
+| APK-01 | VERIFIED | [Android workflow 40164048176](https://github.com/gavad54/LEADORA/actions/runs/40164048176) موفق روی PR head `633f5ffe...`; Artifact ID `12587133683`, expires 2026-11-24 | Build و apksigner verification موفق‌اند؛ APK آزمایشی است و نصب/اجرای واقعی هنوز لازم است |
+| APK-02 | BLOCKED | APK `com.leadora.app`, `versionName=1.0.0`, `versionCode=1`, `minSdk=23`, `targetSdk=35`, `debuggable`; source commit داخل build metadata: `661f1a55456962b0d228e2551a4f898ca88012cb` (synthetic PR merge); APK SHA-256 `d1411ab956a4c9856c64a75a24313c533a619480d8bb0de858d749e22f3736ea`; ZIP SHA-256 `f0eb5a472794d4e39bfd77bd21998178feca2b606c16e32a78f63edf83b84636` | نصب/اجرای واقعی مسدود است: این محیط `adb` و `emulator` ندارد. Release signing workflow موجود است اما secrets/کلید مجاز و اجرای Release تأیید نشده‌اند |
 | DB-01 | BLOCKED | Railway Volume leadora-data، ID 18cb4cf3-8061-43d6-94d7-170d7f043704، mount /data، حجم 500 MB؛ هیچ فایل backup مستقل و restore ایزوله با ابزار فعلی تأیید نشده | از مسیر مجاز میزبان یک backup خارج از Volume تولید تهیه/شناسایی کن؛ در محیط جداگانه restore و schema، رکوردها و فایل‌ها را اعتبارسنجی کن؛ شناسه backup و نتیجه restore را ثبت کن |
-| OPS-01 | VERIFIED | Railway production service leadora-web آنلاین، یک replica، بدون failure/warning ثبت‌شده در وضعیت فعلی؛ آمار 24 ساعت: 27 پاسخ 2xx و 0 پاسخ 5xx | این فقط سیگنال سلامت پایه است؛ آزمون endpointها و پذیرش end-to-end روی نسخه هدف هنوز لازم است |
+| OPS-01 | VERIFIED | Railway production `leadora-web` آنلاین، یک replica، صفر failure/warning ثبت‌شده؛ متریک آخرین 24 ساعت: 29 پاسخ 2xx و صفر 4xx/5xx؛ لاگ آخرین مشاهده `/api/health` برابر 200 در 2026-10-25 | این فقط سلامت پایه نسخه فعلی را نشان می‌دهد؛ نسخه PR در Production مستقر نیست و پذیرش end-to-end آن انجام نشده است |
 | OPS-02 | IN_PROGRESS | آخرین Deploy موفق ID 224694ef-5e27-42e8-bc8c-ac1d0975a7d2 روی SHA 4b9ba54f594f6a90f53656333880f805fe8a8028، branch main؛ زمان 2026-10-21T05:13:12Z | قبل از انتشار، منبع پیکربندی‌شده و Commit فعال را در پنل/ابزار تأیید کن؛ اختلاف SHA پیکربندی‌شده و Deploy را رفع ابهام کن |
 | OPS-03 | BLOCKED | پیکربندی سرویس Railway، source branch=main و source commit SHA گزارش‌شده 7d92398a8e8e9b457fdfbf5f4dd1b75250506df7؛ آخرین Deploy موفق روی SHA متفاوت 4b9ba... | Auto Deploy، Wait for CI و روش rollback را از پنل تأیید کن؛ هیچ deploy تولیدی در این مرحله اجرا نشود |
 | FIN-01 | IN_PROGRESS | PR مسیرهای عملیاتی مشارکت مالی مالک را بازنشسته می‌کند؛ ستون‌ها/داده تاریخی حذف نشده‌اند؛ ورودی‌های جدید بخش‌های اصلاح‌شده به IRR محدود شده‌اند | پیش از تبدیل داده تاریخی، واحد واقعی و منشأ هر فیلد را مشخص کن؛ مبالغ تاریخی فاقد currency نباید حدسی تبدیل شوند |
@@ -36,7 +36,7 @@
 - Regression & Security: [40162438515](https://github.com/gavad54/LEADORA/actions/runs/40162438515) — موفق روی همان SHA.
 - Android test APK: [40162438567](https://github.com/gavad54/LEADORA/actions/runs/40162438567) — موفق روی همان SHA شاخه؛ Build از merge-candidate موقت 151c4a4b366ab67028c228ebd11ecddd375fbb5e انجام شده، نه از SHA خام شاخه.
 - Artifact فعلی: [GitHub Actions Artifact](https://github.com/gavad54/LEADORA/actions/runs/40162438567/artifacts/12587320566)؛ ZIP SHA-256: 43fe316b570c1cd053a7e9cd334045edbc73c48e94f7036ac20ab5c322f79093؛ انقضای گزارش‌شده 2026-11-24T04:36:24Z.
-- APK debug/test است؛ امضای تجاری، نصب واقعی، اجرای صفحه اصلی و آزمون end-to-end هنوز تأیید نشده‌اند.
+- APK debug/test است؛ `apksigner verify --verbose` در CI موفق بوده، اما نصب واقعی، اجرای صفحه اصلی و آزمون end-to-end هنوز تأیید نشده‌اند. Log build هشدارهای deprecation در Gradle/Node را نیز دارد؛ شکست Build گزارش نشده است.
 - Workflow امضای تجاری در `.github/workflows/android-release.yml` موجود است و اجرای دستی می‌خواهد؛ وجود و صحت Secrets کلید امضا از اتصال فعلی قابل بررسی نیست. Workflow در صورت نبود Secrets باید متوقف شود؛ هیچ کلید یا secretی ساخته/تغییر داده نشده است.
 
 ## وضعیت Railway و داده
@@ -55,8 +55,8 @@
 1. پس از Commit این سند، SHA جدید شاخه و وضعیت CI را دوباره ثبت کن.
 2. از پنل/مسیر مجاز Railway یا میزبان، backup مستقل داده را شناسایی/تهیه و در محیط جدا restore کن؛ هیچ آزمایشی روی داده زنده انجام نده.
 3. آزمون پذیرش end-to-end و بررسی امنیتی را روی کاندید مشخص انجام بده.
-4. APK را روی دستگاه/emulator نصب و اجرا کن؛ workflow موجود `.github/workflows/android-release.yml` را فقط پس از تأیید کلید مجاز و Secrets امن اجرا کن، سپس گواهی و SHA-256 را بررسی کن.
+4. محیط آزمون Android با `adb` یا emulator راه‌اندازی شود و APK موجود نصب/اجرا شود؛ سپس فقط با کلید مجاز و Secrets تأییدشده workflow `.github/workflows/android-release.yml` اجرا شود.
 5. اختلاف source/deploy و Auto Deploy/Wait for CI را رفع ابهام کن؛ rollback را پیش از انتشار مستند کن.
 6. فقط پس از تکمیل تمام دروازه‌های حیاتی، دریافت تأییدهای الزامی و بررسی مجدد Commit، ادغام و انتشار کنترل‌شده را انجام بده.
 
-**محدودیت ابزار:** اتصال فعلی Railway امکان مشاهده مستقیم فایل‌های داخل /data یا اجرای امن فرمان backup/restore داخل کانتینر را در اختیار این جریان قرار نداده است. به همین دلیل، وجود Volume به‌عنوان backup تأیید نشده و هیچ ادعای restore موفق ثبت نشده است.
+**محدودیت‌های واقعی:** اتصال Railway امکان خواندن مستقیم `/data` یا اجرای امن backup/restore داخل کانتینر را ندارد؛ بنابراین Backup مستقل و restore ایزوله هنوز اثبات نشده‌اند. محیط اجرای فعلی نیز `adb` و Android emulator ندارد؛ در نتیجه نصب/اجرای APK مسدود است. ابزار Railway، Volume را نشان می‌دهد اما این Volume پشتیبان مستقل محسوب نمی‌شود. هیچ داده یا Volume تولیدی حذف یا بازنویسی نشده است.
