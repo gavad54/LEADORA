@@ -64,6 +64,7 @@ jobs:
             # Use POSIX shell options; each pipeline's final grep is the explicit assertion,
             # and commands whose failures matter are checked directly with -e.
             set -eu
+            cd "$GITHUB_WORKSPACE"
             APK="$(find "$GITHUB_WORKSPACE" -type f -path "*/build/outputs/apk/debug/*.apk" -print -quit)"
             test -n "$APK" || { echo "ERROR: Gradle debug APK not found under $GITHUB_WORKSPACE"; exit 1; }
             mkdir -p "$GITHUB_WORKSPACE/release"
