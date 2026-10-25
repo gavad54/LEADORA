@@ -48,7 +48,7 @@ jobs:
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
       - name: Build installable APK
         working-directory: android
-        run: gradle --no-daemon --stacktrace assembleDebug
+        run: gradle --no-daemon --stacktrace assembleDebug && mkdir -p ../release && cp app/build/outputs/apk/debug/app-debug.apk ../release/LEADORA-Android.apk
       - name: Install and launch APK on Android emulator
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
@@ -65,8 +65,8 @@ jobs:
             # and commands whose failures matter are checked directly with -e.
             set -eu
             cd "$GITHUB_WORKSPACE"
-            APK="$(find "$GITHUB_WORKSPACE" -type f -path "*/build/outputs/apk/debug/*.apk" -print -quit)"
-            test -n "$APK" || { echo "ERROR: Gradle debug APK not found under $GITHUB_WORKSPACE"; exit 1; }
+            APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
+            test -s "$APK" || { echo "ERROR: staged APK missing before emulator install"; exit 1; }
             mkdir -p "$GITHUB_WORKSPACE/release"
             test -s "$APK"
             # Verify the public production API and Persian RTL landing contract from the runner.
@@ -112,12 +112,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="$(find "$GITHUB_WORKSPACE" -type f -path "*/build/outputs/apk/debug/*.apk" -print -quit)"
-          test -n "$APK" || { echo "ERROR: Gradle debug APK not found under $GITHUB_WORKSPACE"; exit 1; }
+          APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
-          test -s "$APK"
+          test -s "$APK" || { echo "ERROR: staged APK missing during verification"; exit 1; }
           mkdir -p release
-          cp "$APK" release/LEADORA-Android.apk
           # Verify the package signature and parse the binary manifest instead of
           # treating a successful Gradle task or a non-empty file as sufficient.
           "$BUILD_TOOLS/apksigner" verify --verbose release/LEADORA-Android.apk
