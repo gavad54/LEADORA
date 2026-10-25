@@ -64,8 +64,11 @@ jobs:
             # Use POSIX shell options; each pipeline's final grep is the explicit assertion,
             # and commands whose failures matter are checked directly with -e.
             set -eu
-            cd "$GITHUB_WORKSPACE"
-            APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
+            # The emulator action executes this script inside its Docker container.
+            # The runner's host path is not mounted at the same absolute path there;
+            # the workspace is mounted at /github/workspace.
+            cd /github/workspace
+            APK="/github/workspace/release/LEADORA-Android.apk"
             test -s "$APK" || { echo "ERROR: staged APK missing before emulator install"; exit 1; }
             mkdir -p "$GITHUB_WORKSPACE/release"
             test -s "$APK"
