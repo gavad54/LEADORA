@@ -48,6 +48,47 @@ jobs:
       - name: Build installable APK
         working-directory: android
         run: gradle --no-daemon --stacktrace assembleDebug
+      - name: Install and launch APK on Android emulator
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            set -euo pipefail
+            APK="android/app/build/outputs/apk/debug/app-debug.apk"
+            mkdir -p release
+            test -s "$APK"
+            adb wait-for-device
+            adb shell getprop sys.boot_completed | grep -q 1
+            adb install "$APK"
+            adb shell pm path com.leadora.app
+            adb shell am force-stop com.leadora.app
+            adb logcat -c
+            adb shell monkey -p com.leadora.app 1
+            # Allow the WebView to load the public landing page over HTTPS.
+            for attempt in $(seq 1 12); do
+              sleep 5
+              adb shell uiautomator dump /sdcard/leadora-window.xml >/dev/null 2>&1 || true
+              adb pull /sdcard/leadora-window.xml release/android-emulator-window.xml >/dev/null 2>&1 || true
+              if [ -s release/android-emulator-window.xml ] && grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml && grep -q 'کسب‌وکار خود را' release/android-emulator-window.xml; then
+                break
+              fi
+            done
+            test -s release/android-emulator-window.xml
+            grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml
+            grep -q 'کسب‌وکار خود را' release/android-emulator-window.xml
+            adb exec-out screencap -p > release/android-emulator-home.png
+            # Keep only crash evidence; do not publish full device logs.
+            adb logcat -d -t 5000 -s AndroidRuntime:E > /tmp/leadora-android-runtime-errors.txt
+            if grep -q 'FATAL EXCEPTION' /tmp/leadora-android-runtime-errors.txt; then
+              cat /tmp/leadora-android-runtime-errors.txt
+              exit 1
+            fi
+            printf 'result=PASS\npackage=com.leadora.app\napi_level=35\nchecks=install,launch,public_home,login_cta,no_fatal_exception\n' > release/android-emulator-smoke.txt
       - name: Verify and prepare APK
         shell: bash
         run: |
@@ -69,7 +110,7 @@ jobs:
           sha256sum release/LEADORA-Android.apk > release/LEADORA-Android.apk.sha256
           file release/LEADORA-Android.apk
           cat release/LEADORA-Android-build-info.txt
-      - name: Upload build artifact
+      - name: Upload build and emulator evidence
         uses: actions/upload-artifact@v4
         with:
           name: LEADORA-Android-APK
