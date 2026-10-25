@@ -3,7 +3,7 @@ name: Build LEADORA Android test APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, fix/public-home-optional-auth]
+    branches: [main]
     paths:
       - "android/**"
       - "app/**"
@@ -22,6 +22,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
