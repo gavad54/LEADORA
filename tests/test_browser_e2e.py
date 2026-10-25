@@ -63,13 +63,16 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page.on("pageerror", lambda error: browser_errors.append(str(error)))
         page.goto(live_app, wait_until="networkidle")
         assert page.locator("#view-dashboard").is_visible()
-        assert page.locator("#authOverlay").is_visible()
-        assert page.get_by_text("به فضای کاری خود خوش آمدید").is_visible()
+        assert page.locator("#authOverlay").is_hidden()
+        assert page.get_by_text("نمای کلی").is_visible()
 
-        # Refreshing while unauthenticated must never dismiss the sign-in overlay.
+        # An unauthenticated visit and refresh must show the dashboard, not a forced login overlay.
         page.reload(wait_until="networkidle")
-        assert page.locator("#authOverlay").is_visible()
+        assert page.locator("#view-dashboard").is_visible()
+        assert page.locator("#authOverlay").is_hidden()
 
+        page.locator("#authOpenBtn").click()
+        assert page.locator("#authOverlay").is_visible()
         page.locator('[data-auth-mode="register"]').click()
         page.locator("#company").fill(company)
         page.locator("#industry").fill("retail")
