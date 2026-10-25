@@ -1,79 +1,61 @@
-# LEADORA — وضعیت انتشار و شواهد اجرایی
+# LEADORA — وضعیت اجرایی انتشار و نقطه ادامه
 
-**وضعیت: تکمیل‌شده با محدودیت؛ تحویل تجاری کامل تأیید نشده است.**  
-آخرین بررسی: 2026-10-24
+**وضعیت کلی: مسدود برای انتشار تجاری تا تکمیل دروازه‌های حیاتی.**  
+**آخرین بررسی شواهد:** 2026-10-25  
+**قاعده:** وضعیت VERIFIED فقط برای شواهدی است که در همین بازبینی یا اجرای مشخص CI قابل مشاهده بوده‌اند؛ موفقیت Build به معنی نصب/اجرای واقعی یا آمادگی تجاری نیست.
 
-## مخزن، PR و اعتبارسنجی
+## نقطه ادامه فعلی
 
 - مخزن: https://github.com/gavad54/LEADORA
-- PR شماره 46: https://github.com/gavad54/LEADORA/pull/46
-- وضعیت فعلی PR: باز، ادغام‌نشده و بدون تعارض ادغام گزارش‌شده.
-- شاخه: `fix/public-home-optional-auth`
-- Commit فعلی شاخه: `d35e7e8cc83069b1f34bee945dda46b5010ebec0`
-- شاخه مقصد: `main`; Commit مبنای PR: `7d92398a8e8e9b457fdfbf5f4dd1b75250506df7`
-- GitHub Actions در 2026-10-24 سه اجرای مرتبط با کاندید ادغام گزارش کرد:
-  - [رگرسیون و امنیت، اجرا 40116487985](https://github.com/gavad54/LEADORA/actions/runs/40116487985): `106 passed, 1 warning` در 21.31 ثانیه؛ هشدار deprecation مربوط به ترکیب TestClient/Starlette و httpx است.
-  - [CI، اجرا 40116488028](https://github.com/gavad54/LEADORA/actions/runs/40116488028): موفق؛ شامل compile پایتون، pytest، بررسی‌های JavaScript/PWA، Compose و ساخت Docker.
-  - [ساخت APK آزمایشی، اجرا 40116487963](https://github.com/gavad54/LEADORA/actions/runs/40116487963): `assembleDebug` موفق و artifact بارگذاری شده.
-- لاگ این اجراها checkout را روی merge-candidate موقت PR با SHA `dd423368d4cf9769d5262f183682af4ba845c1df` نشان می‌دهد. این SHA را با Commit شاخه PR اشتباه نگیرید؛ این نتیجه CI کاندید ادغام است.
+- PR مرجع: https://github.com/gavad54/LEADORA/pull/46
+- شاخه کاری: fix/public-home-optional-auth
+- HEAD شاخه در شروع این بررسی: 4a588219a8ad9ae50a7bc205bbbb984f93180420
+- Base/شاخه مقصد: main، SHA هنگام بررسی: ead6a400347314f16303520bc016fb988fd621de
+- وضعیت PR: باز، ادغام‌نشده و mergeable طبق API؛ تأیید انسانی و وضعیت کامل branch protection از اتصال فعلی قابل اثبات نیست.
+- تغییر این سند روی همان شاخه یک Commit مستندات ایجاد می‌کند؛ پس از آن باید SHA جدید شاخه و CI تازه دوباره خوانده شود.
 
-## APK آزمایشی
+## فهرست اجرایی یکتا
 
-- Artifact: [دانلود artifact از GitHub Actions](https://github.com/gavad54/LEADORA/actions/runs/40116487963/artifacts/12569310227)
-- شناسه بسته: `com.leadora.app`
-- نسخه: `1.0.0`, versionCode `1`
-- حداقل SDK: 23؛ target/compile SDK: 35
-- حجم APK: 13,514 بایت
-- Commit ثبت‌شده در build info: `dd423368d4cf9769d5262f183682af4ba845c1df` (merge-candidate)
-- SHA-256: `dfb3b7eecb182f7b346fd88fac3098f21e69160859ae705ea086fb8b1fb87a7a`
-- APK `debuggable` و debug-signed است؛ بنابراین artifact آزمایشی است، نه نسخه تجاری release. نصب/اجرای آن روی دستگاه یا شبیه‌ساز در این بررسی انجام نشده است.
+| شناسه | وضعیت | شواهد فعلی | اقدام بعدی و معیار پایان |
+|---|---|---|---|
+| REL-01 | VERIFIED | PR #46 باز و mergeable؛ SHA بالا | پس از تغییر مستندات، HEAD و وضعیت PR/CI را دوباره ثبت کن؛ merge فقط بعد از عبور دروازه‌ها |
+| CI-01 | VERIFIED | CI run [40162438526](https://github.com/gavad54/LEADORA/actions/runs/40162438526) موفق روی SHA 4a588... | اجرای تازه پس از Commit مستندات را بررسی کن؛ همه required checks باید روی کاندید نهایی موفق باشند |
+| SEC-01 | VERIFIED | Regression & Security run [40162438515](https://github.com/gavad54/LEADORA/actions/runs/40162438515) موفق روی SHA 4a588... | نتایج را پس از تغییر کد مرتبط دوباره اجرا کن؛ تأیید مستقل امنیتی/نفوذ هنوز انجام‌شده محسوب نمی‌شود |
+| APK-01 | VERIFIED | Android workflow [40162438567](https://github.com/gavad54/LEADORA/actions/runs/40162438567) موفق؛ Artifact ID 12587320566 موجود و منقضی نشده | APK موجود آزمایشی است؛ نصب/اجرای واقعی و تست گردش‌های اصلی هنوز لازم است |
+| APK-02 | BLOCKED | APK com.leadora.app، version 1.0.0، versionCode=1، debug/debbugable؛ SHA-256 گزارش‌شده 7c1d8827187eba5f71fb91eeb5098dd402ef30498fdec67753594431c04838e8 | روی دستگاه یا emulator نصب و اجرا کن؛ اگر مسیر واقعی در دسترس نیست، مانع را باز نگه دار؛ برای انتشار تجاری کلید مجاز و امضای release لازم است |
+| DB-01 | BLOCKED | Railway Volume leadora-data، ID 18cb4cf3-8061-43d6-94d7-170d7f043704، mount /data، حجم 500 MB؛ هیچ فایل backup مستقل و restore ایزوله با ابزار فعلی تأیید نشده | از مسیر مجاز میزبان یک backup خارج از Volume تولید تهیه/شناسایی کن؛ در محیط جداگانه restore و schema، رکوردها و فایل‌ها را اعتبارسنجی کن؛ شناسه backup و نتیجه restore را ثبت کن |
+| OPS-01 | VERIFIED | Railway production service leadora-web آنلاین، یک replica، بدون failure/warning ثبت‌شده در وضعیت فعلی؛ آمار 24 ساعت: 27 پاسخ 2xx و 0 پاسخ 5xx | این فقط سیگنال سلامت پایه است؛ آزمون endpointها و پذیرش end-to-end روی نسخه هدف هنوز لازم است |
+| OPS-02 | IN_PROGRESS | آخرین Deploy موفق ID 224694ef-5e27-42e8-bc8c-ac1d0975a7d2 روی SHA 4b9ba54f594f6a90f53656333880f805fe8a8028، branch main؛ زمان 2026-10-21T05:13:12Z | قبل از انتشار، منبع پیکربندی‌شده و Commit فعال را در پنل/ابزار تأیید کن؛ اختلاف SHA پیکربندی‌شده و Deploy را رفع ابهام کن |
+| OPS-03 | BLOCKED | پیکربندی سرویس Railway، source branch=main و source commit SHA گزارش‌شده 7d92398a8e8e9b457fdfbf5f4dd1b75250506df7؛ آخرین Deploy موفق روی SHA متفاوت 4b9ba... | Auto Deploy، Wait for CI و روش rollback را از پنل تأیید کن؛ هیچ deploy تولیدی در این مرحله اجرا نشود |
+| FIN-01 | IN_PROGRESS | PR مسیرهای عملیاتی مشارکت مالی مالک را بازنشسته می‌کند؛ ستون‌ها/داده تاریخی حذف نشده‌اند؛ ورودی‌های جدید بخش‌های اصلاح‌شده به IRR محدود شده‌اند | پیش از تبدیل داده تاریخی، واحد واقعی و منشأ هر فیلد را مشخص کن؛ مبالغ تاریخی فاقد currency نباید حدسی تبدیل شوند |
+| REL-02 | BLOCKED | قواعد branch protection از API متصل قابل خواندن نبود (403)؛ endpoint rulesets پاسخ فهرست خالی داد، اما این به‌تنهایی همه سیاست‌های تأیید را اثبات نمی‌کند | در صورت الزام سیاست مخزن، تأیید انسانی را دریافت کن؛ هیچ کنترل اجباری دور زده نشود |
 
-## Railway و وب زنده
+## شواهد CI و APK
 
-- پروژه: `LEADORA`; سرویس: `leadora-web`; محیط: `production`
-- وب: https://leadora-web-production.up.railway.app/
-- Health endpoint: https://leadora-web-production.up.railway.app/api/health
-- Health check پیکربندی‌شده: `/api/health`
-- آخرین استقرار موفق ثبت‌شده: `224694ef-5e27-42e8-bc8c-ac1d0975a7d2`؛ Commit فعال `4b9ba54f594f6a90f53656333880f805fe8a8028` از شاخه `main`، زمان استقرار 2026-10-21.
-- تنظیم منبع سرویس به `gavad54/LEADORA` و شاخه `main` متصل است؛ مقدار Commit پیکربندی‌شده `7d92398a8e8e9b457fdfbf5f4dd1b75250506df7` گزارش شده است. Commit آخرین استقرار با آن یکسان نیست.
-- Volume زنده `leadora-data` با ظرفیت 500 MB به `/data` متصل است؛ هیچ تغییر staged در محیط تولید مشاهده نشد.
-- لاگ‌های HTTP شامل پاسخ `200` برای `/`, `/api/health`, `/service-worker.js`, `/manifest.webmanifest` و assetهای اصلی در بازه ثبت‌شده هستند. این مدرک پاسخ‌گویی مسیرهاست، نه آزمون کامل کارکردهای محصول.
-- وضعیت دقیق Auto Deploy و گزینه Wait for CI از پیکربندی قابل مشاهده ابزار اثبات نشده است؛ هیچ تغییر تولیدی برای آزمون این رفتار انجام نشده است.
+- LEADORA CI: [40162438526](https://github.com/gavad54/LEADORA/actions/runs/40162438526) — موفق روی SHA 4a588219a8ad9ae50a7bc205bbbb984f93180420.
+- Regression & Security: [40162438515](https://github.com/gavad54/LEADORA/actions/runs/40162438515) — موفق روی همان SHA.
+- Android test APK: [40162438567](https://github.com/gavad54/LEADORA/actions/runs/40162438567) — موفق روی همان SHA شاخه؛ Build از merge-candidate موقت 151c4a4b366ab67028c228ebd11ecddd375fbb5e انجام شده، نه از SHA خام شاخه.
+- Artifact فعلی: [GitHub Actions Artifact](https://github.com/gavad54/LEADORA/actions/runs/40162438567/artifacts/12587320566)؛ ZIP SHA-256: 43fe316b570c1cd053a7e9cd334045edbc73c48e94f7036ac20ab5c322f79093؛ انقضای گزارش‌شده 2026-11-24T04:36:24Z.
+- APK debug/test است؛ امضای تجاری، نصب واقعی، اجرای صفحه اصلی و آزمون end-to-end هنوز تأیید نشده‌اند.
 
-## وضعیت قابلیت‌های محصول
+## وضعیت Railway و داده
 
-### مشارکت مالی مالک
-شاخه PR مسیرهای عملیاتی مرتبط با قرارداد، نمای کلی مالک و تسویه را بازنشسته می‌کند و آزمون‌های رگرسیون مرتبط دارد. داده‌ها و ستون‌های تاریخی به‌صورت مخرب حذف نشده‌اند. تا ادغام و انتشار کنترل‌شده، تغییرات PR در تولید فعال نشده‌اند.
+- Production URL: https://leadora-web-production.up.railway.app/
+- Health URL: https://leadora-web-production.up.railway.app/api/health
+- Service ID: 13aa3d75-48b6-4ad1-8064-a7846ffe6739
+- Environment ID: c3587e3a-9ff5-4749-bd91-2afdda4d5f77
+- Active successful deployment: 224694ef-5e27-42e8-bc8c-ac1d0975a7d2, SHA 4b9ba54f594f6a90f53656333880f805fe8a8028.
+- Volume تولید حفظ شده است؛ هیچ Volume یا داده‌ای حذف یا بازنویسی نشده است.
+- نام متغیرهای محرمانه فقط برای بررسی پیکربندی مشاهده شد؛ مقادیر secret در این سند درج نمی‌شوند.
+- شاخه backup/pre-reinstall-2026-10-24 یک نقطه بازیابی کد در SHA 7d92398a8e8e9b457fdfbf5f4dd1b75250506df7 است، نه مدرک backup پایگاه داده تولید.
 
-### واحد پول
-ورودی‌های جدید ماژول گزارش مالی به `IRR` محدود شده‌اند. بااین‌حال، قیمت‌های کاتالوگ فاقد نشانگر واحد پول هستند و بعضی مبالغ در SQLite از نوع `REAL` هستند؛ یکسان‌سازی کامل همه مبالغ محصول هنوز اثبات نشده است. داده‌های قدیمی نباید بدون شناسایی واحد واقعی تبدیل شوند.
+## ترتیب ادامه
 
-### پشتیبان و بازیابی
-در آخرین بررسی، فایل پشتیبان مستقل از Volume تولید و restore موفق در محیط ایزوله با بررسی صحت داده‌ها اثبات نشده است. Railway مستندات رسمی برای تهیه و بازیابی backup از پنل سرویس ارائه می‌کند، اما این ابزار متصل امکان فهرست‌کردن یا بازیابی backupهای Volume را نداشت و فایل `/data` را مستقیماً در اختیار نمی‌گذارد. هیچ داده یا Volume تولیدی حذف یا بازنویسی نشده است.
+1. پس از Commit این سند، SHA جدید شاخه و وضعیت CI را دوباره ثبت کن.
+2. از پنل/مسیر مجاز Railway یا میزبان، backup مستقل داده را شناسایی/تهیه و در محیط جدا restore کن؛ هیچ آزمایشی روی داده زنده انجام نده.
+3. آزمون پذیرش end-to-end و بررسی امنیتی را روی کاندید مشخص انجام بده.
+4. APK را روی دستگاه/emulator نصب و اجرا کن؛ سپس در صورت وجود کلید مجاز، release را امضا و گواهی را بررسی کن.
+5. اختلاف source/deploy و Auto Deploy/Wait for CI را رفع ابهام کن؛ rollback را پیش از انتشار مستند کن.
+6. فقط پس از تکمیل تمام دروازه‌های حیاتی، دریافت تأییدهای الزامی و بررسی مجدد Commit، ادغام و انتشار کنترل‌شده را انجام بده.
 
-### امنیت و عملیات
-- نام متغیرهای حساس در Railway وجود دارد، اما مقادیر آن‌ها در این گزارش افشا نمی‌شوند.
-- ارزیابی مستقل امنیت یا آزمون نفوذ به‌عنوان انجام‌شده ادعا نمی‌شود.
-- APK پوسته Android مبتنی بر WebView است و به اینترنت و سایت زنده نیاز دارد؛ اجرای مستقل آفلاین تأیید نشده است.
-
-## موانع باقی‌مانده پیش از تحویل تجاری
-
-1. تهیه/تأیید backup واقعی و مستقل و انجام restore ایزوله همراه با بررسی داده‌ها.
-2. تأیید وضعیت Auto Deploy و Wait for CI در پنل Railway؛ تطبیق Commit تولید پیش از انتشار.
-3. تکمیل و آزمون راهکار IRR سراسری برای کاتالوگ و دیگر مسیرهای مالی، بدون تبدیل حدسی داده‌های تاریخی.
-4. آزمون پذیرش end-to-end گردش‌های کلیدی سایت زنده با حساب و داده آزمایشی.
-5. نصب و اجرای APK روی شبیه‌ساز/دستگاه؛ ساخت و امضای release با کلید امن برای انتشار تجاری.
-6. بررسی نهایی تنظیمات امنیتی و دسترسی‌ها در پنل امن میزبان.
-
-## اجرای توسعه
-
-Python 3.12+:
-
-```bash
-pip install -r requirements.txt
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-در تولید، `LEADORA_ENV=production`، `LEADORA_SECRET` تصادفی و امن با حداقل 32 نویسه و `LEADORA_DB=/data/leadora.db` باید در تنظیمات امن میزبان بررسی شوند. Secretها را در مخزن، گزارش عمومی یا گفت‌وگو قرار ندهید.
-
-**قاعده تحویل:** سبز بودن CI، پاسخ 200 یا وجود APK به‌تنهایی معادل تحویل تجاری کامل نیست.
+**محدودیت ابزار:** اتصال فعلی Railway امکان مشاهده مستقیم فایل‌های داخل /data یا اجرای امن فرمان backup/restore داخل کانتینر را در اختیار این جریان قرار نداده است. به همین دلیل، وجود Volume به‌عنوان backup تأیید نشده و هیچ ادعای restore موفق ثبت نشده است.
