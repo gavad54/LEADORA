@@ -1,3 +1,21 @@
+# افزوده وضعیت جاری — 2026-10-25T12:30Z
+
+## آخرین اقدام و مانع با شواهد
+
+- آخرین Commit کد/Workflow: `e5c48ba371667c1f5ddd443a798c740f26f7e3c4`.
+- علت شکست اجرای Android قبلی مشخص شد: فایل APK در مرحله Docker-based emulator action از مسیر `/github/workspace/release/LEADORA-Android.apk` قابل مشاهده نبود، با اینکه Gradle ساخت را با موفقیت تمام کرده بود. این شکست مربوط به مسیر دسترسی Artifact در مرحله تست بود، نه خطای Gradle build.
+- اصلاح اعمال‌شده: اجرای شبیه‌ساز به مرحله shell روی runner مشترک منتقل شد و Android emulator/system image در SDK نصب می‌شود؛ آزمون مجدد [Run 40193228243](https://github.com/gavad54/LEADORA/actions/runs/40193228243) در حال اجراست. هنوز PASS اعلام نشده است.
+- Regression/Security روی `e5c48ba...`: موفق، [Run 40193228274](https://github.com/gavad54/LEADORA/actions/runs/40193228274).
+- CI روی `e5c48ba...`: در حال اجرا، [Run 40193228261](https://github.com/gavad54/LEADORA/actions/runs/40193228261).
+- PR #46 هنوز OPEN و UNMERGED است؛ آخرین SHA بررسی‌شده هنگام این ثبت `e5c48ba...`, base `ead6a400347314f16303520bc016fb988fd621de`.
+- Railway: مجدداً `list_services` و `describe_environment` با خطای `viewer` رد شدند. اتصال با نام کاربری مورد انتظار دیده می‌شود، ولی دسترسی سرویس ندارد؛ ابزارهای موجود امکان تغییر نقش یا تمدید OAuth را ارائه نمی‌کنند. بنابراین deployment، متغیرها، Volume و backup را از این اتصال نمی‌توان بررسی کرد.
+- Production smoke test: از ابزار مرور وب قابل دریافت نبود؛ URL و health endpoint در این مرحله تأیید نشده‌اند.
+- Backup خارج از Volume و Restore مستقل، نصب گوشی واقعی و امضای تجاری همچنان NOT VERIFIED. هیچ DB/Volume پاک یا تغییر داده نشده و deploy انجام نشده است.
+
+## اقدام ضروری برای رفع مانع Railway
+
+مسئول حساب باید اتصال Railway در ChatGPT را با همان حساب صحیح دوباره مجاز کند یا در Railway نقش پروژه را به دسترسی مناسب برای مشاهده/مدیریت سرویس اصلاح کند. این اقدام از ابزار فعلی قابل انجام نیست؛ توکن یا Secret نباید در چت ارسال شود.
+
 # افزوده ممیزی جاری — 2026-10-25T06:40Z
 
 > این بخش خط مبنای جاری است. هر وضعیت قدیمی‌تر در ادامه سند فقط سابقه محسوب می‌شود و در صورت تعارض، این بخش و شواهد زنده GitHub/Railway ملاک‌اند. پس از هر تغییر جدید کد یا تنظیمات، نتایج مربوطه منقضی می‌شوند.
