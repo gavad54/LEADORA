@@ -62,6 +62,18 @@ jobs:
             APK="android/app/build/outputs/apk/debug/app-debug.apk"
             mkdir -p release
             test -s "$APK"
+            # Verify the public production API and Persian RTL landing contract from the runner.
+            curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/api/health" -o /tmp/leadora-health.json
+            python - <<'PY'
+            import json
+            with open("/tmp/leadora-health.json", encoding="utf-8") as f:
+                data = json.load(f)
+            assert data.get("database") == "ok", "public health endpoint did not report database=ok"
+            print("public_api_health=PASS")
+            PY
+            curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/" -o /tmp/leadora-home.html
+            grep -q 'dir="rtl"' /tmp/leadora-home.html
+            grep -q 'ورود / ساخت حساب' /tmp/leadora-home.html
             adb wait-for-device
             adb shell getprop sys.boot_completed | grep -q 1
             adb install "$APK"
