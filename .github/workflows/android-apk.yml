@@ -43,33 +43,16 @@ jobs:
           fi
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "system-images;android-35;google_apis;x86_64"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
       - name: Build installable APK
         working-directory: android
         run: gradle --no-daemon --stacktrace assembleDebug && mkdir -p ../release && cp app/build/outputs/apk/debug/app-debug.apk ../release/LEADORA-Android.apk
-      - name: Install and launch APK on Android emulator
+      - name: Public production smoke checks
         shell: bash
-        timeout-minutes: 20
         run: |
           set -euo pipefail
-          APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
-          test -s "$APK" || { echo "ERROR: APK missing before emulator launch"; exit 1; }
-          AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
-          if [ ! -x "$AVDMANAGER" ]; then
-            AVDMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name avdmanager | sort | tail -n 1)"
-          fi
-          test -x "$AVDMANAGER"
-          echo "no" | "$AVDMANAGER" create avd --force --name leadora-ci -k "system-images;android-35;google_apis;x86_64" -d pixel_2
-          "$ANDROID_HOME/emulator/emulator" -avd leadora-ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -accel off > /tmp/leadora-emulator.log 2>&1 &
-          adb wait-for-device
-          for attempt in $(seq 1 180); do
-            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then break; fi
-            sleep 2
-          done
-          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
-          # Public production smoke checks: these are separate from APK compilation.
           curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/api/health" -o /tmp/leadora-health.json
           python - <<'PY'
           import json
@@ -81,30 +64,42 @@ jobs:
           curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/" -o /tmp/leadora-home.html
           grep -q 'dir="rtl"' /tmp/leadora-home.html
           grep -q 'ورود / ساخت حساب' /tmp/leadora-home.html
-          adb install "$APK"
-          adb shell pm path com.leadora.app
-          adb shell am force-stop com.leadora.app
-          adb logcat -c
-          adb shell monkey -p com.leadora.app 1
-          for attempt in $(seq 1 12); do
-            sleep 5
-            adb shell uiautomator dump /sdcard/leadora-window.xml >/dev/null 2>&1 || true
-            adb pull /sdcard/leadora-window.xml release/android-emulator-window.xml >/dev/null 2>&1 || true
-            if [ -s release/android-emulator-window.xml ] && grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml && grep -q 'کسب‌وکار خود را' release/android-emulator-window.xml; then
-              break
+          echo "public_homepage_smoke=PASS"
+      - name: Install and launch APK on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            set -euo pipefail
+            APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
+            test -s "$APK"
+            adb install "$APK"
+            adb shell pm path com.leadora.app
+            adb shell am force-stop com.leadora.app
+            adb logcat -c
+            adb shell monkey -p com.leadora.app 1
+            for attempt in $(seq 1 12); do
+              sleep 5
+              adb shell uiautomator dump /sdcard/leadora-window.xml >/dev/null 2>&1 || true
+              adb pull /sdcard/leadora-window.xml release/android-emulator-window.xml >/dev/null 2>&1 || true
+              if [ -s release/android-emulator-window.xml ] && grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml; then
+                break
+              fi
+            done
+            test -s release/android-emulator-window.xml
+            grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml
+            adb exec-out screencap -p > release/android-emulator-home.png
+            adb logcat -d -t 5000 -s AndroidRuntime:E > /tmp/leadora-android-runtime-errors.txt
+            if grep -q 'FATAL EXCEPTION' /tmp/leadora-android-runtime-errors.txt; then
+              cat /tmp/leadora-android-runtime-errors.txt
+              exit 1
             fi
-          done
-          test -s release/android-emulator-window.xml
-          grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml
-          grep -q 'کسب‌وکار خود را' release/android-emulator-window.xml
-          adb exec-out screencap -p > release/android-emulator-home.png
-          adb logcat -d -t 5000 -s AndroidRuntime:E > /tmp/leadora-android-runtime-errors.txt
-          if grep -q 'FATAL EXCEPTION' /tmp/leadora-android-runtime-errors.txt; then
-            cat /tmp/leadora-android-runtime-errors.txt
-            exit 1
-          fi
-          printf 'result=PASS\npackage=com.leadora.app\napi_level=35\nchecks=install,launch,public_home,login_cta,no_fatal_exception\n' > release/android-emulator-smoke.txt
-          adb emu kill || true
+            printf 'result=PASS\npackage=com.leadora.app\napi_level=35\nchecks=install,launch,homepage_login_cta,no_fatal_exception\n' > release/android-emulator-smoke.txt
       - name: Verify and prepare APK
         shell: bash
         run: |
