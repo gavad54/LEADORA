@@ -43,7 +43,7 @@ jobs:
           fi
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "system-images;android-35;google_apis;x86_64"
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "system-images;android-34;google_apis;x86_64"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
       - name: Build installable APK
@@ -79,12 +79,12 @@ jobs:
       - name: Install and launch APK on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 34
           arch: x86_64
           profile: pixel_2
           target: google_apis
           disable-animations: true
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader
           script: |
             set -euo pipefail
             APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
@@ -110,7 +110,7 @@ jobs:
               cat /tmp/leadora-android-runtime-errors.txt
               exit 1
             fi
-            printf 'result=PASS\npackage=com.leadora.app\napi_level=35\nchecks=install,launch,homepage_login_cta,no_fatal_exception\n' > release/android-emulator-smoke.txt
+            printf 'result=PASS\npackage=com.leadora.app\napi_level=34\nchecks=install,launch,homepage_login_cta,no_fatal_exception\n' > release/android-emulator-smoke.txt
       - name: Verify and prepare APK
         shell: bash
         run: |
