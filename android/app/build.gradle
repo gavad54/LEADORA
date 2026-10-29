@@ -7,6 +7,13 @@ def releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
 def releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
 
+// Never permit a release task to proceed without an explicitly configured signing key.
+// Debug builds remain available for CI and emulator testing.
+def releaseTaskRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains("releas") }
+if (releaseTaskRequested && !(releaseStorePath && releaseStorePassword && releaseKeyAlias && releaseKeyPassword)) {
+    throw new GradleException("Release signing is not configured. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD using protected CI secrets.")
+}
+
 android {
     namespace 'com.leadora.app'
     compileSdk 35
