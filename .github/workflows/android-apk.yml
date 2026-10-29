@@ -87,7 +87,7 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect -no-metrics
           script: |
             set -euo pipefail
-            APK="${GITHUB_WORKSPACE}/release/LEADORA-Android.apk"
+            APK="${{ github.workspace }}/release/LEADORA-Android.apk"
             test -s "$APK"
             adb install "$APK"
             adb shell pm path com.leadora.app
