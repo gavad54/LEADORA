@@ -9,6 +9,7 @@ from app.instance_config import InstanceConfigurationError, validate_customer_in
 def valid_env(instance_id="customer-alpha"):
     return {
         "LEADORA_INSTANCE_ID": instance_id,
+        "LEADORA_CUSTOMER_REF": "customer-contract-alpha",
         "LEADORA_DATA_DIR": "/data",
         "LEADORA_DB": "/data/leadora.db",
         "LEADORA_BACKUP_DIR": "/data/backups",
