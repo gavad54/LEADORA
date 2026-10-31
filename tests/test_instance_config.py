@@ -10,6 +10,7 @@ def valid_env(instance_id="customer-alpha"):
     return {
         "LEADORA_INSTANCE_ID": instance_id,
         "LEADORA_CUSTOMER_REF": "customer-contract-alpha",
+        "LEADORA_CONTROL_PLANE_URL": "https://control.example.test",
         "LEADORA_DATA_DIR": "/data",
         "LEADORA_DB": "/data/leadora.db",
         "LEADORA_BACKUP_DIR": "/data/backups",
