@@ -586,12 +586,14 @@ def create_app(
         if expires_at is None or expires_at <= issued_at:
             raise HTTPException(422, "تاریخ پایان مجوز باید در آینده و دارای منطقه زمانی باشد.")
         with db() as connection:
-            active = connection.execute(
-                "SELECT 1 FROM control_licenses WHERE instance_id=? AND status='active'",
+            existing_instance = connection.execute(
+                "SELECT customer_ref,status FROM control_licenses WHERE instance_id=? LIMIT 1",
                 (body.instance_id,),
             ).fetchone()
-            if active:
-                raise HTTPException(409, "برای این نصب مجوز فعال وجود دارد؛ ابتدا آن را تمدید یا لغو کنید.")
+            if existing_instance:
+                if existing_instance["customer_ref"] != body.customer_ref.strip():
+                    raise HTTPException(409, "شناسه نصب قبلاً به مشتری دیگری اختصاص یافته و قابل استفاده مجدد نیست.")
+                raise HTTPException(409, "شناسه نصب قبلاً ثبت شده است؛ برای تمدید از مسیر تمدید مجوز استفاده کنید.")
         license_id = "lic_" + secrets.token_urlsafe(18)
         claim = {
             "schema_version": 1,
