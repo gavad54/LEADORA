@@ -185,6 +185,8 @@ def create_app(
                 );
                 CREATE INDEX IF NOT EXISTS control_licenses_instance_idx
                     ON control_licenses(instance_id,status);
+                CREATE UNIQUE INDEX IF NOT EXISTS control_licenses_one_active_per_instance
+                    ON control_licenses(instance_id) WHERE status='active';
                 CREATE TABLE IF NOT EXISTS control_support_contracts(
                     id INTEGER PRIMARY KEY,
                     customer_ref TEXT NOT NULL,
@@ -680,7 +682,7 @@ def create_app(
                 control_public_key(),
                 instance_id,
             )
-        except (ValueError, UnicodeError, LicenseValidationError, json.JSONDecodeError, AttributeError):
+        except (ValueError, UnicodeError, LicenseValidationError, json.JSONDecodeError, AttributeError, IndexError):
             raise HTTPException(401, "توکن مجوز معتبر نیست.")
         token_hash = hashlib.sha256(body.license_token.encode()).hexdigest()
         with db() as connection:
@@ -732,10 +734,12 @@ def create_app(
         except Exception as exc:
             raise HTTPException(503, "کلید امضای مرکز مجوز معتبر نیست.") from exc
         with db() as connection:
-            connection.execute(
+            changed = connection.execute(
                 "UPDATE control_licenses SET status='superseded' WHERE id=? AND status='active'",
                 (license_id,),
             )
+            if changed.rowcount != 1:
+                raise HTTPException(409, "مجوز هم‌زمان تغییر کرده است؛ وضعیت را دوباره بررسی کنید.")
             connection.execute(
                 """INSERT INTO control_licenses(
                     id,instance_id,customer_ref,edition,modules_json,issued_at,expires_at,
