@@ -130,6 +130,10 @@ def test_owner_issues_instance_bound_signed_license_and_can_revoke_it(tmp_path):
     assert verified["status"] == "active"
     assert verified["customer_ref"] == "customer-contract-001"
 
+    synced = client.post("/api/control/licenses/sync", json={"license_token": token})
+    assert synced.status_code == 200, synced.text
+    assert synced.json()["status"] == "active"
+
     wrong_instance = client.post("/api/control/licenses", headers=owner, json={
         "instance_id": "customer-alpha",
         "customer_ref": "different-customer",
@@ -145,6 +149,39 @@ def test_owner_issues_instance_bound_signed_license_and_can_revoke_it(tmp_path):
     assert revoked.status_code == 200
     rows = client.get("/api/control/licenses", headers=owner).json()
     assert rows[0]["status"] == "revoked"
+    revoked_sync = client.post("/api/control/licenses/sync", json={"license_token": token})
+    assert revoked_sync.status_code == 410
+
+
+def test_license_renewal_supersedes_old_signed_token(tmp_path):
+    settings = make_settings()
+    client = TestClient(create_app(tmp_path / "control.sqlite3", settings=settings))
+    owner = owner_headers(client, settings)
+    issued = client.post("/api/control/licenses", headers=owner, json={
+        "instance_id": "customer-renewal",
+        "customer_ref": "customer-contract-renewal",
+        "edition": "business",
+        "modules": ["distribution", "accounting"],
+        "expires_at": "2030-01-01T00:00:00+00:00",
+        "offline_grace_days": 14,
+    })
+    assert issued.status_code == 200, issued.text
+    old_token = issued.json()["license_token"]
+    renewed = client.post(
+        f"/api/control/licenses/{issued.json()['license_id']}/renew",
+        headers=owner,
+        json={"expires_at": "2031-01-01T00:00:00+00:00", "offline_grace_days": 14},
+    )
+    assert renewed.status_code == 200, renewed.text
+    assert renewed.json()["license_id"] != issued.json()["license_id"]
+    assert client.post("/api/control/licenses/sync", json={"license_token": old_token}).status_code == 410
+    new_claim = verify_license_token(
+        renewed.json()["license_token"],
+        settings["LEADORA_LICENSE_PUBLIC_KEY"],
+        "customer-renewal",
+        now=datetime(2029, 1, 1, tzinfo=timezone.utc),
+    )
+    assert new_claim["status"] == "active"
 
 
 def test_control_plane_database_contains_no_customer_business_tables(tmp_path):
