@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import BaseModel, Field
@@ -389,6 +390,19 @@ def create_app(
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
         return response
+
+    @api.get("/")
+    def control_dashboard():
+        return FileResponse(Path(__file__).resolve().parent / "static" / "control-plane.html")
+
+    @api.get("/api/control/me")
+    def who_am_i(user=Depends(current_user)):
+        return {
+            "id": user["id"],
+            "email": user["email"],
+            "role": user["role"],
+            "scopes": user["scopes"],
+        }
 
     @api.get("/api/control/health")
     def health():
