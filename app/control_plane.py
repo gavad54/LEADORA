@@ -105,7 +105,7 @@ def create_app(
     if settings:
         config.update(settings)
     database_path = Path(
-        db_path or config.get("LEADORA_CONTROL_DB", "/control-data/control.sqlite3")
+        db_path or config.get("LEADORA_CONTROL_DB", "/tmp/leadora-control-plane.sqlite3")
     ).expanduser()
     database_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -117,6 +117,11 @@ def create_app(
             raise ControlPlaneConfigurationError("LEADORA_CONTROL_SECRET must contain at least 32 characters")
         if not private_key_b64:
             raise ControlPlaneConfigurationError("control plane signing private key is required")
+        try:
+            if len(base64.b64decode(private_key_b64, validate=True)) != 32:
+                raise ValueError("wrong key length")
+        except (ValueError, base64.binascii.Error) as exc:
+            raise ControlPlaneConfigurationError("control plane signing private key must be a base64 Ed25519 key") from exc
         if not config.get("LEADORA_OWNER_MFA_SECRET"):
             raise ControlPlaneConfigurationError("owner MFA secret is required")
 
@@ -223,12 +228,16 @@ def create_app(
                 raise ControlPlaneConfigurationError("a valid LEADORA_OWNER_EMAIL is required for first owner bootstrap")
             if not _is_persian_keyword(keyword):
                 raise ControlPlaneConfigurationError("owner keyword must be a Persian phrase of at least 8 characters")
-            if not mfa_secret or not _valid_totp(mfa_secret, "000000"):
-                # Validate Base32 shape without accepting a guessed code.
-                try:
-                    base64.b32decode(mfa_secret.upper() + "=" * (-len(mfa_secret) % 8), casefold=True)
-                except (ValueError, base64.binascii.Error) as exc:
-                    raise ControlPlaneConfigurationError("LEADORA_OWNER_MFA_SECRET must be valid Base32") from exc
+            if not mfa_secret:
+                raise ControlPlaneConfigurationError("LEADORA_OWNER_MFA_SECRET is required")
+            try:
+                decoded_mfa = base64.b32decode(
+                    mfa_secret.upper() + "=" * (-len(mfa_secret) % 8), casefold=True
+                )
+                if len(decoded_mfa) < 16:
+                    raise ValueError("MFA secret is too short")
+            except (ValueError, base64.binascii.Error) as exc:
+                raise ControlPlaneConfigurationError("LEADORA_OWNER_MFA_SECRET must be at least 16 bytes of Base32") from exc
             salt, digest = _hash_secret(keyword)
             connection.execute(
                 "INSERT INTO control_users(email,role,scopes_json,salt,secret_hash) VALUES(?,?,?,?,?)",
@@ -453,7 +462,7 @@ def create_app(
     def update_staff(staff_id: int, body: StaffUpdateIn, user=Depends(require_scope("staff:manage"))):
         with db() as connection:
             row = connection.execute(
-                "SELECT id,role,scopes_json FROM control_users WHERE id=? AND role!='owner'",
+                "SELECT id,role,scopes_json,active FROM control_users WHERE id=? AND role!='owner'",
                 (staff_id,),
             ).fetchone()
             if not row:
@@ -464,7 +473,7 @@ def create_app(
                 or not set(scopes).issubset(ALLOWED_SCOPES - {"staff:manage"})
             ):
                 raise HTTPException(422, "دامنه دسترسی کارکنان معتبر نیست.")
-            active = int(row["role"] == "owner") if body.active is None else int(body.active)
+            active = int(row["active"]) if body.active is None else int(body.active)
             connection.execute(
                 "UPDATE control_users SET active=?,scopes_json=? WHERE id=?",
                 (active, json.dumps(scopes), staff_id),
