@@ -608,25 +608,28 @@ def create_app(
             token = sign_license_token(claim, private_key_b64)
         except Exception as exc:
             raise HTTPException(503, "کلید امضای مرکز مجوز تنظیم نشده یا معتبر نیست.") from exc
-        with db() as connection:
-            connection.execute(
-                """INSERT INTO control_licenses(
-                    id,instance_id,customer_ref,edition,modules_json,issued_at,expires_at,
-                    offline_grace_days,token_sha256,status,created_by
-                ) VALUES(?,?,?,?,?,?,?,?,?,'active',?)""",
-                (
-                    license_id,
-                    body.instance_id,
-                    body.customer_ref.strip(),
-                    body.edition.strip(),
-                    json.dumps(modules),
-                    _iso(issued_at),
-                    _iso(expires_at),
-                    body.offline_grace_days,
-                    hashlib.sha256(token.encode()).hexdigest(),
-                    user["id"],
-                ),
-            )
+        try:
+            with db() as connection:
+                connection.execute(
+                    """INSERT INTO control_licenses(
+                        id,instance_id,customer_ref,edition,modules_json,issued_at,expires_at,
+                        offline_grace_days,token_sha256,status,created_by
+                    ) VALUES(?,?,?,?,?,?,?,?,?,'active',?)""",
+                    (
+                        license_id,
+                        body.instance_id,
+                        body.customer_ref.strip(),
+                        body.edition.strip(),
+                        json.dumps(modules),
+                        _iso(issued_at),
+                        _iso(expires_at),
+                        body.offline_grace_days,
+                        hashlib.sha256(token.encode()).hexdigest(),
+                        user["id"],
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "برای این نصب هم‌زمان مجوز فعال دیگری صادر شده است.") from exc
         audit(user["id"], "license.issued", "license", license_id, {
             "instance_id": body.instance_id,
             "customer_ref": body.customer_ref,
