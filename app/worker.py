@@ -60,6 +60,19 @@ def run_one_due_tenant():
         lease = c.execute("SELECT last_external_request_at FROM prospecting_worker_lease WHERE id=1").fetchone()
     if not row:
         return False
+    if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+        try:
+            main._read_signed_instance_license(required=True)
+        except main.HTTPException as exc:
+            if exc.status_code == 402:
+                with main.db() as c:
+                    c.execute(
+                        "UPDATE prospecting_settings SET next_run_at=? WHERE tenant_id=?",
+                        (time.time() + 300, row["tenant_id"]),
+                    )
+                print("[worker] customer instance license unavailable; scheduled discovery paused", flush=True)
+                return False
+            raise
     if lease and now - float(lease["last_external_request_at"] or 0) < GLOBAL_MIN_INTERVAL:
         return False
 
