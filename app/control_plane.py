@@ -20,10 +20,12 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import BaseModel, Field
 
 from app.instance_config import customer_volume_name
-from app.instance_licensing import sign_license_token
+from app.instance_licensing import LicenseValidationError, sign_license_token, verify_license_token
 
 
 ALLOWED_SCOPES = {
@@ -357,6 +359,13 @@ def create_app(
         expires_at: datetime
         offline_grace_days: int = Field(default=14, ge=0, le=30)
 
+    class LicenseRenewIn(BaseModel):
+        expires_at: datetime
+        offline_grace_days: int = Field(default=14, ge=0, le=30)
+
+    class LicenseSyncIn(BaseModel):
+        license_token: str = Field(min_length=100, max_length=16384)
+
     class SupportCreateIn(BaseModel):
         customer_ref: str = Field(min_length=3, max_length=120)
         instance_id: str = Field(min_length=3, max_length=63)
@@ -643,6 +652,103 @@ def create_app(
             )
         audit(user["id"], "license.revoked", "license", license_id)
         return {"ok": True, "status": "revoked", "effective_on_next_instance_sync": True}
+
+    def control_public_key() -> str:
+        try:
+            private_bytes = base64.b64decode(private_key_b64, validate=True)
+            private = Ed25519PrivateKey.from_private_bytes(private_bytes)
+            public_bytes = private.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+        except (ValueError, base64.binascii.Error) as exc:
+            raise HTTPException(503, "کلید امضای مرکز کنترل تنظیم نشده است.") from exc
+        return base64.b64encode(public_bytes).decode("ascii")
+
+    @api.post("/api/control/licenses/sync")
+    def sync_customer_license(body: LicenseSyncIn):
+        try:
+            untrusted_claim = json.loads(
+                base64.urlsafe_b64decode(
+                    body.license_token.split(".", 1)[0]
+                    + "=" * (-len(body.license_token.split(".", 1)[0]) % 4)
+                ).decode("utf-8")
+            )
+            instance_id = untrusted_claim.get("instance_id", "")
+            claim = verify_license_token(
+                body.license_token,
+                control_public_key(),
+                instance_id,
+            )
+        except (ValueError, UnicodeError, LicenseValidationError, json.JSONDecodeError, AttributeError):
+            raise HTTPException(401, "توکن مجوز معتبر نیست.")
+        token_hash = hashlib.sha256(body.license_token.encode()).hexdigest()
+        with db() as connection:
+            row = connection.execute(
+                "SELECT status,token_sha256 FROM control_licenses WHERE id=? AND instance_id=?",
+                (claim["license_id"], claim["instance_id"]),
+            ).fetchone()
+        if not row or not hmac.compare_digest(row["token_sha256"], token_hash):
+            raise HTTPException(401, "این مجوز در مرکز کنترل ثبت نشده است.")
+        if row["status"] in ("revoked", "superseded"):
+            raise HTTPException(410, "مجوز این نصب لغو یا جایگزین شده است.")
+        return {
+            "status": claim["status"],
+            "license_id": claim["license_id"],
+            "instance_id": claim["instance_id"],
+            "server_time": _iso(_utc_now()),
+        }
+
+    @api.post("/api/control/licenses/{license_id}/renew")
+    def renew_license(license_id: str, body: LicenseRenewIn, user=Depends(require_scope("licenses:write"))):
+        with db() as connection:
+            old = connection.execute(
+                "SELECT * FROM control_licenses WHERE id=?",
+                (license_id,),
+            ).fetchone()
+            if not old:
+                raise HTTPException(404, "مجوز پیدا نشد.")
+            if old["status"] in ("revoked", "superseded"):
+                raise HTTPException(409, "مجوز لغوشده یا جایگزین‌شده قابل تمدید نیست.")
+        expires_at = body.expires_at.astimezone(timezone.utc) if body.expires_at.tzinfo else None
+        issued_at = _utc_now()
+        if expires_at is None or expires_at <= issued_at:
+            raise HTTPException(422, "تاریخ پایان مجوز باید در آینده و دارای منطقه زمانی باشد.")
+        new_id = "lic_" + secrets.token_urlsafe(18)
+        modules = json.loads(old["modules_json"])
+        claim = {
+            "schema_version": 1,
+            "license_id": new_id,
+            "instance_id": old["instance_id"],
+            "customer_ref": old["customer_ref"],
+            "edition": old["edition"],
+            "modules": modules,
+            "issued_at": _iso(issued_at),
+            "expires_at": _iso(expires_at),
+            "offline_grace_days": body.offline_grace_days,
+        }
+        try:
+            token = sign_license_token(claim, private_key_b64)
+        except Exception as exc:
+            raise HTTPException(503, "کلید امضای مرکز مجوز معتبر نیست.") from exc
+        with db() as connection:
+            connection.execute(
+                "UPDATE control_licenses SET status='superseded' WHERE id=? AND status='active'",
+                (license_id,),
+            )
+            connection.execute(
+                """INSERT INTO control_licenses(
+                    id,instance_id,customer_ref,edition,modules_json,issued_at,expires_at,
+                    offline_grace_days,token_sha256,status,created_by
+                ) VALUES(?,?,?,?,?,?,?,?,?,'active',?)""",
+                (
+                    new_id, old["instance_id"], old["customer_ref"], old["edition"],
+                    json.dumps(modules), _iso(issued_at), _iso(expires_at),
+                    body.offline_grace_days, hashlib.sha256(token.encode()).hexdigest(), user["id"],
+                ),
+            )
+        audit(user["id"], "license.renewed", "license", new_id, {"supersedes": license_id})
+        return {"license_id": new_id, "supersedes": license_id, "instance_id": old["instance_id"], "license_token": token}
 
     @api.post("/api/control/support")
     def create_support_contract(body: SupportCreateIn, user=Depends(require_scope("support:write"))):
