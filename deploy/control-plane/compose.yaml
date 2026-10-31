@@ -1,0 +1,38 @@
+name: leadora-owner-control-plane
+
+services:
+  control-plane:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["uvicorn", "app.control_plane:app", "--host", "0.0.0.0", "--port", "8001"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LEADORA_ENV: production
+      LEADORA_CONTROL_DB: /control-data/control.sqlite3
+    ports:
+      - "127.0.0.1:${CONTROL_HOST_PORT:-8001}:8001"
+    volumes:
+      - owner_control_data:/control-data
+    networks:
+      - owner_control_private
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/api/control/health', timeout=5).read()"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  owner_control_data:
+    name: leadora-owner-control-data
+
+networks:
+  owner_control_private:
+    name: leadora-owner-control-private
