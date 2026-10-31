@@ -2,20 +2,18 @@ from pathlib import Path
 import re
 
 
-def test_emulator_runner_skips_flaky_automatic_animation_settings():
+def test_emulator_is_manually_managed_without_runner_post_boot_hooks():
     workflow = Path(".github/workflows/android-apk.yml").read_text(encoding="utf-8")
-    assert re.search(r"(?m)^\s*disable-animations:\s*false\s*$", workflow), (
-        "The emulator action's automatic settings writes have failed with ADB "
-        "Broken pipe; keep them disabled and let the smoke script control checks."
-    )
+    assert "reactivecircus/android-emulator-runner" not in workflow
+    assert "emulator -avd leadora_api30" in workflow
+    assert "adb wait-for-device" in workflow
+    assert 'getprop sys.boot_completed' in workflow
+    assert "settings put system screen_off_timeout" not in workflow
 
 
 def test_emulator_evidence_reports_the_configured_api_level():
     workflow = Path(".github/workflows/android-apk.yml").read_text(encoding="utf-8")
-    api_level = re.search(r"(?m)^\s*api-level:\s*(\d+)\s*$", workflow)
-    evidence = re.search(r"(?m)^\s*printf 'result=PASS\\npackage=.*?api_level=(\d+)", workflow)
+    api_level = re.search(r'(?m)^\s*ANDROID_API_LEVEL:\s*"(\d+)"\s*$', workflow)
+    evidence = re.search(r"api_level=%s", workflow)
     assert api_level, "Android emulator API level must be explicit."
     assert evidence, "Successful emulator evidence must record its API level."
-    assert evidence.group(1) == api_level.group(1), (
-        f"Emulator runs API {api_level.group(1)} but evidence claims API {evidence.group(1)}."
-    )
