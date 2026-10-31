@@ -83,7 +83,9 @@ jobs:
           arch: x86_64
           profile: pixel_2
           target: google_apis
-          disable-animations: true
+          # The action's automatic settings writes intermittently lose ADB after boot on hosted Linux.
+          # Keep them off; the smoke script checks app startup and runtime directly.
+          disable-animations: false
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect -no-metrics
           script: |
             set -euo pipefail
@@ -94,7 +96,8 @@ jobs:
             adb shell am force-stop com.leadora.app
             adb logcat -c
             adb shell monkey -p com.leadora.app 1
-            for attempt in $(seq 1 12); do
+            adb devices -l
+            for attempt in $(seq 1 30); do
               sleep 5
               adb shell uiautomator dump /sdcard/leadora-window.xml >/dev/null 2>&1 || true
               adb pull /sdcard/leadora-window.xml release/android-emulator-window.xml >/dev/null 2>&1 || true
@@ -110,7 +113,7 @@ jobs:
               cat /tmp/leadora-android-runtime-errors.txt
               exit 1
             fi
-            printf 'result=PASS\npackage=com.leadora.app\napi_level=34\nchecks=install,launch,homepage_login_cta,no_fatal_exception\n' > release/android-emulator-smoke.txt
+            printf 'result=PASS\npackage=com.leadora.app\napi_level=30\nchecks=install,launch,homepage_login_cta,no_fatal_exception\n' > release/android-emulator-smoke.txt
       - name: Verify and prepare APK
         shell: bash
         run: |
@@ -132,6 +135,7 @@ jobs:
           file release/LEADORA-Android.apk
           cat release/LEADORA-Android-build-info.txt
       - name: Upload build and emulator evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: LEADORA-Android-APK
