@@ -2046,6 +2046,8 @@ def issue_activation_key(body: LicenseIssueIn, user=Depends(user_from_header)):
 
 @app.get("/api/platform/licenses")
 def list_platform_licenses(user=Depends(user_from_header)):
+    if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+        raise HTTPException(404, "مدیریت مجوزها فقط در مرکز کنترل مالک انجام می‌شود.")
     _platform_owner(user)
     with db() as conn:
         rows = conn.execute("""SELECT t.id tenant_id,t.name company_name,l.status,l.trial_started_at,l.trial_ends_at,l.edition,l.activated_at
