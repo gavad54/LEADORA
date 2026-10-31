@@ -198,6 +198,7 @@ def test_customer_runtime_records_successful_control_plane_sync(monkeypatch, tmp
     monkeypatch.setattr(main_module.urllib.request, "urlopen", lambda request, timeout=3: FakeResponse())
     allowed = client.get("/api/finance/entries", headers=headers)
     assert allowed.status_code == 200
+    assert client.get("/api/platform/licenses", headers=headers).status_code == 404
     cache = json.loads((tmp_path / "license" / "license.json").read_text(encoding="utf-8"))
     assert cache["sync_status"] == "active"
     assert cache["last_sync_at"] > 0
