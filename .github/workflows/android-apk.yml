@@ -9,6 +9,12 @@ on:
       - "app/**"
       - "Dockerfile"
       - ".github/workflows/android-apk.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - "app/**"
+      - "Dockerfile"
+      - ".github/workflows/android-apk.yml"
 
 permissions:
   contents: write
@@ -16,6 +22,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -36,29 +43,127 @@ jobs:
           fi
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "system-images;android-30;google_apis;x86_64"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
       - name: Build installable APK
         working-directory: android
-        run: gradle --no-daemon --stacktrace assembleDebug
+        run: gradle --no-daemon --stacktrace assembleDebug && mkdir -p ../release && cp app/build/outputs/apk/debug/app-debug.apk ../release/LEADORA-Android.apk
+      - name: Public production smoke checks
+        id: production_smoke
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/api/health" -o /tmp/leadora-health.json
+          python - <<'PY'
+          import json
+          with open("/tmp/leadora-health.json", encoding="utf-8") as f:
+              data = json.load(f)
+          assert data.get("database") == "ok", "public health endpoint did not report database=ok"
+          print("public_api_health=PASS")
+          PY
+          curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/" -o /tmp/leadora-home.html
+          grep -q 'dir="rtl"' /tmp/leadora-home.html
+          grep -q 'ورود / ساخت حساب' /tmp/leadora-home.html
+          echo "public_homepage_smoke=PASS"
+      - name: Record production smoke status
+        if: steps.production_smoke.outcome == 'failure'
+        shell: bash
+        run: |
+          {
+            echo "### Production smoke check: BLOCKED"
+            echo "The current Railway homepage did not satisfy the expected public RTL/login-call-to-action checks, even though the health endpoint returned database=ok."
+            echo "This does not block testing the APK artifact, but it is a release blocker for merge/deploy until the production homepage is inspected and updated."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Install and launch APK on a manually managed Android emulator
+        shell: bash
+        env:
+          ANDROID_API_LEVEL: "30"
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -n 1)"
+          fi
+          AVDMANAGER="$(dirname "$SDKMANAGER")/avdmanager"
+          "$AVDMANAGER" create avd --name leadora_api30 --package "system-images;android-${ANDROID_API_LEVEL};google_apis;x86_64" --device pixel_2 --force
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          emulator -avd leadora_api30 -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect -no-metrics > /tmp/leadora-emulator.log 2>&1 &
+          EMULATOR_PID=$!
+          cleanup() {
+            adb emu kill >/dev/null 2>&1 || true
+            kill "$EMULATOR_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          adb wait-for-device
+          booted=false
+          for attempt in $(seq 1 180); do
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+              booted=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$booted" != true ]; then
+            cat /tmp/leadora-emulator.log
+            echo "Android emulator did not complete boot within 15 minutes."
+            exit 1
+          fi
+          # Do not use the emulator action's post-boot settings/input commands:
+          # they caused framework ServiceNotFoundException and ADB Broken pipe.
+          adb shell cmd package list packages >/dev/null
+          APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
+          test -s "$APK"
+          adb install "$APK"
+          adb shell pm path com.leadora.app
+          adb shell am force-stop com.leadora.app
+          adb logcat -c
+          adb shell monkey -p com.leadora.app 1
+          for attempt in $(seq 1 30); do
+            sleep 5
+            adb shell uiautomator dump /sdcard/leadora-window.xml >/dev/null 2>&1 || true
+            adb pull /sdcard/leadora-window.xml release/android-emulator-window.xml >/dev/null 2>&1 || true
+            if [ -s release/android-emulator-window.xml ] && grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml; then
+              break
+            fi
+          done
+          test -s release/android-emulator-window.xml
+          grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml
+          adb exec-out screencap -p > release/android-emulator-home.png
+          adb logcat -d -t 5000 -s AndroidRuntime:E > /tmp/leadora-android-runtime-errors.txt
+          if grep -q 'FATAL EXCEPTION' /tmp/leadora-android-runtime-errors.txt; then
+            cat /tmp/leadora-android-runtime-errors.txt
+            exit 1
+          fi
+          printf 'result=PASS\npackage=com.leadora.app\napi_level=%s\nchecks=install,launch,homepage_login_cta,no_fatal_exception\n' "$ANDROID_API_LEVEL" > release/android-emulator-smoke.txt
       - name: Verify and prepare APK
         shell: bash
         run: |
           set -euo pipefail
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
+          APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          test -s "$APK" || { echo "ERROR: staged APK missing during verification"; exit 1; }
           mkdir -p release
-          cp "$APK" release/LEADORA-Android.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose release/LEADORA-Android.apk
+          "$BUILD_TOOLS/aapt" dump badging release/LEADORA-Android.apk > release/LEADORA-Android-metadata.txt
+          {
+            echo "source_commit=$GITHUB_SHA"
+            echo "apk_size_bytes=$(stat -c '%s' release/LEADORA-Android.apk)"
+            sha256sum release/LEADORA-Android.apk
+          } > release/LEADORA-Android-build-info.txt
           sha256sum release/LEADORA-Android.apk > release/LEADORA-Android.apk.sha256
           file release/LEADORA-Android.apk
-      - name: Upload build artifact
+          cat release/LEADORA-Android-build-info.txt
+      - name: Upload build and emulator evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: LEADORA-Android-APK
           path: release/*
           retention-days: 30
       - name: Publish APK release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-test-v1.0.${{ github.run_number }}
@@ -71,5 +176,6 @@ jobs:
           files: |
             release/LEADORA-Android.apk
             release/LEADORA-Android.apk.sha256
+            release/LEADORA-Android-build-info.txt
           prerelease: true
           make_latest: false

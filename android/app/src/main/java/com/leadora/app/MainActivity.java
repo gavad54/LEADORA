@@ -26,8 +26,11 @@ public class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Color.rgb(16, 27, 53));
         buildLayout();
         configureWebView();
-        if (savedInstanceState != null) web.restoreState(savedInstanceState);
-        else web.loadUrl(HOME);
+        // Always start from the canonical public landing page. Restoring WebView's
+        // saved DOM can resurrect a stale login overlay or an obsolete route after
+        // an app update/process recreation. WebView DOM state is intentionally not
+        // restored; authenticated sessions remain in origin-scoped DOM storage.
+        web.loadUrl(HOME);
     }
 
     private void buildLayout() {

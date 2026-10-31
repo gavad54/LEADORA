@@ -90,3 +90,8 @@ def test_owner_pricing_rejects_boolean_prices(monkeypatch):
     body["base_monthly_price"] = True
     rejected_base_boolean = client.put("/api/owner/pricing", headers=headers, json=body)
     assert rejected_base_boolean.status_code == 422
+
+    body["base_monthly_price"] = 0
+    body["currency"] = "EUR"
+    rejected_currency = client.put("/api/owner/pricing", headers=headers, json=body)
+    assert rejected_currency.status_code == 422

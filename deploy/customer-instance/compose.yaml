@@ -1,0 +1,68 @@
+name: leadora-${LEADORA_INSTANCE_ID:?Set a unique LEADORA_INSTANCE_ID}
+
+services:
+  leadora:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LEADORA_ENV: production
+      LEADORA_ENFORCE_INSTANCE_CONFIG: "1"
+      LEADORA_DATA_DIR: /data
+      LEADORA_DB: /data/leadora.db
+      LEADORA_BACKUP_DIR: /data/backups
+      LEADORA_LICENSE_CACHE_PATH: /data/license/license.json
+      LEADORA_WORKER_ENABLED: "0"
+      PORT: "8000"
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT:-8000}:8000"
+    volumes:
+      - customer_data:/data
+    networks:
+      - customer_private
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  leadora-worker:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.worker"]
+    user: "10001:10001"
+    restart: unless-stopped
+    depends_on:
+      leadora:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      LEADORA_ENV: production
+      LEADORA_DATA_DIR: /data
+      LEADORA_DB: /data/leadora.db
+      LEADORA_BACKUP_DIR: /data/backups
+      LEADORA_LICENSE_CACHE_PATH: /data/license/license.json
+      LEADORA_WORKER_POLL_SECONDS: "15"
+      LEADORA_ENFORCE_INSTANCE_CONFIG: "1"
+    volumes:
+      - customer_data:/data
+    networks:
+      - customer_private
+
+volumes:
+  customer_data:
+    name: leadora-${LEADORA_INSTANCE_ID:?Set a unique LEADORA_INSTANCE_ID}-data
+
+networks:
+  customer_private:
+    name: leadora-${LEADORA_INSTANCE_ID:?Set a unique LEADORA_INSTANCE_ID}-private

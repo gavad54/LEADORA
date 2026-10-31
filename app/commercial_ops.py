@@ -1,8 +1,9 @@
 """Commercial licensing, support desk, and auditable cross-module workflow queue."""
 import json
+import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 LICENSE_STATUSES = {"draft", "issued", "paid", "active", "expired", "cancelled"}
 SUPPORT_STATUSES = {"open", "in_progress", "waiting_customer", "waiting_team", "resolved", "closed"}
@@ -38,7 +39,7 @@ def create_router(db, user_from_header):
         CREATE TABLE IF NOT EXISTS commercial_license_sales(
           id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id),
           edition TEXT NOT NULL, term_months INTEGER NOT NULL CHECK(term_months BETWEEN 1 AND 120),
-          amount NUMERIC NOT NULL CHECK(amount >= 0), currency TEXT NOT NULL DEFAULT 'EUR',
+          amount NUMERIC NOT NULL CHECK(amount >= 0), currency TEXT NOT NULL DEFAULT 'IRR',
           status TEXT NOT NULL DEFAULT 'draft', invoice_ref TEXT NOT NULL DEFAULT '',
           support_until TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
           created_by INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -90,8 +91,8 @@ def create_router(db, user_from_header):
         tenant_id: int = Field(gt=0)
         edition: str = Field(min_length=1, max_length=40)
         term_months: int = Field(ge=1, le=120)
-        amount: float = Field(ge=0, le=1_000_000_000)
-        currency: str = Field(default="EUR", min_length=3, max_length=8)
+        amount: StrictInt = Field(ge=0, le=1_000_000_000)
+        currency: str = Field(default="IRR", pattern="^IRR$")
         invoice_ref: str = Field(default="", max_length=100)
         support_until: str = Field(default="", max_length=40)
         notes: str = Field(default="", max_length=2000)
@@ -123,10 +124,12 @@ def create_router(db, user_from_header):
 
     @router.post("/api/platform/license-sales")
     def create_license_sale(body: LicenseSaleIn, user=Depends(user_from_header)):
+        if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+            raise HTTPException(404, "مدیریت فروش و صدور مجوز فقط در مرکز کنترل مالک انجام می‌شود.")
         if not is_owner(user):
             raise HTTPException(403, "ثبت فروش مجوز فقط برای مالک پلتفرم مجاز است.")
-        if body.currency.upper() not in {"EUR", "USD", "IRR", "GBP", "TRY", "AED"}:
-            raise HTTPException(422, "واحد پول پشتیبانی نمی‌شود.")
+        if body.currency.upper() != "IRR":
+            raise HTTPException(422, "واحد پول رسمی فقط ریال ایران (IRR) است.")
         with db() as c:
             if not c.execute("SELECT 1 FROM tenants WHERE id=?", (body.tenant_id,)).fetchone():
                 raise HTTPException(404, "شرکت یافت نشد.")
@@ -142,6 +145,8 @@ def create_router(db, user_from_header):
 
     @router.get("/api/platform/license-sales")
     def list_license_sales(status: str = "all", user=Depends(user_from_header)):
+        if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+            raise HTTPException(404, "مدیریت فروش و صدور مجوز فقط در مرکز کنترل مالک انجام می‌شود.")
         if not is_owner(user):
             raise HTTPException(403, "فقط مالک پلتفرم مجاز است.")
         if status != "all" and status not in LICENSE_STATUSES:
@@ -154,6 +159,8 @@ def create_router(db, user_from_header):
 
     @router.patch("/api/platform/license-sales/{sale_id}")
     def update_license_sale(sale_id: int, body: LicenseSaleStatusIn, user=Depends(user_from_header)):
+        if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+            raise HTTPException(404, "مدیریت فروش و صدور مجوز فقط در مرکز کنترل مالک انجام می‌شود.")
         if not is_owner(user):
             raise HTTPException(403, "فقط مالک پلتفرم مجاز است.")
         if body.status not in LICENSE_STATUSES:
