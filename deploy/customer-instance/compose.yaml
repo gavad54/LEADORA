@@ -51,6 +51,7 @@ services:
       LEADORA_DATA_DIR: /data
       LEADORA_DB: /data/leadora.db
       LEADORA_BACKUP_DIR: /data/backups
+      LEADORA_LICENSE_CACHE_PATH: /data/license/license.json
       LEADORA_WORKER_POLL_SECONDS: "15"
       LEADORA_ENFORCE_INSTANCE_CONFIG: "1"
     volumes:
