@@ -86,6 +86,12 @@ def test_customer_business_routes_require_and_accept_matching_signed_license(mon
     )
     assert imported.status_code == 200, imported.text
     assert imported.json()["status"] == "active"
+    replayed = client.post(
+        "/api/account/license/import",
+        headers=headers,
+        json={"license_token": token},
+    )
+    assert replayed.status_code == 409
 
     license_path = tmp_path / "license" / "license.json"
     assert license_path.is_file()
