@@ -68,5 +68,10 @@ jobs:
         env:
           LEADORA_SECRET: ci-only-not-a-production-secret-ci-only
         run: docker compose -f docker-compose.yml config -q
+      - name: Validate independent customer deployment template
+        run: |
+          cp deploy/customer-instance/.env.example deploy/customer-instance/.env
+          docker compose --env-file deploy/customer-instance/.env -f deploy/customer-instance/compose.yaml config -q
+          rm deploy/customer-instance/.env
       - name: Build production Docker image
         run: docker build --tag leadora-ci .
