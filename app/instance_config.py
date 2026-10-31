@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlparse
 
 
 class InstanceConfigurationError(ValueError):
@@ -48,6 +49,13 @@ def validate_customer_instance_config(
     customer_ref = env.get("LEADORA_CUSTOMER_REF", "").strip()
     if not customer_ref or len(customer_ref) > 120:
         raise InstanceConfigurationError("customer reference is required and must be at most 120 characters")
+    control_plane_url = env.get("LEADORA_CONTROL_PLANE_URL", "").strip().rstrip("/")
+    if control_plane_url:
+        parsed_control_url = urlparse(control_plane_url)
+        if parsed_control_url.scheme != "https" or not parsed_control_url.netloc or parsed_control_url.username or parsed_control_url.password:
+            raise InstanceConfigurationError("control plane URL must be a valid HTTPS origin")
+    elif env.get("LEADORA_ENV", "development") == "production":
+        raise InstanceConfigurationError("LEADORA_CONTROL_PLANE_URL is required in production customer instances")
 
     if env.get("LEADORA_LICENSE_PRIVATE_KEY", "").strip():
         raise InstanceConfigurationError("customer instance must never contain a license signing private key")
@@ -87,6 +95,7 @@ def validate_customer_instance_config(
     return {
         "instance_id": instance_id,
         "customer_ref": customer_ref,
+        "control_plane_url": control_plane_url,
         "volume_name": customer_volume_name(instance_id),
         "data_dir": str(data_root),
         "db_path": str(db_path),
