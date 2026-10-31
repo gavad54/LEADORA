@@ -4,8 +4,6 @@ This service owns only licensing, staff authorization, support entitlements and
 audit metadata. It must use a separate database and never open a customer
 LEADORA_DB or business-data volume.
 """
-from __future__ import annotations
-
 import base64
 import hashlib
 import hmac
