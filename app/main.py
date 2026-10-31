@@ -196,9 +196,12 @@ def _read_signed_instance_license(required=True):
 
     control_url = str(config.get("control_plane_url", "")).rstrip("/")
     now = int(time.time())
-    interval = int(os.getenv("LEADORA_LICENSE_SYNC_INTERVAL_SECONDS", "21600"))
+    try:
+        interval = int(os.getenv("LEADORA_LICENSE_SYNC_INTERVAL_SECONDS", "21600"))
+        last_attempt = int(cache.get("last_sync_attempt_at", 0) or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(503, "تنظیمات همگام‌سازی مجوز معتبر نیست.")
     interval = max(300, min(interval, 86400))
-    last_attempt = int(cache.get("last_sync_attempt_at", 0) or 0)
     if control_url and now - last_attempt >= interval:
         cache["last_sync_attempt_at"] = now
         _persist_instance_license_cache(license_path, cache)
@@ -211,6 +214,8 @@ def _read_signed_instance_license(required=True):
         try:
             with urllib.request.urlopen(sync_request, timeout=3) as response:
                 sync_result = json.loads(response.read().decode("utf-8"))
+            if not isinstance(sync_result, dict):
+                raise HTTPException(402, "پاسخ مرکز کنترل معتبر نیست.")
             if (
                 sync_result.get("license_id") != claim["license_id"]
                 or sync_result.get("instance_id") != claim["instance_id"]
