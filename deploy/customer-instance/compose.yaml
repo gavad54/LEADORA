@@ -52,6 +52,7 @@ services:
       LEADORA_DB: /data/leadora.db
       LEADORA_BACKUP_DIR: /data/backups
       LEADORA_WORKER_POLL_SECONDS: "15"
+      LEADORA_ENFORCE_INSTANCE_CONFIG: "1"
     volumes:
       - customer_data:/data
     networks:
