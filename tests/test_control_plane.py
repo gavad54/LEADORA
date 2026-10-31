@@ -67,7 +67,13 @@ def test_owner_requires_persian_keyword_and_independent_totp(tmp_path):
     })
     assert denied.status_code == 401
 
+    dashboard = client.get("/")
+    assert dashboard.status_code == 200
+    assert 'dir="rtl"' in dashboard.text
     headers = owner_headers(client, settings)
+    me = client.get("/api/control/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["role"] == "owner"
     identity = client.get("/api/control/owner/identity", headers=headers)
     assert identity.status_code == 200
     assert identity.json()["role"] == "owner"
