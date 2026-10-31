@@ -244,6 +244,48 @@ def create_app(
                 (email, "owner", json.dumps(sorted(ALLOWED_SCOPES)), salt, digest),
             )
 
+    def _login_key(email: str) -> str:
+        return hashlib.sha256((control_secret + "|" + email.strip().casefold()).encode()).hexdigest()
+
+    def check_login_rate(email: str) -> None:
+        key = _login_key(email)
+        now = int(time.time())
+        with db() as connection:
+            row = connection.execute(
+                "SELECT attempts,window_start FROM control_login_attempts WHERE email_key=?",
+                (key,),
+            ).fetchone()
+            if row and now - row["window_start"] < 900 and row["attempts"] >= 5:
+                raise HTTPException(429, "تلاش‌های ورود بیش از حد مجاز است؛ ۱۵ دقیقه دیگر تلاش کنید.")
+            if row and now - row["window_start"] >= 900:
+                connection.execute("DELETE FROM control_login_attempts WHERE email_key=?", (key,))
+
+    def record_login_failure(email: str) -> None:
+        key = _login_key(email)
+        now = int(time.time())
+        with db() as connection:
+            row = connection.execute(
+                "SELECT attempts,window_start FROM control_login_attempts WHERE email_key=?",
+                (key,),
+            ).fetchone()
+            if not row or now - row["window_start"] >= 900:
+                connection.execute(
+                    "INSERT OR REPLACE INTO control_login_attempts(email_key,attempts,window_start) VALUES(?,?,?)",
+                    (key, 1, now),
+                )
+            else:
+                connection.execute(
+                    "UPDATE control_login_attempts SET attempts=attempts+1 WHERE email_key=?",
+                    (key,),
+                )
+
+    def clear_login_failures(email: str) -> None:
+        with db() as connection:
+            connection.execute(
+                "DELETE FROM control_login_attempts WHERE email_key=?",
+                (_login_key(email),),
+            )
+
     def audit(actor_id: int, action: str, target_type: str, target_id: str, details: dict[str, Any] | None = None) -> None:
         with db() as connection:
             connection.execute(
@@ -348,18 +390,23 @@ def create_app(
     @api.post("/api/control/auth/owner/login")
     def owner_login(body: OwnerLoginIn):
         email = body.email.strip().casefold()
+        check_login_rate(email)
         with db() as connection:
             row = connection.execute(
                 "SELECT * FROM control_users WHERE email=? AND role='owner' AND active=1",
                 (email,),
             ).fetchone()
         if not row:
+            record_login_failure(email)
             raise HTTPException(401, "اطلاعات مالک معتبر نیست.")
         if not _verify_secret(body.keyword, row["salt"], row["secret_hash"]):
+            record_login_failure(email)
             raise HTTPException(401, "اطلاعات مالک معتبر نیست.")
         mfa_secret = config.get("LEADORA_OWNER_MFA_SECRET", "")
         if not _valid_totp(mfa_secret, body.totp):
+            record_login_failure(email)
             raise HTTPException(401, "کد تأیید دومرحله‌ای معتبر نیست.")
+        clear_login_failures(email)
         token = create_session(row["id"])
         audit(row["id"], "owner.login", "owner", row["id"])
         return {"access_token": token, "token_type": "bearer", "expires_in": TOKEN_TTL_SECONDS}
@@ -367,13 +414,16 @@ def create_app(
     @api.post("/api/control/auth/staff/login")
     def staff_login(body: StaffLoginIn):
         email = body.email.strip().casefold()
+        check_login_rate(email)
         with db() as connection:
             row = connection.execute(
                 "SELECT * FROM control_users WHERE email=? AND role!='owner' AND active=1",
                 (email,),
             ).fetchone()
         if not row or not _verify_secret(body.password, row["salt"], row["secret_hash"]):
+            record_login_failure(email)
             raise HTTPException(401, "ایمیل یا گذرواژه معتبر نیست.")
+        clear_login_failures(email)
         token = create_session(row["id"])
         audit(row["id"], "staff.login", "staff", row["id"])
         return {"access_token": token, "token_type": "bearer", "expires_in": TOKEN_TTL_SECONDS}
@@ -474,9 +524,12 @@ def create_app(
             ):
                 raise HTTPException(422, "دامنه دسترسی کارکنان معتبر نیست.")
             active = int(row["active"]) if body.active is None else int(body.active)
+            role = "license_manager" if "licenses:write" in scopes else (
+                "support_agent" if "support:write" in scopes else "auditor"
+            )
             connection.execute(
-                "UPDATE control_users SET active=?,scopes_json=? WHERE id=?",
-                (active, json.dumps(scopes), staff_id),
+                "UPDATE control_users SET active=?,role=?,scopes_json=? WHERE id=?",
+                (active, role, json.dumps(scopes), staff_id),
             )
             connection.execute(
                 "DELETE FROM control_sessions WHERE user_id=?",
