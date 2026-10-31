@@ -7,6 +7,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod 755 /entrypoint.sh && mkdir -p /app/data /data /data/backups && useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+RUN chmod 755 /entrypoint.sh && mkdir -p /app/data /data /data/backups /control-data && useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app /control-data
 EXPOSE 8000
 CMD ["sh", "/entrypoint.sh"]
