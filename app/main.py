@@ -2,7 +2,7 @@ import os, sqlite3, secrets, hashlib, hmac, time, re
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
-import csv, io, json
+import csv, io, json, urllib.request, urllib.error
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, AliasChoices
 
@@ -142,6 +142,25 @@ def token(uid, tid):
     sig = hmac.new(SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
     return raw + "." + sig
 
+def _persist_instance_license_cache(license_path: Path, cache: dict):
+    license_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(license_path.parent, 0o700)
+    temporary_path = license_path.with_name(license_path.name + "." + secrets.token_hex(8) + ".tmp")
+    descriptor = os.open(str(temporary_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(cache, ensure_ascii=False, sort_keys=True))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, license_path)
+        os.chmod(license_path, 0o600)
+    finally:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _read_signed_instance_license(required=True):
     if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") != "1":
         return None
@@ -153,16 +172,67 @@ def _read_signed_instance_license(required=True):
             raise HTTPException(402, "مجوز امضاشده این نصب هنوز وارد نشده است.")
         return None
     try:
-        token_value = license_path.read_text(encoding="utf-8").strip()
+        raw_cache = license_path.read_text(encoding="utf-8").strip()
+        try:
+            parsed_cache = json.loads(raw_cache)
+            cache = parsed_cache if isinstance(parsed_cache, dict) and "token" in parsed_cache else {"token": raw_cache}
+        except json.JSONDecodeError:
+            cache = {"token": raw_cache}
+        token_value = str(cache.get("token", "")).strip()
+        if cache.get("sync_status") == "revoked":
+            raise HTTPException(402, "مجوز این نصب در مرکز کنترل لغو شده است.")
         claim = verify_license_token(
             token_value,
             str(config["license_public_key"]),
             str(config["instance_id"]),
         )
-    except (OSError, UnicodeError, LicenseValidationError):
+    except HTTPException:
+        raise
+    except (OSError, UnicodeError, LicenseValidationError, TypeError):
         raise HTTPException(402, "مجوز این نصب معتبر نیست یا مهلت آن پایان یافته است.")
+
     if claim.get("customer_ref") != config["customer_ref"]:
         raise HTTPException(403, "مجوز به شناسه مشتری این نصب تعلق ندارد.")
+
+    control_url = str(config.get("control_plane_url", "")).rstrip("/")
+    now = int(time.time())
+    interval = int(os.getenv("LEADORA_LICENSE_SYNC_INTERVAL_SECONDS", "21600"))
+    interval = max(300, min(interval, 86400))
+    last_attempt = int(cache.get("last_sync_attempt_at", 0) or 0)
+    if control_url and now - last_attempt >= interval:
+        cache["last_sync_attempt_at"] = now
+        _persist_instance_license_cache(license_path, cache)
+        sync_request = urllib.request.Request(
+            control_url + "/api/control/licenses/sync",
+            data=json.dumps({"license_token": token_value}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(sync_request, timeout=3) as response:
+                sync_result = json.loads(response.read().decode("utf-8"))
+            if (
+                sync_result.get("license_id") != claim["license_id"]
+                or sync_result.get("instance_id") != claim["instance_id"]
+                or sync_result.get("status") not in ("active", "grace")
+            ):
+                raise HTTPException(402, "وضعیت مجوز در مرکز کنترل قابل تأیید نیست.")
+            cache["last_sync_at"] = now
+            cache["sync_status"] = sync_result["status"]
+            _persist_instance_license_cache(license_path, cache)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 410:
+                cache["sync_status"] = "revoked"
+                _persist_instance_license_cache(license_path, cache)
+                raise HTTPException(402, "مجوز این نصب در مرکز کنترل لغو یا جایگزین شده است.")
+            if exc.code in (401, 403, 404):
+                raise HTTPException(402, "مرکز کنترل این مجوز را تأیید نکرد.")
+            # A temporary server-side failure is treated as offline; local
+            # signature and expiry/grace checks above remain mandatory.
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+            # Keep the signed local claim usable while the control plane is
+            # unreachable; the claim's expiry and bounded grace still apply.
+            pass
     return claim
 
 
