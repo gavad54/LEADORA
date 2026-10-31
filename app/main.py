@@ -1984,6 +1984,32 @@ def import_instance_license(body: LicenseTokenImportIn, user=Depends(user_from_h
     if claim.get("customer_ref") != config["customer_ref"]:
         raise HTTPException(403, "این مجوز برای مشتری دیگری صادر شده است.")
     license_path = Path(str(config["license_cache_path"]))
+    if license_path.is_file():
+        try:
+            current_cache_text = license_path.read_text(encoding="utf-8").strip()
+            try:
+                current_cache_data = json.loads(current_cache_text)
+                current_token = current_cache_data.get("token", "") if isinstance(current_cache_data, dict) else current_cache_text
+            except json.JSONDecodeError:
+                current_token = current_cache_text
+            if current_token:
+                current_claim = verify_license_token(
+                    current_token,
+                    str(config["license_public_key"]),
+                    str(config["instance_id"]),
+                )
+                if current_claim["license_id"] == claim["license_id"]:
+                    raise HTTPException(409, "این توکن قبلاً برای این نصب ثبت شده است.")
+                current_issued = datetime.fromisoformat(current_claim["issued_at"])
+                incoming_issued = datetime.fromisoformat(claim["issued_at"])
+                if incoming_issued <= current_issued:
+                    raise HTTPException(409, "توکن جدیدتر از مجوز فعلی نیست؛ برای تمدید، مجوز تازه دریافت کنید.")
+        except HTTPException:
+            raise
+        except (OSError, UnicodeError, LicenseValidationError, TypeError, ValueError):
+            # A corrupt local cache may be repaired by importing a freshly
+            # signed token for this exact instance and customer reference.
+            pass
     _persist_instance_license_cache(license_path, {
         "token": body.license_token.strip(),
         "last_sync_at": 0,
