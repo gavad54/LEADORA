@@ -45,6 +45,9 @@ def validate_customer_instance_config(
     instance_id = env.get("LEADORA_INSTANCE_ID", "")
     if not isinstance(instance_id, str) or not _INSTANCE_ID_RE.fullmatch(instance_id):
         raise InstanceConfigurationError("instance id must be a lowercase safe slug")
+    customer_ref = env.get("LEADORA_CUSTOMER_REF", "").strip()
+    if not customer_ref or len(customer_ref) > 120:
+        raise InstanceConfigurationError("customer reference is required and must be at most 120 characters")
 
     if env.get("LEADORA_LICENSE_PRIVATE_KEY", "").strip():
         raise InstanceConfigurationError("customer instance must never contain a license signing private key")
@@ -83,6 +86,7 @@ def validate_customer_instance_config(
 
     return {
         "instance_id": instance_id,
+        "customer_ref": customer_ref,
         "volume_name": customer_volume_name(instance_id),
         "data_dir": str(data_root),
         "db_path": str(db_path),
