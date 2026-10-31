@@ -279,7 +279,10 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
         request_path = request.url.path if request is not None else ""
         if request_path not in allowed_paths:
             if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
-                _read_signed_instance_license(required=True)
+                signed_claim = _read_signed_instance_license(required=True)
+                required_module = required_module_for_path(request_path)
+                if required_module and required_module not in signed_claim["modules"]:
+                    raise HTTPException(403, f"ماژول {required_module} در مجوز این نصب فعال نیست.")
             elif not is_platform_owner:
                 license_row = _license_for_tenant(user["tenant_id"])
                 if license_row["status"] in ("expired", "suspended"):
@@ -1880,7 +1883,7 @@ def ai_command_center_page():
 # Trial duration is server-controlled. No bank login credentials are accepted or stored.
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
-from app.instance_licensing import LicenseValidationError, verify_license_token
+from app.instance_licensing import LicenseValidationError, required_module_for_path, verify_license_token
 
 def _platform_owner(user):
     allowed = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
