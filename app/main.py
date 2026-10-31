@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parent
 DB_PATH = os.getenv("LEADORA_DB", str(ROOT.parent / "data" / "leadora.db"))
 SECRET = os.getenv("LEADORA_SECRET", "development-only-change-me")
 ENV = os.getenv("LEADORA_ENV", "development")
+
+# Customer deployments opt into strict per-installation storage/key validation.
+if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+    from app.instance_config import validate_customer_instance_config
+    validate_customer_instance_config()
 if ENV == "production" and (len(SECRET) < 32 or SECRET == "development-only-change-me"):
     raise RuntimeError("Set a random LEADORA_SECRET of at least 32 characters")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
