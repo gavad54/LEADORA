@@ -142,6 +142,30 @@ def token(uid, tid):
     sig = hmac.new(SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
     return raw + "." + sig
 
+def _read_signed_instance_license(required=True):
+    if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") != "1":
+        return None
+    from app.instance_config import validate_customer_instance_config
+    config = validate_customer_instance_config()
+    license_path = Path(str(config["license_cache_path"]))
+    if not license_path.is_file():
+        if required:
+            raise HTTPException(402, "مجوز امضاشده این نصب هنوز وارد نشده است.")
+        return None
+    try:
+        token_value = license_path.read_text(encoding="utf-8").strip()
+        claim = verify_license_token(
+            token_value,
+            str(config["license_public_key"]),
+            str(config["instance_id"]),
+        )
+    except (OSError, UnicodeError, LicenseValidationError):
+        raise HTTPException(402, "مجوز این نصب معتبر نیست یا مهلت آن پایان یافته است.")
+    if claim.get("customer_ref") != config["customer_ref"]:
+        raise HTTPException(403, "مجوز به شناسه مشتری این نصب تعلق ندارد.")
+    return claim
+
+
 def user_from_header(authorization: str | None = Header(default=None), request: Request = None):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "ابتدا وارد شوید.")
@@ -170,11 +194,21 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
                 is_platform_owner = bool(owner_row and str(owner_row["user_id"]) == str(user["id"]))
             except sqlite3.OperationalError:
                 is_platform_owner = False
-        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health", "/api/logout"}
-        if (request.url.path if request is not None else "") not in allowed_paths and not is_platform_owner:
-            license_row = _license_for_tenant(user["tenant_id"])
-            if license_row["status"] in ("expired", "suspended"):
-                raise HTTPException(402, "دوره آزمایشی پایان یافته یا مجوز غیرفعال است؛ کلید مجوز معتبر را فعال کنید.")
+        allowed_paths = {
+            "/api/account/license",
+            "/api/account/license/activate",
+            "/api/account/license/import",
+            "/api/health",
+            "/api/logout",
+        }
+        request_path = request.url.path if request is not None else ""
+        if request_path not in allowed_paths:
+            if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+                _read_signed_instance_license(required=True)
+            elif not is_platform_owner:
+                license_row = _license_for_tenant(user["tenant_id"])
+                if license_row["status"] in ("expired", "suspended"):
+                    raise HTTPException(402, "دوره آزمایشی پایان یافته یا مجوز غیرفعال است؛ کلید مجوز معتبر را فعال کنید.")
         return user
     except HTTPException:
         raise
@@ -1771,6 +1805,7 @@ def ai_command_center_page():
 # Trial duration is server-controlled. No bank login credentials are accepted or stored.
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
+from app.instance_licensing import LicenseValidationError, verify_license_token
 
 def _platform_owner(user):
     allowed = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
@@ -1814,6 +1849,8 @@ class LicenseIssueIn(BaseModel):
 
 class LicenseActivateIn(BaseModel):
     activation_key: str = Field(min_length=12, max_length=160)
+class LicenseTokenImportIn(BaseModel):
+    license_token: str = Field(min_length=100, max_length=16384)
 
 class BankAccountIn(BaseModel):
     label: str = Field(min_length=1, max_length=100)
@@ -1826,11 +1863,72 @@ class BankAccountIn(BaseModel):
 
 @app.get("/api/account/license")
 def account_license(user=Depends(user_from_header)):
+    if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+        from app.instance_config import validate_customer_instance_config
+        config = validate_customer_instance_config()
+        lic = _read_signed_instance_license(required=False)
+        if lic is None:
+            return {
+                "status": "unlicensed",
+                "instance_id": config["instance_id"],
+                "customer_ref": config["customer_ref"],
+                "edition": None,
+                "modules": [],
+                "offline_grace_days": config["offline_grace_days"],
+            }
+        return {
+            "status": lic["status"],
+            "license_id": lic["license_id"],
+            "instance_id": lic["instance_id"],
+            "customer_ref": lic["customer_ref"],
+            "edition": lic["edition"],
+            "modules": lic["modules"],
+            "expires_at": lic["expires_at"],
+            "offline_grace_days": lic["offline_grace_days"],
+        }
     lic = _license_for_tenant(user["tenant_id"])
     return {k: lic[k] for k in ("tenant_id","status","trial_started_at","trial_ends_at","edition","activated_at","updated_at")}
 
+@app.post("/api/account/license/import")
+def import_instance_license(body: LicenseTokenImportIn, user=Depends(user_from_header)):
+    if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") != "1":
+        raise HTTPException(404, "این مسیر فقط برای نصب مستقل فعال است.")
+    from app.instance_config import validate_customer_instance_config
+    config = validate_customer_instance_config()
+    try:
+        claim = verify_license_token(
+            body.license_token,
+            str(config["license_public_key"]),
+            str(config["instance_id"]),
+        )
+    except LicenseValidationError:
+        raise HTTPException(422, "توکن مجوز معتبر نیست.")
+    if claim.get("customer_ref") != config["customer_ref"]:
+        raise HTTPException(403, "این مجوز برای مشتری دیگری صادر شده است.")
+    license_path = Path(str(config["license_cache_path"]))
+    license_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(license_path.parent, 0o700)
+    temporary_path = license_path.with_name(license_path.name + ".tmp")
+    descriptor = os.open(str(temporary_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(body.license_token.strip())
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary_path, license_path)
+    os.chmod(license_path, 0o600)
+    return {
+        "ok": True,
+        "license_id": claim["license_id"],
+        "instance_id": claim["instance_id"],
+        "status": claim["status"],
+        "expires_at": claim["expires_at"],
+        "message": "مجوز امضاشده برای همین نصب ثبت شد.",
+    }
+
 @app.post("/api/account/license/activate")
 def activate_license(body: LicenseActivateIn, user=Depends(user_from_header)):
+    if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+        raise HTTPException(410, "در نصب مستقل، فقط توکن امضاشده مرکز کنترل قابل استفاده است.")
     key_hash = hashlib.sha256(body.activation_key.strip().encode()).hexdigest()
     now = datetime.now(timezone.utc).isoformat()
     with db() as conn:
@@ -1855,6 +1953,8 @@ def activate_license(body: LicenseActivateIn, user=Depends(user_from_header)):
 
 @app.post("/api/platform/licenses")
 def issue_activation_key(body: LicenseIssueIn, user=Depends(user_from_header)):
+    if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+        raise HTTPException(404, "صدور مجوز فقط در مرکز کنترل مالک انجام می‌شود.")
     _platform_owner(user)
     with db() as conn:
         if not conn.execute("SELECT 1 FROM tenants WHERE id=?", (body.tenant_id,)).fetchone():
