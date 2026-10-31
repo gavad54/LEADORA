@@ -130,6 +130,29 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         assert browser_errors == [], "Browser JavaScript errors: " + "; ".join(browser_errors)
         browser.close()
 
+
+def test_saved_session_stays_on_public_home_when_server_is_temporarily_unreachable(live_app):
+    """A transient API/network failure must not expose an unvalidated workspace."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.route("**/api/products", lambda route: route.abort())
+        page.goto(live_app, wait_until="networkidle")
+        page.evaluate("""() => {
+            localStorage.setItem('leadora_token', 'previously-saved-session');
+            localStorage.setItem('leadora_email', 'returning@example.test');
+            localStorage.setItem('leadora_company', 'Returning Company');
+        }""")
+        page.reload(wait_until="networkidle")
+        page.wait_for_function(
+            "document.getElementById('connectionState').textContent.includes('ارتباط با سرور برقرار نشد')"
+        )
+        assert page.locator("#publicHome").is_visible()
+        assert page.locator("#workspaceShell").is_hidden()
+        assert page.locator("#authOverlay").is_hidden()
+        assert page.evaluate("localStorage.getItem('leadora_token')") == "previously-saved-session"
+        browser.close()
+
 def test_expired_local_session_recovers_to_public_home_without_login_loop(live_app):
     """An invalid stored bearer token must not trap visitors on the workspace/auth screen."""
     with sync_playwright() as playwright:
