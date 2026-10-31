@@ -202,3 +202,32 @@ def test_customer_runtime_records_successful_control_plane_sync(monkeypatch, tmp
     cache = json.loads((tmp_path / "license" / "license.json").read_text(encoding="utf-8"))
     assert cache["sync_status"] == "active"
     assert cache["last_sync_at"] > 0
+
+
+def test_customer_license_enforces_each_module_entitlement(monkeypatch, tmp_path):
+    client = TestClient(app)
+    headers = _register(client)
+    private_key, public_key = _keypair()
+    _configure_instance(monkeypatch, tmp_path, public_key)
+    now = datetime.now(timezone.utc)
+    token = sign_license_token({
+        "schema_version": 1,
+        "license_id": "lic-distribution-only",
+        "instance_id": "runtime-customer-alpha",
+        "customer_ref": "runtime-contract-alpha",
+        "edition": "distribution",
+        "modules": ["distribution"],
+        "issued_at": (now - timedelta(minutes=1)).isoformat(),
+        "expires_at": (now + timedelta(days=30)).isoformat(),
+        "offline_grace_days": 14,
+    }, private_key)
+    imported = client.post(
+        "/api/account/license/import",
+        headers=headers,
+        json={"license_token": token},
+    )
+    assert imported.status_code == 200, imported.text
+
+    assert client.get("/api/customers", headers=headers).status_code == 200
+    denied = client.get("/api/finance/entries", headers=headers)
+    assert denied.status_code == 403
