@@ -160,3 +160,44 @@ def test_customer_runtime_keeps_valid_signed_license_during_control_plane_outage
     monkeypatch.setattr(main_module.urllib.request, "urlopen", unavailable)
     allowed = client.get("/api/finance/entries", headers=headers)
     assert allowed.status_code == 200
+
+
+def test_customer_runtime_records_successful_control_plane_sync(monkeypatch, tmp_path):
+    import json
+    import app.main as main_module
+
+    client = TestClient(app)
+    headers = _register(client)
+    private_key, public_key = _keypair()
+    _configure_instance(monkeypatch, tmp_path, public_key)
+    monkeypatch.setenv("LEADORA_CONTROL_PLANE_URL", "https://control.example.test")
+
+    token = _license(private_key)
+    imported = client.post(
+        "/api/account/license/import",
+        headers=headers,
+        json={"license_token": token},
+    )
+    assert imported.status_code == 200
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "status": "active",
+                "license_id": "lic-runtime-test",
+                "instance_id": "runtime-customer-alpha",
+                "server_time": datetime.now(timezone.utc).isoformat(),
+            }).encode("utf-8")
+
+    monkeypatch.setattr(main_module.urllib.request, "urlopen", lambda request, timeout=3: FakeResponse())
+    allowed = client.get("/api/finance/entries", headers=headers)
+    assert allowed.status_code == 200
+    cache = json.loads((tmp_path / "license" / "license.json").read_text(encoding="utf-8"))
+    assert cache["sync_status"] == "active"
+    assert cache["last_sync_at"] > 0
