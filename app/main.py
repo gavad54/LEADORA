@@ -1976,16 +1976,17 @@ def import_instance_license(body: LicenseTokenImportIn, user=Depends(user_from_h
     if claim.get("customer_ref") != config["customer_ref"]:
         raise HTTPException(403, "این مجوز برای مشتری دیگری صادر شده است.")
     license_path = Path(str(config["license_cache_path"]))
-    license_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(license_path.parent, 0o700)
-    temporary_path = license_path.with_name(license_path.name + ".tmp")
-    descriptor = os.open(str(temporary_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(body.license_token.strip())
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary_path, license_path)
-    os.chmod(license_path, 0o600)
+    _persist_instance_license_cache(license_path, {
+        "token": body.license_token.strip(),
+        "last_sync_at": 0,
+        "last_sync_attempt_at": 0,
+        "sync_status": "pending",
+    })
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+            (user["tenant_id"], "instance.license.imported"),
+        )
     return {
         "ok": True,
         "license_id": claim["license_id"],
