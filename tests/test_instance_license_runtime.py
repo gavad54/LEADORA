@@ -107,3 +107,56 @@ def test_signed_license_for_another_customer_is_rejected(monkeypatch, tmp_path):
     )
     assert imported.status_code == 403
     assert not (tmp_path / "license" / "license.json").exists()
+
+
+def test_customer_runtime_denies_license_after_control_plane_revocation(monkeypatch, tmp_path):
+    import json
+    import urllib.error
+    import app.main as main_module
+
+    client = TestClient(app)
+    headers = _register(client)
+    private_key, public_key = _keypair()
+    _configure_instance(monkeypatch, tmp_path, public_key)
+    monkeypatch.setenv("LEADORA_CONTROL_PLANE_URL", "https://control.example.test")
+
+    imported = client.post(
+        "/api/account/license/import",
+        headers=headers,
+        json={"license_token": _license(private_key)},
+    )
+    assert imported.status_code == 200
+
+    def revoked_response(request, timeout=3):
+        raise urllib.error.HTTPError(request.full_url, 410, "revoked", {}, None)
+
+    monkeypatch.setattr(main_module.urllib.request, "urlopen", revoked_response)
+    blocked = client.get("/api/finance/entries", headers=headers)
+    assert blocked.status_code == 402
+    cache = json.loads((tmp_path / "license" / "license.json").read_text(encoding="utf-8"))
+    assert cache["sync_status"] == "revoked"
+
+
+def test_customer_runtime_keeps_valid_signed_license_during_control_plane_outage(monkeypatch, tmp_path):
+    import urllib.error
+    import app.main as main_module
+
+    client = TestClient(app)
+    headers = _register(client)
+    private_key, public_key = _keypair()
+    _configure_instance(monkeypatch, tmp_path, public_key)
+    monkeypatch.setenv("LEADORA_CONTROL_PLANE_URL", "https://control.example.test")
+
+    imported = client.post(
+        "/api/account/license/import",
+        headers=headers,
+        json={"license_token": _license(private_key)},
+    )
+    assert imported.status_code == 200
+
+    def unavailable(request, timeout=3):
+        raise urllib.error.URLError("control plane unavailable")
+
+    monkeypatch.setattr(main_module.urllib.request, "urlopen", unavailable)
+    allowed = client.get("/api/finance/entries", headers=headers)
+    assert allowed.status_code == 200
