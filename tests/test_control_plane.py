@@ -151,6 +151,15 @@ def test_owner_issues_instance_bound_signed_license_and_can_revoke_it(tmp_path):
     assert rows[0]["status"] == "revoked"
     revoked_sync = client.post("/api/control/licenses/sync", json={"license_token": token})
     assert revoked_sync.status_code == 410
+    reused_instance = client.post("/api/control/licenses", headers=owner, json={
+        "instance_id": "customer-alpha",
+        "customer_ref": "different-customer-ref",
+        "edition": "business",
+        "modules": ["distribution"],
+        "expires_at": "2031-01-01T00:00:00+00:00",
+        "offline_grace_days": 14,
+    })
+    assert reused_instance.status_code == 409
 
 
 def test_license_renewal_supersedes_old_signed_token(tmp_path):
