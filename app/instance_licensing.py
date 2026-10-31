@@ -165,3 +165,36 @@ def verify_license_token(
     else:
         raise LicenseValidationError("license expired beyond offline grace")
     return {**claim, "status": status}
+
+
+# One authoritative API-path-to-license-module map shared by the web app and worker.
+_MODULE_PATH_PREFIXES = (
+    ("/api/finance", "accounting"),
+    ("/api/bank-accounts", "accounting"),
+    ("/api/invoices", "accounting"),
+    ("/api/payments", "accounting"),
+    ("/api/expenses", "accounting"),
+    ("/api/payroll", "accounting"),
+    ("/api/prospecting", "prospecting"),
+    ("/api/products", "warehouse"),
+    ("/api/customers", "distribution"),
+    ("/api/distribution", "distribution"),
+    ("/api/dispatch", "distribution"),
+    ("/api/returns", "distribution"),
+    ("/api/opportunities", "distribution"),
+    ("/api/campaigns", "distribution"),
+    ("/api/workflow", "distribution"),
+    ("/api/commercial", "distribution"),
+    ("/api/agents", "ai"),
+    ("/api/ai", "ai"),
+)
+
+
+def required_module_for_path(path: str) -> str | None:
+    """Return the licensed module for a protected API path, if one is mapped."""
+    if not isinstance(path, str):
+        return None
+    for prefix, module in _MODULE_PATH_PREFIXES:
+        if path == prefix or path.startswith(prefix + "/"):
+            return module
+    return None
