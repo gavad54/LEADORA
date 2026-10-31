@@ -69,3 +69,17 @@ def test_each_customer_gets_a_deterministic_but_distinct_volume_name():
     assert customer_volume_name("customer-alpha") == "leadora-customer-alpha-data"
     assert customer_volume_name("customer-beta") == "leadora-customer-beta-data"
     assert customer_volume_name("customer-alpha") != customer_volume_name("customer-beta")
+
+
+def test_production_customer_instance_requires_https_control_plane():
+    env = valid_env()
+    env["LEADORA_ENV"] = "production"
+    env.pop("LEADORA_CONTROL_PLANE_URL")
+    with pytest.raises(InstanceConfigurationError, match="required"):
+        validate_customer_instance_config(env)
+
+    env = valid_env()
+    env["LEADORA_ENV"] = "production"
+    env["LEADORA_CONTROL_PLANE_URL"] = "http://control.example.test"
+    with pytest.raises(InstanceConfigurationError, match="HTTPS"):
+        validate_customer_instance_config(env)
