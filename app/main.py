@@ -1,6 +1,6 @@
 import os, sqlite3, secrets, hashlib, hmac, time, re
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 import csv, io, json
 from fastapi.staticfiles import StaticFiles
@@ -55,6 +55,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS customers(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id), name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '');
         CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, action TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS login_attempts(attempt_key TEXT PRIMARY KEY, attempts INTEGER NOT NULL, window_start INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS revoked_tokens(token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, revoked_at INTEGER NOT NULL);
         """)
 init_db()
 
@@ -87,13 +88,14 @@ with db() as _conn:
       institution TEXT NOT NULL DEFAULT '',
       account_holder TEXT NOT NULL DEFAULT '',
       iban_masked TEXT NOT NULL DEFAULT '',
-      currency TEXT NOT NULL DEFAULT 'EUR',
+      currency TEXT NOT NULL DEFAULT 'IRR',
       is_default INTEGER NOT NULL DEFAULT 0,
       provider TEXT NOT NULL DEFAULT 'manual',
       connection_status TEXT NOT NULL DEFAULT 'not_configured',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_bank_accounts_tenant ON tenant_bank_accounts(tenant_id,id);
+
     """)
     # Preserve existing tenants and create a maximum 90-day trial for legacy accounts without a license row.
     _now = datetime.now(timezone.utc) if 'datetime' in globals() else __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
@@ -145,6 +147,11 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
         uid, tid, exp, _ = raw.split(":", 3)
         if int(exp) < int(time.time()): raise ValueError()
         with db() as c:
+            token_hash = hashlib.sha256(authorization[7:].encode()).hexdigest()
+            revoked = c.execute("SELECT 1 FROM revoked_tokens WHERE token_hash=? AND expires_at>=?",
+                                (token_hash, int(time.time()))).fetchone()
+            if revoked:
+                raise ValueError("revoked token")
             u = c.execute("SELECT id,tenant_id,email FROM users WHERE id=? AND tenant_id=?", (int(uid),int(tid))).fetchone()
         if not u: raise ValueError()
         user = dict(u)
@@ -158,7 +165,7 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
                 is_platform_owner = bool(owner_row and str(owner_row["user_id"]) == str(user["id"]))
             except sqlite3.OperationalError:
                 is_platform_owner = False
-        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health"}
+        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health", "/api/logout"}
         if (request.url.path if request is not None else "") not in allowed_paths and not is_platform_owner:
             license_row = _license_for_tenant(user["tenant_id"])
             if license_row["status"] in ("expired", "suspended"):
@@ -255,6 +262,28 @@ def login(body: LoginIn):
         raise HTTPException(401,"اطلاعات ورود صحیح نیست.")
     clear_login_failures(attempt_key)
     return {"token":token(row["id"],row["tenant_id"]),"user":{"email":row["email"]}}
+
+@app.post("/api/logout")
+def logout_session(authorization: str | None = Header(default=None), user=Depends(user_from_header)):
+    """Revoke the current signed bearer token server-side until its original expiry."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "ابتدا وارد شوید.")
+    token_value = authorization[7:]
+    try:
+        raw = token_value.rsplit(".", 1)[0]
+        expires_at = int(raw.split(":", 3)[2])
+    except (IndexError, ValueError):
+        raise HTTPException(401, "نشست نامعتبر یا منقضی است.")
+    now = int(time.time())
+    token_hash = hashlib.sha256(token_value.encode()).hexdigest()
+    with db() as c:
+        c.execute("INSERT OR REPLACE INTO revoked_tokens(token_hash,expires_at,revoked_at) VALUES(?,?,?)",
+                  (token_hash, expires_at, now))
+        c.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (now,))
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                  (user["tenant_id"], "auth.logout"))
+    return {"ok": True, "message": "نشست پایان یافت."}
+
 
 @app.get("/api/products")
 def products(user=Depends(user_from_header)):
@@ -1158,10 +1187,10 @@ def full_tenant_backup(user=Depends(user_from_header)):
 
 @app.post("/api/backup/snapshot")
 def create_backup_snapshot(user=Depends(user_from_header)):
-    backup_dir=Path(os.getenv("LEADORA_BACKUP_DIR",str(ROOT.parent/"backups")))
+    backup_dir=Path(os.getenv("LEADORA_BACKUP_DIR") or (Path(DB_PATH).parent/"backups"))
     try:
         backup_dir.mkdir(parents=True,exist_ok=True)
-        stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         target=backup_dir/f"leadora-tenant-{user['tenant_id']}-{stamp}.json"
         raw=json.dumps(_tenant_backup_payload(user["tenant_id"]),ensure_ascii=False,indent=2).encode("utf-8")
         # Exclusive creation avoids overwriting a previous backup if two requests arrive in the same second.
@@ -1183,10 +1212,159 @@ def storage_status(user=Depends(user_from_header)):
                 except sqlite3.OperationalError: counts[table]=0
         return {"database":"sqlite","persistent_path_configured":bool(os.getenv("LEADORA_DB")),"database_bytes":p.stat().st_size if p.exists() else 0,
           "integrity":integrity,"records_by_table":counts,"backup_directory_configured":bool(os.getenv("LEADORA_BACKUP_DIR")),
-          "backup_directory":os.getenv("LEADORA_BACKUP_DIR",str(ROOT.parent/"backups")),
+          "backup_directory":os.getenv("LEADORA_BACKUP_DIR") or str(Path(DB_PATH).parent/"backups"),
           "note":"برای پایداری پس از راه‌اندازی مجدد، مسیر data و backups باید روی volume پایدار سرور نگاشت شوند؛ این endpoint وجود مسیر را تضمین نمی‌کند."}
     except sqlite3.Error:
         raise HTTPException(500,"بررسی وضعیت پایگاه داده ناموفق بود.")
+
+
+# Verified full-database backup and isolated restore verification.
+# These endpoints are platform-owner-only because a full SQLite image contains
+# all tenants and authentication records. Keep an off-volume copy of downloads.
+import tempfile
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@app.post("/api/platform/backup/database")
+def create_full_database_backup(user=Depends(user_from_header)):
+    _platform_owner(user)
+    source_path = Path(DB_PATH)
+    if not source_path.is_file():
+        raise HTTPException(503, "فایل پایگاه داده پیدا نشد؛ نسخه پشتیبان ساخته نشد.")
+    backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (source_path.parent / "backups"))
+    target = None
+    sidecar = None
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        target = backup_dir / f"leadora-db-{stamp}.sqlite3"
+        # Refuse to overwrite a prior snapshot even if clocks or requests collide.
+        with target.open("xb"):
+            pass
+        # SQLite's online backup API creates a transactionally consistent copy,
+        # including committed data, without copying a live WAL file by hand.
+        with db() as source:
+            destination = sqlite3.connect(str(target), timeout=30)
+            try:
+                source.backup(destination)
+                integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
+                if integrity != "ok":
+                    raise sqlite3.DatabaseError("integrity_check failed")
+                tables = {row[0] for row in destination.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()}
+                if not {"tenants", "users", "products"}.issubset(tables):
+                    raise sqlite3.DatabaseError("required tables missing")
+            finally:
+                destination.close()
+        digest = _sha256_file(target)
+        sidecar = target.with_suffix(target.suffix + ".sha256")
+        with sidecar.open("x", encoding="ascii") as handle:
+            handle.write(f"{digest}  {target.name}\n")
+        with db() as conn:
+            conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                         (user["tenant_id"], "backup.full_database.created"))
+        return {
+            "status": "verified",
+            "filename": target.name,
+            "sha256": digest,
+            "bytes": target.stat().st_size,
+            "integrity_check": integrity,
+            "download_path": f"/api/platform/backup/database/{target.name}",
+            "checksum_path": f"/api/platform/backup/database/{sidecar.name}",
+            "storage_path": str(target),
+            "offsite_copy_required": True,
+            "message": "نسخه کامل ساخته و بررسی شد؛ فایل دانلودشده را خارج از سرور نگه دارید."
+        }
+    except HTTPException:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        # Remove only artifacts created by this attempt; never leave an empty or
+        # incomplete snapshot that could be mistaken for a valid recovery point.
+        for artifact in (sidecar, target):
+            if artifact is not None:
+                try:
+                    artifact.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        raise HTTPException(500, "ساخت یا بررسی نسخه پشتیبان کامل ناموفق بود؛ فضای Volume و مجوز نوشتن را بررسی کنید.") from exc
+
+@app.get("/api/platform/backup/database/{filename}")
+def download_full_database_backup(filename: str, user=Depends(user_from_header)):
+    _platform_owner(user)
+    if not re.fullmatch(r"leadora-db-[0-9]{8}T[0-9]{12}Z\.sqlite3(?:\.sha256)?", filename):
+        raise HTTPException(404, "فایل پشتیبان پیدا نشد.")
+    backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (Path(DB_PATH).parent / "backups"))
+    target = backup_dir / filename
+    if not target.is_file():
+        raise HTTPException(404, "فایل پشتیبان پیدا نشد.")
+    media_type = "text/plain; charset=utf-8" if filename.endswith(".sha256") else "application/vnd.sqlite3"
+    return FileResponse(target, media_type=media_type,
+        filename=filename, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+@app.post("/api/platform/backup/verify")
+async def verify_uploaded_database_backup(file: UploadFile = File(...), user=Depends(user_from_header)):
+    _platform_owner(user)
+    # Verify an uploaded backup in an isolated temporary file. This never replaces
+    # or writes to the live production database.
+    temp_path = None
+    try:
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in {".sqlite3", ".db", ".sqlite"}:
+            raise HTTPException(415, "فقط فایل پشتیبان SQLite با پسوند db، sqlite یا sqlite3 پذیرفته می‌شود.")
+        total = 0
+        with tempfile.NamedTemporaryFile(prefix="leadora-restore-check-", suffix=".sqlite3", delete=False) as temp:
+            temp_path = Path(temp.name)
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 1024 * 1024 * 1024:
+                    raise HTTPException(413, "حجم فایل پشتیبان بیش از سقف ۱ گیگابایت است.")
+                temp.write(chunk)
+        if total == 0:
+            raise HTTPException(400, "فایل پشتیبان خالی است.")
+        with sqlite3.connect(f"file:{temp_path}?mode=ro", uri=True, timeout=15) as check:
+            integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+            tables = {row[0] for row in check.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            missing = sorted({"tenants", "users", "products"}.difference(tables))
+            if integrity != "ok" or missing:
+                raise HTTPException(422, "نسخه پشتیبان معتبر نیست یا جدول‌های اصلی را ندارد.")
+            counts = {}
+            for table in ("tenants", "users", "products", "customers"):
+                if table in tables:
+                    counts[table] = check.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        return {
+            "status": "verified",
+            "integrity_check": integrity,
+            "bytes": total,
+            "sha256": _sha256_file(temp_path),
+            "core_tables_present": True,
+            "record_counts": counts,
+            "production_database_changed": False,
+            "message": "فایل در پایگاه داده موقت باز شد و بررسی سلامت موفق بود؛ پایگاه داده تولیدی تغییر نکرد."
+        }
+    except HTTPException:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(422, "فایل پشتیبان قابل بازکردن یا بررسی نیست.") from exc
+    finally:
+        await file.close()
+        if temp_path:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
 
 # Unified order/invoice tracking with tenant-scoped status history.
 from datetime import date, timedelta
@@ -1221,7 +1399,7 @@ class WorkflowDocumentIn(BaseModel):
  party_contact:str=Field(default="",max_length=200)
  direction:str=Field(default="outgoing",pattern="^(incoming|outgoing)$")
  amount:float=Field(default=0,ge=0,le=1000000000000)
- currency:str=Field(default="IRR",min_length=3,max_length=8)
+ currency:str=Field(default="IRR",pattern="^IRR$")
  issue_date:str=Field(default="",max_length=10)
  due_date:str=Field(default="",max_length=10)
  status:str=Field(default="registered",pattern="^(registered|review|approved|in_progress|sent|received|awaiting_customer|awaiting_supplier|awaiting_payment|partially_paid|paid|fulfilled|completed|on_hold|cancelled|overdue)$")
@@ -1637,7 +1815,7 @@ class BankAccountIn(BaseModel):
     institution: str = Field(default="", max_length=120)
     account_holder: str = Field(default="", max_length=120)
     iban_masked: str = Field(default="", max_length=40)
-    currency: str = Field(default="EUR", min_length=3, max_length=8)
+    currency: str = Field(default="IRR", pattern="^IRR$")
     is_default: bool = False
     provider: str = Field(default="manual", max_length=40)
 

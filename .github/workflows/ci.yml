@@ -1,7 +1,9 @@
 name: LEADORA CI
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -65,6 +67,6 @@ jobs:
       - name: Validate Docker Compose configuration
         env:
           LEADORA_SECRET: ci-only-not-a-production-secret-ci-only
-        run: docker compose config -q
+        run: docker compose -f docker-compose.yml config -q
       - name: Build production Docker image
         run: docker build --tag leadora-ci .
