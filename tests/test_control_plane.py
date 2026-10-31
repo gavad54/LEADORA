@@ -166,3 +166,17 @@ def test_control_plane_database_contains_no_customer_business_tables(tmp_path):
     assert "products" not in names
     assert "customers" not in names
     assert "users" not in names
+
+
+def test_owner_login_is_rate_limited_after_repeated_invalid_attempts(tmp_path):
+    settings = make_settings()
+    client = TestClient(create_app(tmp_path / "control.sqlite3", settings=settings))
+    payload = {
+        "email": settings["LEADORA_OWNER_EMAIL"],
+        "keyword": "wrong-persian-keyword",
+        "totp": "000000",
+    }
+    for _ in range(5):
+        assert client.post("/api/control/auth/owner/login", json=payload).status_code == 401
+    limited = client.post("/api/control/auth/owner/login", json=payload)
+    assert limited.status_code == 429
