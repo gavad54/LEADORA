@@ -88,6 +88,8 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         assert page.locator("#runtimeError").is_hidden()
 
         page.reload(wait_until="networkidle")
+        page.wait_for_function("document.getElementById('savedSessionBtn')?.hidden === false")
+        page.locator("#savedSessionBtn").click()
         page.wait_for_function("document.getElementById('authOverlay').hidden === true")
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
         assert page.locator("#runtimeError").is_hidden()
@@ -100,6 +102,8 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         assert "reduce-motion" in page.locator("body").get_attribute("class")
         assert "leadora_preferences" in page.evaluate("Object.keys(localStorage).join(',')")
         page.reload(wait_until="networkidle")
+        page.wait_for_function("document.getElementById('savedSessionBtn')?.hidden === false")
+        page.locator("#savedSessionBtn").click()
         page.locator('[data-view="settings"]:visible').click()
         assert page.locator("#densitySetting").input_value() == "compact"
         assert page.locator("#motionSetting").input_value() == "reduced"
