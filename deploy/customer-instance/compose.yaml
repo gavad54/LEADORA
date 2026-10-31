@@ -64,4 +64,3 @@ volumes:
 networks:
   customer_private:
     name: leadora-${LEADORA_INSTANCE_ID:?Set a unique LEADORA_INSTANCE_ID}-private
-    internal: true
