@@ -194,3 +194,34 @@ def test_finance_ui_is_irr_only_and_owner_participation_is_absent(live_app):
         assert "ریال ایران (IRR)" in page.content()
         assert errors == [], "Finance browser JavaScript errors: " + "; ".join(errors)
         browser.close()
+
+
+def test_valid_saved_session_keeps_public_home_until_user_chooses_workspace(live_app):
+    """A valid remembered session must not skip the public landing page on startup."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        suffix = str(time.time_ns())
+        company = "Remembered Company " + suffix[-8:]
+        email = "remembered-" + suffix + "@example.test"
+        password = "remembered-session-password-2026"
+
+        page.goto(live_app, wait_until="networkidle")
+        page.locator("#publicStartBtn").click()
+        page.locator('[data-auth-mode="register"]').click()
+        page.locator("#company").fill(company)
+        page.locator("#industry").fill("retail")
+        page.locator("#email").fill(email)
+        page.locator("#password").fill(password)
+        page.locator("#authSubmit").click()
+        page.locator("#workspaceShell").wait_for(state="visible")
+
+        page.reload(wait_until="networkidle")
+        assert page.locator("#publicHome").is_visible()
+        assert page.locator("#workspaceShell").is_hidden()
+        assert page.locator("#authOverlay").is_hidden()
+        page.wait_for_function("document.getElementById('savedSessionBtn')?.hidden === false")
+        page.locator("#savedSessionBtn").click()
+        assert page.locator("#workspaceShell").is_visible()
+        assert page.locator("#publicHome").is_hidden()
+        browser.close()
