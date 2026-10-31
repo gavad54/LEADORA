@@ -62,9 +62,11 @@ def run_one_due_tenant():
         return False
     if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
         try:
-            main._read_signed_instance_license(required=True)
+            signed_claim = main._read_signed_instance_license(required=True)
+            if "prospecting" not in signed_claim["modules"]:
+                raise main.HTTPException(403, "prospecting module is not licensed for this customer instance")
         except main.HTTPException as exc:
-            if exc.status_code == 402:
+            if exc.status_code in (402, 403):
                 with main.db() as c:
                     c.execute(
                         "UPDATE prospecting_settings SET next_run_at=? WHERE tenant_id=?",
