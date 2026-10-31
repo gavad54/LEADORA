@@ -136,7 +136,7 @@ def test_saved_session_stays_on_public_home_when_server_is_temporarily_unreachab
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page()
-        page.route("**/api/products", lambda route: route.abort())
+        page.route("**/api/**", lambda route: route.abort())
         page.goto(live_app, wait_until="networkidle")
         page.evaluate("""() => {
             localStorage.setItem('leadora_token', 'previously-saved-session');
