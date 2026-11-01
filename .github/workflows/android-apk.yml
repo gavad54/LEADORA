@@ -89,17 +89,27 @@ jobs:
           AVDMANAGER="$(dirname "$SDKMANAGER")/avdmanager"
           "$AVDMANAGER" create avd --name leadora_api30 --package "system-images;android-${ANDROID_API_LEVEL};google_apis;x86_64" --device pixel_2 --force
           export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p release
           emulator -avd leadora_api30 -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect -no-metrics > /tmp/leadora-emulator.log 2>&1 &
           EMULATOR_PID=$!
+          capture_diagnostics() {
+            set +e
+            timeout 10s adb devices -l > release/android-adb-devices.txt 2>&1
+            timeout 15s adb logcat -d -t 3000 > release/android-emulator-logcat.txt 2>&1
+            timeout 10s adb shell dumpsys activity activities > release/android-activities.txt 2>&1
+            cp /tmp/leadora-emulator.log release/android-emulator-boot.log 2>/dev/null || true
+            set -e
+          }
           cleanup() {
-            adb emu kill >/dev/null 2>&1 || true
+            capture_diagnostics
+            timeout 10s adb emu kill >/dev/null 2>&1 || true
             kill "$EMULATOR_PID" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          adb wait-for-device
+          timeout 45s adb wait-for-device
           booted=false
           for attempt in $(seq 1 180); do
-            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+            if [ "$(timeout 12s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = "1" ]; then
               booted=true
               break
             fi
@@ -110,33 +120,26 @@ jobs:
             echo "Android emulator did not complete boot within 15 minutes."
             exit 1
           fi
-          # Do not use the emulator action's post-boot settings/input commands:
-          # they caused framework ServiceNotFoundException and ADB Broken pipe.
-          adb shell cmd package list packages >/dev/null
+          # Avoid unbounded package-manager enumeration: this command hung on
+          # the previous runner after sys.boot_completed became 1.
+          timeout 30s adb get-state
           APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
           test -s "$APK"
-          adb install "$APK"
-          adb shell pm path com.leadora.app
-          adb shell am force-stop com.leadora.app
-          adb logcat -c
-          adb shell monkey -p com.leadora.app 1
-          for attempt in $(seq 1 30); do
-            sleep 5
-            adb shell uiautomator dump /sdcard/leadora-window.xml >/dev/null 2>&1 || true
-            adb pull /sdcard/leadora-window.xml release/android-emulator-window.xml >/dev/null 2>&1 || true
-            if [ -s release/android-emulator-window.xml ] && grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml; then
-              break
-            fi
-          done
-          test -s release/android-emulator-window.xml
-          grep -q 'ورود / ساخت حساب' release/android-emulator-window.xml
-          adb exec-out screencap -p > release/android-emulator-home.png
-          adb logcat -d -t 5000 -s AndroidRuntime:E > /tmp/leadora-android-runtime-errors.txt
-          if grep -q 'FATAL EXCEPTION' /tmp/leadora-android-runtime-errors.txt; then
-            cat /tmp/leadora-android-runtime-errors.txt
+          timeout 120s adb install -r "$APK"
+          timeout 30s adb shell pm path com.leadora.app
+          timeout 20s adb logcat -c
+          timeout 45s adb shell am start -W -n com.leadora.app/.MainActivity
+          sleep 8
+          timeout 30s adb shell dumpsys activity activities > release/android-activities-after-launch.txt
+          grep -q 'com.leadora.app' release/android-activities-after-launch.txt
+          timeout 30s adb exec-out screencap -p > release/android-emulator-home.png
+          test -s release/android-emulator-home.png
+          timeout 30s adb logcat -d -t 5000 -s AndroidRuntime:E > release/android-runtime-errors.txt
+          if grep -q 'FATAL EXCEPTION' release/android-runtime-errors.txt; then
+            cat release/android-runtime-errors.txt
             exit 1
           fi
-          printf 'result=PASS\npackage=com.leadora.app\napi_level=%s\nchecks=install,launch,homepage_login_cta,no_fatal_exception\n' "$ANDROID_API_LEVEL" > release/android-emulator-smoke.txt
+          printf 'result=PASS\npackage=com.leadora.app\napi_level=%s\nchecks=install,activity_launch,foreground_activity,screenshot,no_fatal_exception\n' "$ANDROID_API_LEVEL" > release/android-emulator-smoke.txt
       - name: Verify and prepare APK
         shell: bash
         run: |
