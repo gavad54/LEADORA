@@ -6,6 +6,8 @@ def test_emulator_is_manually_managed_without_runner_post_boot_hooks():
     workflow = Path(".github/workflows/android-apk.yml").read_text(encoding="utf-8")
     assert "reactivecircus/android-emulator-runner" not in workflow
     assert "emulator -avd leadora_api30" in workflow
+    assert '"emulator" "platforms;android-35"' in workflow
+    assert '"$ANDROID_HOME/emulator/emulator"' in workflow
     assert "adb wait-for-device" in workflow
     assert 'getprop sys.boot_completed' in workflow
     assert "settings put system screen_off_timeout" not in workflow
