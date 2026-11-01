@@ -67,24 +67,41 @@ jobs:
           PY
           curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/" -o /tmp/leadora-home.html
           python - <<'PY'
-          import re
+          from html.parser import HTMLParser
           from pathlib import Path
+
+          class PageState(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.elements = {}
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  element_id = attrs.get("id")
+                  if element_id in {"publicHome", "authOverlay", "workspaceShell"}:
+                      self.elements[element_id] = {
+                          "tag": tag,
+                          "hidden": "hidden" in attrs,
+                          "attrs": attrs,
+                      }
+
           html = Path("/tmp/leadora-home.html").read_text(encoding="utf-8")
+          page = PageState()
+          page.feed(html)
           checks = {
               "rtl_document": 'dir="rtl"' in html,
-              "public_home_section": bool(re.search(r'<section\\s+id="publicHome"[^>]*>', html)),
-              "public_home_not_hidden": bool(re.search(r'<section\\s+id="publicHome"(?=[^>]*class="public-home")[^>]*>', html)) and not bool(re.search(r'<section\\s+id="publicHome"[^>]*\\bhidden(?:\\s|>)', html)),
-              "auth_overlay_hidden": bool(re.search(r'<div[^>]*id="authOverlay"[^>]*\\bhidden(?:\\s|>)', html)),
-              "workspace_hidden": bool(re.search(r'<div[^>]*id="workspaceShell"[^>]*\\bhidden(?:\\s|>)', html)),
+              "public_home_present": "publicHome" in page.elements,
+              "public_home_visible": "publicHome" in page.elements and not page.elements["publicHome"]["hidden"],
+              "auth_overlay_hidden": "authOverlay" in page.elements and page.elements["authOverlay"]["hidden"],
+              "workspace_hidden": "workspaceShell" in page.elements and page.elements["workspaceShell"]["hidden"],
               "startup_renders_public_home": "showPublicHome();" in html,
               "public_login_action": "ورود / ساخت حساب" in html,
           }
-          missing = [name for name, passed in checks.items() if not passed]
           print("production_home_checks=" + repr(checks))
+          missing = [name for name, passed in checks.items() if not passed]
           if missing:
               raise SystemExit("Production public-home acceptance failed: " + ", ".join(missing))
           Path("release/production-smoke.txt").write_text(
-              "result=PASS\\n" + "\\n".join(f"{name}=PASS" for name in checks) + "\\n",
+              "result=PASS\n" + "\n".join(f"{name}=PASS" for name in checks) + "\n",
               encoding="utf-8",
           )
           Path("release/production-home.html").write_text(html, encoding="utf-8")
