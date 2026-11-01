@@ -8,6 +8,10 @@ def test_emulator_is_manually_managed_without_runner_post_boot_hooks():
     assert '"$EMULATOR" -avd leadora_api30' in workflow
     assert '"emulator" "platforms;android-35"' in workflow
     assert '"$ANDROID_HOME/emulator/emulator"' in workflow
+    assert '"publicHome"' in workflow
+    assert '"authOverlay"' in workflow
+    assert '"workspaceShell"' in workflow
+    assert "production-smoke.txt" in workflow
     assert "adb wait-for-device" in workflow
     assert 'getprop sys.boot_completed' in workflow
     assert "settings put system screen_off_timeout" not in workflow
