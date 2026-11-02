@@ -43,6 +43,6 @@ def test_avd_home_is_set_before_avd_creation_and_emulator_launch():
         "and before the emulator tries to load it."
     )
     kvm_permission_check = workflow.index("sudo chmod 666 /dev/kvm")
-    assert create_avd < kvm_permission_check < launch_emulator, (
-        "The ephemeral runner must receive KVM access before the x86_64 emulator starts."
+    assert configure_home < kvm_permission_check < create_avd < launch_emulator, (
+        "The ephemeral runner must receive KVM access before creating and launching the x86_64 AVD."
     )
