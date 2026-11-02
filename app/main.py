@@ -1256,6 +1256,9 @@ def create_full_database_backup(user=Depends(user_from_header)):
                 integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
                 if integrity != "ok":
                     raise sqlite3.DatabaseError("integrity_check failed")
+                foreign_key_violations = destination.execute("PRAGMA foreign_key_check").fetchmany(100)
+                if foreign_key_violations:
+                    raise sqlite3.DatabaseError("foreign_key_check failed")
                 tables = {row[0] for row in destination.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 ).fetchall()}
@@ -1276,6 +1279,7 @@ def create_full_database_backup(user=Depends(user_from_header)):
             "sha256": digest,
             "bytes": target.stat().st_size,
             "integrity_check": integrity,
+            "foreign_key_check": "ok",
             "download_path": f"/api/platform/backup/database/{target.name}",
             "checksum_path": f"/api/platform/backup/database/{sidecar.name}",
             "storage_path": str(target),
@@ -1339,6 +1343,9 @@ async def verify_uploaded_database_backup(file: UploadFile = File(...), user=Dep
             missing = sorted({"tenants", "users", "products"}.difference(tables))
             if integrity != "ok" or missing:
                 raise HTTPException(422, "نسخه پشتیبان معتبر نیست یا جدول‌های اصلی را ندارد.")
+            foreign_key_violations = check.execute("PRAGMA foreign_key_check").fetchmany(100)
+            if foreign_key_violations:
+                raise HTTPException(422, "نسخه پشتیبان دارای رابطه‌های شکسته یا رکوردهای یتیم است.")
             counts = {}
             for table in ("tenants", "users", "products", "customers"):
                 if table in tables:
@@ -1346,6 +1353,7 @@ async def verify_uploaded_database_backup(file: UploadFile = File(...), user=Dep
         return {
             "status": "verified",
             "integrity_check": integrity,
+            "foreign_key_check": "ok",
             "bytes": total,
             "sha256": _sha256_file(temp_path),
             "core_tables_present": True,
