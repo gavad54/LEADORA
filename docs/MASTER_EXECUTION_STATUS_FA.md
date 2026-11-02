@@ -110,3 +110,60 @@ Runهای جدید برای HEAD فعلی PR #46 موفق‌اند. Regression/S
 - مواردی که پیش از هر تغییر Production لازم‌اند: Backup مستقل خارج از Volume و Restore آزمایشی اثبات‌شده؛ rollback قابل اجرا؛ تطبیق Commit نهایی با Deployment.
 - موارد مالک: مجوز امن Backup/Restore؛ کلید رسمی Release در Protected Secrets؛ Review انسانی طبق سیاست مخزن؛ UAT دستگاه واقعی.
 - هیچ دادهٔ Production، Volume، Migration یا تنظیم Railway در این snapshot تغییر نکرده است.
+
+
+---
+
+## الحاقیهٔ اجرای زنده — 2026-11-02 (بازبینی مستقل Runهای 413859*)
+
+این الحاقیه از نتایج مستقیم GitHub Actions و Railway تهیه شده و بر snapshotهای قدیمی‌تر همین فایل مقدم است. هیچ نتیجه‌ای به SHA دیگری تعمیم داده نشده است.
+
+### خط مبنای GitHub
+- مخزن: `gavad54/LEADORA`؛ شاخه مرجع: `fix/public-home-optional-auth`.
+- PR #46 باز، ادغام‌نشده، Draft=false و mergeable=true است.
+- HEAD زنده PR و SHA ثبت‌شده در Artifact جدید Android: `5e25f4b06cafbe249cfd5a183126ef4e01d22788`.
+- متن قبلی PR و بخش‌های قدیمی این داشبورد هنوز SHA قدیمی `e83236df...` را ذکر می‌کنند؛ این تناقض مستنداتی باید اصلاح شود.
+- PR #47 مستقل و Draft است و جایگزین PR #46 نیست.
+- Review رسمی PR #46 در بررسی فعلی صفر است.
+
+### Workflowهای تازه — همگی روی SHA مربوط به PR #46
+- CI: [Run 41385902850](https://github.com/gavad54/LEADORA/actions/runs/41385902850) — موفق؛ تمام Stepهای ثبت‌شده موفق.
+- Regression/Security: [Run 41385902868](https://github.com/gavad54/LEADORA/actions/runs/41385902868) — موفق؛ **115 passed, 1 warning**. هشدار: `StarletteDeprecationWarning` دربارهٔ استفاده از httpx با `starlette.testclient`.
+- Android: [Run 41385902889](https://github.com/gavad54/LEADORA/actions/runs/41385902889) — Job موفق؛ Build، نصب و اجرای Emulator موفق؛ مرحله Publish APK Release عمداً Skip شده است.
+- Artifact: [LEADORA-Android-APK — 13114964196](https://github.com/gavad54/LEADORA/actions/runs/41385902889/artifacts/13114964196)؛ SHA-256 آرشیو Artifact: `926cb0516fd13bd0e8cfa26a13037b8835c2110ca0ef5ac1d72e53534ed1ad67`.
+- APK SHA-256 از Log همان Run: `dac07e5ca22ddfd9554c3093595994b80bf8731ac103228de34b9076b8690652`؛ اندازه 14,588 bytes. خروجی `assembleDebug` و Debug است؛ امضای معتبر تجاری مالک نیست.
+- `apksigner verify` امضای APK را از نظر ساختار فنی تأیید کرده، اما این امر Debug بودن را به Release تجاری تبدیل نمی‌کند.
+
+### نتیجهٔ قطعی Production Smoke
+در همان Android Run، درخواست `/api/health` موفق بود؛ اما صفحه اصلی Production شش شرط پذیرش را رد کرد:
+- `public_home_present=false`
+- `public_home_visible=false`
+- `auth_overlay_hidden=false`
+- `workspace_hidden=false`
+- `startup_renders_public_home=false`
+- `public_login_action=false`
+
+این شکست با `continue-on-error` در Workflow به‌صورت تشخیصی ثبت شده تا Emulator نیز اجرا شود؛ بنابراین وضعیت کلی Job=success نباید به‌عنوان PASS صفحه عمومی گزارش شود. فایل `production-smoke.txt` در Artifact وضعیت BLOCKED را ثبت می‌کند.
+
+### علت ریشه‌ای Landing / Android
+- `MainActivity` در شاخه PR به‌صورت صریح URL ثابت Production یعنی `https://leadora-web-production.up.railway.app/` را بارگذاری می‌کند؛ منطق آن صفحه Workspace را به‌صورت hard-code نمایش نمی‌دهد.
+- فایل `app/static/index.html` در شاخه PR دارای `#publicHome`، تابع `showPublicHome()` برای نمایش Landing و مخفی‌کردن Workspace و Auth Overlay، و دکمه عمومی «ورود / ساخت حساب» است.
+- Production هنوز HTML قدیمی را ارائه می‌کند و Smoke دقیقاً همین عدم تطابق را اثبات می‌کند. بنابراین ساخت مجدد APK به‌تنهایی مشکل را حل نمی‌کند؛ نسخه وب باید پس از Gateهای Backup/Restore و Rollback به‌صورت کنترل‌شده مستقر شود.
+- هیچ Deployment، Migration، تغییر DB یا Volume در این اجرا انجام نشده است.
+
+### Railway زنده
+- Project: `LEADORA`؛ Environment: `production`؛ Service: `leadora-web`.
+- سرویس Online، یک Replica از یک، صفر failure اخیر، صفر warning/critical و بدون pending work است.
+- Deployment فعال: `224694ef-5e27-42e8-bc8c-ac1d0975a7d2`، وضعیت SUCCESS، ایجادشده در 2026-10-21.
+- Commit واقعی Deployment: `4b9ba54f594f6a90f53656333880f805fe8a8028`؛ branch=`main`. این نسخه با SHA شاخه اصلاحات تطبیق ندارد.
+- Volume همچنان متصل است؛ Backup مستقل خارج از Volume و Restore ایزوله اثبات نشده‌اند.
+
+### وضعیت Gateها و اقدام بعدی
+- Code/CI: CI و Regression روی SHA آزموده‌شده موفق؛ Review انسانی PR هنوز ثبت نشده.
+- Landing/Production: BLOCKED؛ شش شرط Smoke رد شده‌اند.
+- Android: Emulator نصب و اجرا را تأیید کرده، اما APK Debug است و صفحه عمومی Production را نمایش نمی‌دهد.
+- Data Safety: Backup مستقل و Restore ایزوله UNVERIFIED/BLOCKED.
+- Tenant Isolation واقعی دو شرکت: UNVERIFIED.
+- Release Signing و UAT دستگاه واقعی: BLOCKED/UNVERIFIED.
+- تصمیم: **DEPLOYMENT BLOCKED**.
+- اقدام بعدی امن: بازبینی کامل workflow و diff، تکمیل مستندات دقیق، رفع هشدارهای تست و آماده‌سازی مسیر Backup/Restore مستقل؛ هیچ تغییر Production یا داده‌ای پیش از اثبات Gate داده انجام نشود.
