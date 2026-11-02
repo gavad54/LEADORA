@@ -260,3 +260,21 @@ Runهای جدید برای HEAD فعلی PR #46 موفق‌اند. Regression/S
 ### تصمیم اجرایی
 
 **DEPLOYMENT BLOCKED — NOT DELIVERED.** CI و Regression روی Commit فوق موفق‌اند. Android build و نصب تشخیصی انجام شده، اما Public Home Production Smoke شکست خورده و Fail-Closed gate مانع Release شده است. APK تولیدشده Debug است. Production همچنان Commit قدیمی را اجرا می‌کند. Backup مستقل، Restore واقعی، اثبات جامع Tenant Isolation، Release signing رسمی، Review و UAT گوشی واقعی تکمیل نشده‌اند. هیچ تغییری در Production، پایگاه داده یا Volume انجام نشده است.
+
+
+## اجرای اصلاح امنیت Backup/Restore — 2026-11-02
+
+- Commit کد: `df83ceec6d0b811fb5e067aed0e72614d4a991bd`؛ Commit تست: `11b9809a22df04234277173de244de63f1d5c523`.
+- در مسیر ساخت Full SQLite Backup، پس از `integrity_check`، `PRAGMA foreign_key_check` نیز اجرا می‌شود؛ در صورت وجود رابطه شکسته، فایل ناقص به‌عنوان Backup معتبر پذیرفته نمی‌شود.
+- در مسیر بررسی Restore ایزوله نیز `foreign_key_check` اجرا می‌شود و فایل SQLite دارای رابطه شکسته با HTTP 422 رد می‌شود. پاسخ موفق شامل `foreign_key_check=ok` است.
+- تست جدید `test_restore_verification_rejects_sqlite_backup_with_broken_foreign_keys` فایل SQLite ساختگی با رکورد یتیم را ارسال و رد شدن آن و عدم تغییر Health دیتابیس اصلی را کنترل می‌کند.
+- Workflowهای Commit نهایی `11b9809a22df04234277173de244de63f1d5c523` در لحظه ثبت در حال اجرا بودند: CI [41442145662](https://github.com/gavad54/LEADORA/actions/runs/41442145662)، Regression/Security [41442145581](https://github.com/gavad54/LEADORA/actions/runs/41442145581)، Android [41442145436](https://github.com/gavad54/LEADORA/actions/runs/41442145436). نتیجه PASS تا زمان پایان اجرا قابل اعلام نیست.
+- این تغییر فقط اعتبارسنجی ساختاری/رابطه‌ای فایل SQLite را بهتر می‌کند؛ **Backup مستقل Production یا Restore واقعی داده Production نیست**.
+
+### یافته‌های بازبینی معماری که هنوز نیازمند اصلاح/اثبات هستند
+- Router قدیمی `app.participation` همچنان در `app/main.py` فعال و mount شده است؛ حذف یا بازنشسته‌سازی کامل قابلیت مشارکت باید با حفظ داده تاریخی و تعیین دقیق مرزهای مالی انجام شود. تا آن زمان این الزام ACCEPTED نیست.
+- جدول `users` در schema اصلی فیلد نقش سازمانی ندارد؛ بنابراین تفکیک قابل اتکای «مدیر شرکت» از «کاربر عادی» هنوز اثبات نشده است. صرف شناسایی Platform Owner این کمبود را برطرف نمی‌کند.
+- تست‌های موجود Tenant Isolation برای محصولات، مشتریان و چند ماژول مفیدند، اما هنوز ماتریس جامع دو Tenant برای تمام فایل‌ها، گزارش‌ها، عملیات حسابداری/توزیع، Export/Import و نقش‌ها کامل نیست.
+- Android هنوز به URL ثابت Production اشاره می‌کند؛ تا استقرار کنترل‌شده Landing عمومی، APK تازه همچنان محتوای قدیمی Production را دریافت خواهد کرد.
+
+**تصمیم:** تغییر امنیتی Backup/Restore ثبت شد؛ پذیرش نهایی و Deploy همچنان BLOCKED تا پایان Workflowها و رفع/اثبات Gateهای باقیمانده.
