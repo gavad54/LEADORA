@@ -247,6 +247,17 @@ jobs:
           name: LEADORA-Android-APK
           path: release/*
           retention-days: 30
+      - name: Enforce production smoke release gate
+        if: always()
+        shell: bash
+        env:
+          PRODUCTION_SMOKE_OUTCOME: ${{ steps.production_smoke.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "${PRODUCTION_SMOKE_OUTCOME}" != "success" ]; then
+            echo "::error::Production public-home smoke checks failed. This run is diagnostic only and cannot qualify for release."
+            exit 1
+          fi
       - name: Publish APK release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
