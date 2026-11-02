@@ -10,7 +10,7 @@ PR مرجع: [#46](https://github.com/gavad54/LEADORA/pull/46)
 ## خط مبنای زنده GitHub
 
 - `main`: `ead6a400347314f16303520bc016fb988fd621de`
-- PR #46 HEAD: `649d4d017b3a2e87099e1d096b468d89dc6d2e53`
+- PR #46 HEAD در snapshot فعلی: `e83236df8d95177dca4fe813232240075ede2bc3`
 - Compare زنده: PR شاخه نسبت به main دارای 154 commit جلو و صفر commit عقب؛ 29 فایل تغییرکرده.
 - PR #46: Open، Unmerged، Draft=false، mergeable=true؛ 154 commit.
 - Review رسمی و inline review thread: صفر.
@@ -73,3 +73,40 @@ Runهای جدید برای HEAD فعلی PR #46 موفق‌اند. Regression/S
 - CI و اجرای Emulator موفق‌اند، اما Production smoke صفحه عمومی را رد می‌کند.
 - تصمیم: **DEPLOYMENT BLOCKED**.
 - هیچ ادعای تحویل تجاری تا عبور Gateهای داده، امنیت، Production، Android و امضای رسمی مجاز نیست.
+
+
+## الحاقیهٔ بازبینی زنده — 2026-11-02 07:xx (snapshot پس از اجرای جدید)
+
+این الحاقیه بر اطلاعات قدیمی‌تر همین فایل مقدم است. همهٔ نتایج زیر به اجرای مشخص‌شده متصل‌اند.
+
+### GitHub و PR
+- PR #46 همچنان مرجع اصلی است: Open، Unmerged، Draft=false، mergeable=true؛ HEAD زنده: `e83236df8d95177dca4fe813232240075ede2bc3`.
+- PR #47 مستقل و Draft است؛ جایگزین PR #46 نیست.
+- Review رسمی PR #46: صفر؛ Review Thread: صفر.
+- سه اجرای تازهٔ PR #46 روی head SHA بالا تکمیل شدند:
+  - CI: [41383618938](https://github.com/gavad54/LEADORA/actions/runs/41383618938) — Job موفق؛ compileall، pytest، JS syntax، manifest، Compose و Docker image build موفق.
+  - Android: [41383618961](https://github.com/gavad54/LEADORA/actions/runs/41383618961) — Build، نصب و اجرای Emulator موفق؛ Artifact [13113784909](https://github.com/gavad54/LEADORA/actions/runs/41383618961/artifacts/13113784909) ثبت شد.
+  - Regression/Security: [41383618880](https://github.com/gavad54/LEADORA/actions/runs/41383618880) — `115 passed, 1 warning`؛ هشدار Starlette/httpx همچنان باز است.
+- Android Artifact:
+  - PR head: `e83236df8d95177dca4fe813232240075ede2bc3`; Build metadata مقدار `GITHUB_SHA` را به‌صورت merge-test SHA برابر `3f07ee629c08126376007500e8d17b5955abd5c2` ثبت کرده است؛ این SHA را با head PR یکی فرض نکنید.
+  - APK SHA-256: `f0f2766154712b23604ab662083ade92a7cf979d06719b3739ff9d6e9498f5cb`.
+  - Artifact ZIP SHA-256: `d68a1ec865b9f4a8ad1ad74f4b5863f65d94b4c96493b38b937fc2d3d37300a9`.
+  - `apksigner verify` موفق است، اما workflow از `assembleDebug` استفاده می‌کند؛ این APK امضای تجاری مالک را اثبات نمی‌کند. مرحله Publish APK release در اجرای PR Skip شده است.
+  - Smoke سلامت API موفق بود؛ اما public-home acceptance در همان اجرای تازه شکست خورد: `public_home_present=false`, `public_home_visible=false`, `auth_overlay_hidden=false`, `workspace_hidden=false`, `startup_renders_public_home=false`, `public_login_action=false`. بنابراین Production smoke همچنان BLOCKED است.
+  - نصب و اجرای Activity در Emulator موفق است؛ این تست به‌تنهایی اثبات Landing صحیح در WebView نیست. محتوای DOM و screenshot باید از Artifact همان اجرا بازبینی شود.
+- CI regression warning: `StarletteDeprecationWarning` دربارهٔ استفاده از httpx با `starlette.testclient`; این هشدار هنوز رفع نشده است.
+
+### Railway snapshot
+- Project: `LEADORA`; Environment: `production`.
+- سرویس `leadora-web` آنلاین، 1/1 replica، صفر failure اخیر، صفر warning/critical در snapshot و بدون pending work است.
+- Deployment فعال همچنان `224694ef-5e27-42e8-bc8c-ac1d0975a7d2` با وضعیت SUCCESS از 2026-10-21 است.
+- تنظیم Source سرویس: repo `gavad54/LEADORA`, branch `main`, pinned commit `7d92398a8e8e9b457fdfbf5f4dd1b75250506df7`; هیچ Deployment تازه‌ای انجام نشده است.
+- Volume `leadora-data` با ظرفیت 500MB در `/data` متصل و بدون staged change است.
+- Backup مستقل و Restore ایزوله هنوز اثبات نشده‌اند؛ به همین دلیل هیچ deploy یا migration روی Production انجام نشد.
+
+### تصمیم و اقدام بعدی
+- تصمیم فعلی: **DEPLOYMENT BLOCKED**.
+- کارهای مستقل ادامه‌پذیر: بازبینی دقیق diff و workflow، بررسی فایل‌های Android/Web، اصلاح مستندات و اجرای تست‌های ایزوله.
+- مواردی که پیش از هر تغییر Production لازم‌اند: Backup مستقل خارج از Volume و Restore آزمایشی اثبات‌شده؛ rollback قابل اجرا؛ تطبیق Commit نهایی با Deployment.
+- موارد مالک: مجوز امن Backup/Restore؛ کلید رسمی Release در Protected Secrets؛ Review انسانی طبق سیاست مخزن؛ UAT دستگاه واقعی.
+- هیچ دادهٔ Production، Volume، Migration یا تنظیم Railway در این snapshot تغییر نکرده است.
