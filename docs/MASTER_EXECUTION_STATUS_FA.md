@@ -237,3 +237,26 @@ Runهای جدید برای HEAD فعلی PR #46 موفق‌اند. Regression/S
 3. ممیزی فایل‌های workflow و قرارداد انتشار؛ آماده‌سازی Release فقط پس از وجود Secretهای معتبر و تایید سیاست انتشار.
 4. آماده‌سازی طرح Backup مستقل/Restore؛ اجرای آن فقط از مسیر امن مالک و در محیط غیر Production.
 5. اصلاح مستندات و PR summary برای جلوگیری از تعمیم نتایج قدیمی به HEAD جدید.
+
+
+---
+
+## ثبت اجرای زنده نهایی — 2026-11-02 (Commit f65db368)
+
+این الحاقیه جدیدترین اجرای واقعی را ثبت می‌کند و بر وضعیت‌های قدیمی‌تر این فایل مقدم است.
+
+| ID | مشکل | وضعیت | Commit/Environment | اقدام واقعی | مدرک | تست | مانع باقی‌مانده |
+|---|---|---|---|---|---|---|---|
+| RUN-01 | CI اصلی | ACCEPTED | `f65db368d5eb333931e0be89573385e0e71dd2f7` | اجرای Workflow روی HEAD فعلی | [Run 41392345256](https://github.com/gavad54/LEADORA/actions/runs/41392345256) | همه Stepها موفق، Docker build موفق | هشدارهای deprecation ابزارهای GitHub Actions همچنان نیازمند برنامه ارتقا هستند |
+| RUN-02 | Regression/Security | ACCEPTED | همان Commit | اجرای کامل تست‌های خودکار | [Run 41392345261](https://github.com/gavad54/LEADORA/actions/runs/41392345261) | 115 passed؛ 1 هشدار Starlette/httpx | پوشش امنیت Tenant Isolation در سطح جامع تجاری هنوز جداگانه اثبات نشده است |
+| RUN-03 | Android diagnostic build | CONFIRMED | همان Commit | assembleDebug، نصب Emulator، اجرای دستور Activity، تولید شواهد و Artifact | [Run 41392345251](https://github.com/gavad54/LEADORA/actions/runs/41392345251)؛ [Artifact 13118330410](https://github.com/gavad54/LEADORA/actions/runs/41392345251/artifacts/13118330410) | نصب موفق؛ فرمان am start پاسخ Status=ok داد؛ اما Activity گزارش‌شده Launcher بود؛ پذیرش محتوای صحیح صفحه آغازین اثبات نشد | APK Debug است؛ اجرای Release به علت Gate شکست خورده اجرا نشد |
+| RUN-04 | Public Home Production Smoke | BLOCKED | Railway Production | بررسی API health و DOM صفحه اصلی؛ Gate سخت‌گیرانه پس از تشخیص اضافه و فعال شد | [Android Run 41392345251](https://github.com/gavad54/LEADORA/actions/runs/41392345251) | Smoke با outcome=failure؛ Gate نهایی Job را failure کرد؛ انتشار Skip شد | HTML صفحه عمومی PR هنوز روی Production مستقر نیست؛ Deploy منوط به Backup/Restore و سایر Gateهاست |
+| RUN-05 | APK رسمی و امضا | BLOCKED | GitHub Actions | APK تشخیصی با apksigner بررسی و SHA-256 ثبت شد | SHA-256 Debug APK: `5b92db89aa04a643f685778ff072c8859b2dd10850734e415ab3847b36d1c45f` | امضای APK از نظر ساختاری معتبر؛ این مدرک امضای رسمی Release نیست | Keystore سازگار و Secretهای رسمی Release باید در محیط امن تأیید شوند |
+| RUN-06 | Production deployment | BLOCKED | Railway Production | وضعیت محیط، سرویس، Volume و deployment زنده خوانده شد | Deployment `224694ef-5e27-42e8-bc8c-ac1d0975a7d2`; deployed commit `4b9ba54f594f6a90f53656333880f805fe8a8028`; source pin `7d92398a8e8e9b457fdfbf5f4dd1b75250506df7` | Online؛ 1/1 replica؛ صفر failure اخیر؛ بدون pending work | عدم تطبیق Commit و صفحه عمومی قدیمی؛ هیچ Deploy یا تغییر داده/Volume انجام نشد |
+| RUN-07 | Backup مستقل و Restore ایزوله | BLOCKED | Railway Volume `leadora-data` در `/data` | قابلیت‌های متصل Railway و مسیرهای Backup/Volume بررسی شد | Volume ID `18cb4cf3-8061-43d6-94d7-170d7f043704`، ظرفیت 500MB؛ ابزار مستقیم snapshot/exec/restore در اتصال فعلی موجود نیست | هیچ Backup واقعی یا Restore آزمایشی روی داده Production اجرا/ادعا نشد | دسترسی مدیریتی مجاز برای گرفتن نسخه مستقل و انتقال امن به محیط ایزوله لازم است |
+| RUN-08 | Tenant Isolation | UNVERIFIED | PR #46 | وجود تست‌های عمومی Regression بررسی شد؛ نتیجه 115 تست به‌تنهایی اثبات جداسازی جامع تمام مسیرها نیست | [Regression Run 41392345261](https://github.com/gavad54/LEADORA/actions/runs/41392345261) | تست‌ها موفق؛ آزمون جامع دو Tenant مصنوعی برای تمام APIها، فایل‌ها، گزارش‌ها، cache/export و نقش‌ها اثبات نشده | تکمیل ماتریس مسیرها و تست‌های مثبت/منفی لازم است |
+| RUN-09 | PR Review | BLOCKED | PR #46 | وضعیت PR و Reviewها زنده بررسی شد | [PR #46](https://github.com/gavad54/LEADORA/pull/46) | Open، Unmerged، mergeable؛ Review رسمی صفر | Review و تأیید انسانی طبق سیاست مخزن |
+
+### تصمیم اجرایی
+
+**DEPLOYMENT BLOCKED — NOT DELIVERED.** CI و Regression روی Commit فوق موفق‌اند. Android build و نصب تشخیصی انجام شده، اما Public Home Production Smoke شکست خورده و Fail-Closed gate مانع Release شده است. APK تولیدشده Debug است. Production همچنان Commit قدیمی را اجرا می‌کند. Backup مستقل، Restore واقعی، اثبات جامع Tenant Isolation، Release signing رسمی، Review و UAT گوشی واقعی تکمیل نشده‌اند. هیچ تغییری در Production، پایگاه داده یا Volume انجام نشده است.
