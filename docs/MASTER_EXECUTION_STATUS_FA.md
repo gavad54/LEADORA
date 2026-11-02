@@ -167,3 +167,11 @@ Runهای جدید برای HEAD فعلی PR #46 موفق‌اند. Regression/S
 - Release Signing و UAT دستگاه واقعی: BLOCKED/UNVERIFIED.
 - تصمیم: **DEPLOYMENT BLOCKED**.
 - اقدام بعدی امن: بازبینی کامل workflow و diff، تکمیل مستندات دقیق، رفع هشدارهای تست و آماده‌سازی مسیر Backup/Restore مستقل؛ هیچ تغییر Production یا داده‌ای پیش از اثبات Gate داده انجام نشود.
+
+
+### تکمیل شواهد HTTP و Assets — 2026-11-02
+- موجودی زنده Railway تأیید کرد: سرویس `leadora-web` از repo `gavad54/LEADORA`، branch=`main` و pin=`7d92398a8e8e9b457fdfbf5f4dd1b75250506df7` استفاده می‌کند؛ Deployment زنده commit=`4b9ba54f594f6a90f53656333880f805fe8a8028` است.
+- Volume `leadora-data` با اندازه 500MB در `/data` متصل است؛ هیچ Bucket، staged change یا pending patch وجود ندارد.
+- HTTP logs زنده برای درخواست‌های Android در 2026-11-02، پاسخ 200 برای `/`، `/api/health`، `/icon.svg`، `/static/leadora-mark.svg`، `/static/leadora-banner.svg`، `/service-worker.js` و `/manifest.webmanifest` نشان می‌دهند.
+- همان لاگ‌ها درخواست نامعتبر font را با مسیر `/url('https://fonts.googleapis.com/css2` و HTTP 404 ثبت کرده‌اند. فایل `app/static/index.html` در شاخه PR دارای توضیح offline-safe font stack است و رشته `fonts.googleapis` در نسخه شاخه PR یافت نشد؛ بنابراین رفع سمت کد در PR موجود است، اما هنوز در Production قدیمی اعمال نشده است.
+- این شواهد، خطای فونت را از حدس به یک 404 واقعی در Production ارتقا می‌دهد؛ با این حال، به‌تنهایی علت شش شکست Landing نیست. علت Landing همچنان عدم استقرار HTML اصلاح‌شده است.
