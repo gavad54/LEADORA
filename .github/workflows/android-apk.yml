@@ -195,6 +195,25 @@ jobs:
           sleep 8
           timeout 30s adb shell dumpsys activity activities > release/android-activities-after-launch.txt
           grep -q 'com.leadora.app' release/android-activities-after-launch.txt
+          # A foreground Activity alone is not proof that WebView rendered content.
+          dom_ready=false
+          for attempt in $(seq 1 20); do
+            timeout 15s adb logcat -d -t 5000 -s LEADORA_WEBVIEW_DOM:I > release/android-webview-dom.txt 2>&1 || true
+            if grep -Eq 'textLength=[1-9][0-9]*' release/android-webview-dom.txt \
+              && grep -Eq 'visibleTextNodes=[1-9][0-9]*' release/android-webview-dom.txt; then
+              dom_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$dom_ready" != true ]; then
+            echo "WebView did not prove visible DOM text after page load."
+            cat release/android-webview-dom.txt || true
+            timeout 20s adb logcat -d -t 5000 -s LEADORA_WEBVIEW_CONSOLE:W LEADORA_WEBVIEW_ERROR:E > release/android-webview-errors.txt 2>&1 || true
+            cat release/android-webview-errors.txt || true
+            exit 1
+          fi
+          timeout 30s adb logcat -d -t 5000 -s LEADORA_WEBVIEW_CONSOLE:W LEADORA_WEBVIEW_ERROR:E > release/android-webview-errors.txt 2>&1 || true
           timeout 30s adb exec-out screencap -p > release/android-emulator-home.png
           test -s release/android-emulator-home.png
           timeout 30s adb logcat -d -t 5000 -s AndroidRuntime:E > release/android-runtime-errors.txt
