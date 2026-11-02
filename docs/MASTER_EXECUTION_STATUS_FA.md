@@ -175,3 +175,65 @@ Runهای جدید برای HEAD فعلی PR #46 موفق‌اند. Regression/S
 - HTTP logs زنده برای درخواست‌های Android در 2026-11-02، پاسخ 200 برای `/`، `/api/health`، `/icon.svg`، `/static/leadora-mark.svg`، `/static/leadora-banner.svg`، `/service-worker.js` و `/manifest.webmanifest` نشان می‌دهند.
 - همان لاگ‌ها درخواست نامعتبر font را با مسیر `/url('https://fonts.googleapis.com/css2` و HTTP 404 ثبت کرده‌اند. فایل `app/static/index.html` در شاخه PR دارای توضیح offline-safe font stack است و رشته `fonts.googleapis` در نسخه شاخه PR یافت نشد؛ بنابراین رفع سمت کد در PR موجود است، اما هنوز در Production قدیمی اعمال نشده است.
 - این شواهد، خطای فونت را از حدس به یک 404 واقعی در Production ارتقا می‌دهد؛ با این حال، به‌تنهایی علت شش شکست Landing نیست. علت Landing همچنان عدم استقرار HTML اصلاح‌شده است.
+
+
+---
+
+## اجرای مستقل و بازبینی زنده — 2026-11-02 پس از Runهای 413877*
+
+این بخش جدیدترین snapshot است و در صورت تعارض، بر الحاقیه‌های قبلی مقدم است.
+
+### GitHub و PR
+- PR #46: OPEN، UNMERGED، Draft=false، mergeable=true.
+- HEAD فعلی شاخه `fix/public-home-optional-auth`: `03cf2f292417c6e0f887f4875d0e4f7256557b60`.
+- Base `main`: `ead6a400347314f16303520bc016fb988fd621de`.
+- Compare زنده: 158 commit جلوتر و صفر عقب‌تر؛ 29 فایل تغییرکرده.
+- PR #47 همچنان مستقل و Draft است؛ جایگزین PR #46 نیست.
+- Review رسمی PR #46: صفر؛ هیچ review submission ثبت نشده است.
+- مخزن عمومی است و مجوزهای اتصال GitHub برای این مخزن Admin=true و Push=true گزارش شدند.
+
+### Workflowهای متصل به HEAD فعلی
+- CI: [Run 41387761587](https://github.com/gavad54/LEADORA/actions/runs/41387761587) — Job و تمام Stepها موفق؛ Python compile، pytest، JS syntax، manifest، Compose و Docker image build.
+- Regression/Security: [Run 41387761559](https://github.com/gavad54/LEADORA/actions/runs/41387761559) — موفق؛ **115 passed, 1 warning**. هشدار: StarletteDeprecationWarning درباره استفاده از httpx با starlette.testclient؛ نیازمند بررسی سازگاری وابستگی، نه سرکوب کورکورانه هشدار.
+- Android: [Run 41387761566](https://github.com/gavad54/LEADORA/actions/runs/41387761566) — Build، نصب و اجرای Activity روی Emulator موفق؛ مرحله انتشار Release عمداً Skip شده است.
+- Android Artifact: [Artifact 13116501187](https://github.com/gavad54/LEADORA/actions/runs/41387761566/artifacts/13116501187)، SHA-256 آرشیو: `965399b4d89c8a83229446cae6660b23c118ec33b9b9cf2e29e30e7ed60f9c5e`.
+- APK با `assembleDebug` ساخته شده؛ SHA-256: `6d8ed1cb0cdc39d50670ab663d9184d099d3ea924be3711238201d97512ebde4`؛ اندازه 14,588 bytes. `apksigner verify` از نظر ساختاری موفق است، اما APK Debug است و امضای تجاری مالک را اثبات نمی‌کند.
+- Emulator package را نصب و `MainActivity` را اجرا کرد؛ این نتیجه فقط Runtime/Activity را تأیید می‌کند، نه Landing صحیح در Production.
+- هشدارهای ابزار زنجیره Android شامل setup-java@v4 منسوخ و Node.js 20 در برخی Actions است؛ باید به نسخه‌های پشتیبانی‌شده ارتقا یابند.
+
+### نتیجه دقیق Production Smoke
+در Run 41387761566، health endpoint و دریافت صفحه پاسخ 200 داشتند؛ اما شش شرط صفحه عمومی در Production رد شدند:
+- `public_home_present=false`
+- `public_home_visible=false`
+- `auth_overlay_hidden=false`
+- `workspace_hidden=false`
+- `startup_renders_public_home=false`
+- `public_login_action=false`
+
+این مرحله در Workflow با continue-on-error تشخیصی است تا آزمون Emulator اجرا شود؛ بنابراین موفقیت کلی Job به معنی موفقیت Production smoke نیست. فایل Artifact وضعیت Smoke را BLOCKED ثبت می‌کند.
+
+### Railway زنده
+- Project: LEADORA؛ Environment: production.
+- Service: `leadora-web`؛ ID: `13aa3d75-48b6-4ad1-8064-a7846ffe6739`.
+- سرویس Online، 1/1 replica، صفر failure اخیر، صفر warning/critical و بدون pending work.
+- Deployment فعال: `224694ef-5e27-42e8-bc8c-ac1d0975a7d2`، SUCCESS از 2026-10-21.
+- Source: `gavad54/LEADORA`، branch=`main`، pinned SHA=`7d92398a8e8e9b457fdfbf5f4dd1b75250506df7`.
+- Volume زنده `leadora-data` با ظرفیت 500MB در `/data` متصل است؛ هیچ Bucket و هیچ staged change وجود ندارد.
+- لاگ HTTP در اجرای جدید: `/api/health` و `/` پاسخ 200؛ آیکون، بنر، Service Worker و Manifest نیز 200. درخواست فونت نامعتبر `/url('https://fonts.googleapis.com/css2` همچنان 404 می‌دهد.
+- هیچ Deployment، Migration، DB یا Volume mutation انجام نشده است.
+
+### علت ریشه‌ای و تصمیم
+- شاخه PR فایل `app/static/index.html` را با `#publicHome`، `showPublicHome()` و دکمه ورود عمومی دارد.
+- APK به URL ثابت Production متصل است؛ Production هنوز HTML قدیمی را ارائه می‌کند. بنابراین Build مجدد APK مشکل صفحه شروع را رفع نمی‌کند؛ ابتدا باید اصلاح وب پس از Gateهای داده و بازیابی، به‌صورت کنترل‌شده مستقر شود.
+- Backup مستقل خارج از Volume و Restore ایزوله هنوز اثبات نشده‌اند.
+- Tenant Isolation واقعی بین دو شرکت هنوز UNVERIFIED.
+- امضای رسمی Release و UAT گوشی واقعی هنوز BLOCKED/UNVERIFIED.
+- PR Review رسمی هنوز انجام نشده است.
+- **تصمیم فعلی: DEPLOYMENT BLOCKED.** هیچ تغییر Production یا داده‌ای در این بازبینی انجام نشده است.
+
+### اقدامات مستقل بعدی
+1. تکمیل بررسی امنیت و جداسازی Tenant با دو Tenant آزمایشی و داده ساختگی در محیط ایزوله.
+2. بررسی هشدار Starlette/httpx و هشدارهای GitHub Actions؛ اصلاح فقط با سازگاری و آزمون مجدد.
+3. ممیزی فایل‌های workflow و قرارداد انتشار؛ آماده‌سازی Release فقط پس از وجود Secretهای معتبر و تایید سیاست انتشار.
+4. آماده‌سازی طرح Backup مستقل/Restore؛ اجرای آن فقط از مسیر امن مالک و در محیط غیر Production.
+5. اصلاح مستندات و PR summary برای جلوگیری از تعمیم نتایج قدیمی به HEAD جدید.
