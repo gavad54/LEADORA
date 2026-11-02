@@ -46,3 +46,16 @@ def test_avd_home_is_set_before_avd_creation_and_emulator_launch():
     assert configure_home < kvm_permission_check < create_avd < launch_emulator, (
         "The ephemeral runner must receive KVM access before creating and launching the x86_64 AVD."
     )
+
+
+def test_android_smoke_requires_webview_dom_render_diagnostics():
+    activity = Path(
+        "android/app/src/main/java/com/leadora/app/MainActivity.java"
+    ).read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/android-apk.yml").read_text(encoding="utf-8")
+    assert "LEADORA_WEBVIEW_DOM" in activity
+    assert "LEADORA_WEBVIEW_CONSOLE" in activity
+    assert "LEADORA_WEBVIEW_ERROR" in activity
+    assert "android-webview-dom.txt" in workflow
+    assert "visibleTextNodes" in activity
+    assert "textLength=[1-9][0-9]*" in workflow
