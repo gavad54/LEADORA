@@ -133,9 +133,10 @@ jobs:
             SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -n 1)"
           fi
           AVDMANAGER="$(dirname "$SDKMANAGER")/avdmanager"
-          "$AVDMANAGER" create avd --name leadora_api30 --package "system-images;android-${ANDROID_API_LEVEL};google_apis;x86_64" --device pixel_2 --force
+          # Use the same AVD home for creation and emulator lookup.
           export ANDROID_AVD_HOME="$HOME/.android/avd"
-          mkdir -p release
+          mkdir -p "$ANDROID_AVD_HOME" release
+          "$AVDMANAGER" create avd --name leadora_api30 --package "system-images;android-${ANDROID_API_LEVEL};google_apis;x86_64" --device pixel_2 --force
           EMULATOR="$ANDROID_HOME/emulator/emulator"
           test -x "$EMULATOR"
           "$EMULATOR" -avd leadora_api30 -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect -no-metrics > /tmp/leadora-emulator.log 2>&1 &
