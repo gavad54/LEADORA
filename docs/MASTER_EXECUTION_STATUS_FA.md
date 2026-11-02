@@ -278,3 +278,10 @@ Runهای جدید برای HEAD فعلی PR #46 موفق‌اند. Regression/S
 - Android هنوز به URL ثابت Production اشاره می‌کند؛ تا استقرار کنترل‌شده Landing عمومی، APK تازه همچنان محتوای قدیمی Production را دریافت خواهد کرد.
 
 **تصمیم:** تغییر امنیتی Backup/Restore ثبت شد؛ پذیرش نهایی و Deploy همچنان BLOCKED تا پایان Workflowها و رفع/اثبات Gateهای باقیمانده.
+
+
+### نتیجه قطعی تست امنیتی اصلاح Backup/Restore — 2026-11-02
+- Regression/Security Run [41442145581](https://github.com/gavad54/LEADORA/actions/runs/41442145581) روی Commit کد/تست `11b9809a22df04234277173de244de63f1d5c523`: **116 passed, 1 warning** در 25.30 ثانیه.
+- تست جدید رد Backup SQLite با Foreign Key شکسته موفق شد؛ تمام تست‌های قبلی نیز سبز ماندند.
+- هشدار باقیمانده: `StarletteDeprecationWarning` درباره استفاده از httpx با TestClient؛ نیازمند ارتقای سازگار وابستگی‌ها و اجرای مجدد Regression است.
+- CI و Android برای Commit نهایی/داشبورد بعدی هنوز در حال اجرا یا در صف بودند؛ نتیجه نهایی آن‌ها در این لحظه اعلام نمی‌شود.
