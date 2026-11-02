@@ -31,3 +31,14 @@ def test_commercial_android_release_is_restricted_to_main_branch():
         r"(?m)^  release:\n    if: github\.ref == 'refs/heads/main'$",
         workflow,
     ), "Signed commercial releases must only run from the reviewed main branch."
+
+
+def test_avd_home_is_set_before_avd_creation_and_emulator_launch():
+    workflow = Path(".github/workflows/android-apk.yml").read_text(encoding="utf-8")
+    configure_home = workflow.index('export ANDROID_AVD_HOME="$HOME/.android/avd"')
+    create_avd = workflow.index('"$AVDMANAGER" create avd')
+    launch_emulator = workflow.index('"$EMULATOR" -avd leadora_api30')
+    assert configure_home < create_avd < launch_emulator, (
+        "ANDROID_AVD_HOME must be configured before avdmanager creates the AVD "
+        "and before the emulator tries to load it."
+    )
