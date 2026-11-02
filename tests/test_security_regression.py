@@ -199,6 +199,7 @@ def test_full_database_backup_is_owner_only_and_can_be_verified_offline(monkeypa
     metadata = created.json()
     assert metadata["status"] == "verified"
     assert metadata["integrity_check"] == "ok"
+    assert metadata["foreign_key_check"] == "ok"
     assert metadata["bytes"] > 0
     assert len(metadata["sha256"]) == 64
 
@@ -211,7 +212,30 @@ def test_full_database_backup_is_owner_only_and_can_be_verified_offline(monkeypa
                            files={"file": ("leadora-backup.sqlite3", downloaded.content, "application/vnd.sqlite3")})
     assert verified.status_code == 200, verified.text
     assert verified.json()["integrity_check"] == "ok"
+    assert verified.json()["foreign_key_check"] == "ok"
     assert verified.json()["production_database_changed"] is False
+
+
+def test_restore_verification_rejects_sqlite_backup_with_broken_foreign_keys(monkeypatch, tmp_path):
+    import sqlite3
+
+    token = register("Broken Backup Tenant", "broken-backup@example.test")
+    user_id = token.split(".", 1)[0].split(":", 1)[0]
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", user_id)
+    invalid = tmp_path / "broken.sqlite3"
+    with sqlite3.connect(invalid) as conn:
+        conn.execute("CREATE TABLE tenants(id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE users(id INTEGER PRIMARY KEY, tenant_id INTEGER REFERENCES tenants(id))")
+        conn.execute("INSERT INTO users(id,tenant_id) VALUES(1,999)")
+    before = client.get("/api/health").json()
+    with invalid.open("rb") as handle:
+        response = client.post(
+            "/api/platform/backup/verify",
+            headers=auth(token),
+            files={"file": ("broken.sqlite3", handle.read(), "application/vnd.sqlite3")},
+        )
+    assert response.status_code == 422, response.text
+    assert client.get("/api/health").json() == before
 
 
 def test_full_database_backup_endpoints_reject_regular_tenant(monkeypatch):
