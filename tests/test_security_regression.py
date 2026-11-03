@@ -352,7 +352,15 @@ def test_platform_owner_recovery_is_email_bound_and_recovery_token_is_single_use
 
     reused = client.post(
         "/api/platform/owner/recover",
-        headers=auth(first_token),
+        headers=auth(recovery_token),
         json={"recovery_token": "single-use-recovery-token-with-at-least-32-chars"},
     )
     assert reused.status_code == 409
+
+
+def test_platform_owner_setup_page_is_served():
+    response = client.get("/platform-owner")
+    assert response.status_code == 200
+    assert "PLATFORM OWNERSHIP" in response.text
+    assert "/api/platform/owner/claim" in response.text
+    assert "/api/platform/owner/recover" in response.text
