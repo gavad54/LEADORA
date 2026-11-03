@@ -368,3 +368,42 @@ def test_platform_owner_setup_page_is_served():
     assert "PLATFORM OWNERSHIP" in response.text
     assert "/api/platform/owner/claim" in response.text
     assert "/api/platform/owner/recover" in response.text
+
+
+def test_platform_and_finance_owner_routes_share_one_claim_and_recovery_state(monkeypatch):
+    clear_platform_owner_state()
+    monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
+    first_token = register("Unified Original Owner", "unified-owner@example.test")
+    recovery_token = register("Unified Recovery Owner", "unified-recovery@example.test")
+    bootstrap = "unified-bootstrap-secret-with-32-characters-minimum"
+    recovery = "unified-recovery-secret-with-32-characters-minimum"
+
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "unified-owner@example.test")
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", bootstrap)
+    claimed = client.post(
+        "/api/platform/owner/claim",
+        headers=auth(first_token),
+        json={"bootstrap_token": bootstrap},
+    )
+    assert claimed.status_code == 200, claimed.text
+
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", "unified-recovery@example.test")
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", recovery)
+    recovered_via_finance = client.post(
+        "/api/finance/owner/recover",
+        headers=auth(recovery_token),
+        json={"token": recovery},
+    )
+    assert recovered_via_finance.status_code == 200, recovered_via_finance.text
+
+    reused_via_platform = client.post(
+        "/api/platform/owner/recover",
+        headers=auth(recovery_token),
+        json={"recovery_token": recovery},
+    )
+    assert reused_via_platform.status_code == 409
+
+    owner_status = client.get("/api/platform/owner/status", headers=auth(recovery_token))
+    former_owner_status = client.get("/api/platform/owner/status", headers=auth(first_token))
+    assert owner_status.json()["is_platform_owner"] is True
+    assert former_owner_status.json()["is_platform_owner"] is False
