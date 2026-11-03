@@ -169,6 +169,9 @@ def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(m
 
 
 def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
+    with db() as conn:
+        conn.execute("DELETE FROM finance_platform_owner")
+        conn.execute("DELETE FROM finance_platform_owner_recovery_uses")
     client = TestClient(app)
     monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
     bootstrap = "test-owner-bootstrap-token-0123456789-abcdef"
