@@ -76,6 +76,13 @@ label{display:block;font-size:13px;margin:14px 0 8px;color:#d8e2fa}input{width:1
 <input id="recoveryToken" type="password" minlength="32" maxlength="256" autocomplete="off" required>
 <button id="recoveryButton" type="submit">بازیابی مالکیت</button>
 </form>
+<form id="recoveryCodeForm" class="hidden">
+<label for="recoveryRequestId">شناسه درخواست بازیابی</label>
+<input id="recoveryRequestId" type="text" readonly>
+<label for="recoveryCode">کد تأیید ارسال‌شده به ایمیل بازیابی</label>
+<input id="recoveryCode" type="password" minlength="24" maxlength="128" autocomplete="off" required>
+<button id="recoveryConfirmButton" type="submit">تأیید کد و تکمیل بازیابی</button>
+</form>
 </section>
 <div class="foot">پس از ثبت موفق مالک اولیه، متغیر LEADORA_OWNER_BOOTSTRAP_TOKEN را از تنظیمات Railway حذف کنید. پس از بازیابی نیز کد بازیابی را تعویض و مقدار قبلی را از تنظیمات حذف کنید. این صفحه هیچ‌گاه کدها را ذخیره نمی‌کند.</div>
 <a class="link secondary" href="/">بازگشت به LEADORA</a>
@@ -174,10 +181,29 @@ $('claimForm').addEventListener('submit',async event=>{
 });
 $('recoveryForm').addEventListener('submit',async event=>{
  event.preventDefault();const button=$('recoveryButton');button.disabled=true;
- try{await request('/api/platform/owner/recover',{recovery_token:$('recoveryToken').value});$('recoveryToken').value='';showMessage('مالکیت بازیابی شد. کد بازیابی قبلی یک‌بارمصرف شده است؛ آن را از Railway حذف و کد جدیدی تنظیم کنید.','good');$('recoveryPanel').classList.add('hidden');await refresh();}
- catch(error){showMessage(error.message,'warn');}
+ try{
+  const result=await request('/api/platform/owner/recovery/request',{token:$('recoveryToken').value});
+  $('recoveryToken').value='';
+  $('recoveryRequestId').value=result.request_id;
+  $('recoveryCodeForm').classList.remove('hidden');
+  showMessage('کد تأیید بازیابی به ایمیل تعیین‌شده ارسال شد. کد فقط ۱۰ دقیقه اعتبار دارد.','good');
+ }catch(error){showMessage(error.message,'warn');}
  finally{button.disabled=false;}
 });
+$('recoveryCodeForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('recoveryConfirmButton');button.disabled=true;
+ try{
+  await request('/api/platform/owner/recovery/confirm',{
+   request_id:$('recoveryRequestId').value.trim(),code:$('recoveryCode').value
+  });
+  $('recoveryCode').value='';
+  showMessage('بازیابی مالکیت با تأیید ایمیل انجام شد. کد بازیابی سرور را برای استفاده بعدی تعویض کنید.','good');
+  $('recoveryPanel').classList.add('hidden');
+  await refresh();
+ }catch(error){showMessage(error.message,'warn');}
+ finally{button.disabled=false;}
+});
+
 refresh();
 </script>
 </body>
