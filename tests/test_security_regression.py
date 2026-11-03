@@ -280,6 +280,11 @@ def test_platform_owner_claim_is_one_time_and_bound_to_configured_email(monkeypa
     assert claimed.status_code == 200, claimed.text
     assert claimed.json()["is_platform_owner"] is True
     assert client.get("/api/platform/licenses", headers=auth(owner_token)).status_code == 200
+    owner_user_id = owner_token.split(".", 1)[0].split(":", 1)[0]
+    other_user_id = other_token.split(".", 1)[0].split(":", 1)[0]
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", other_user_id)
+    assert client.get("/api/platform/licenses", headers=auth(other_token)).status_code == 403
+    monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
 
     status = client.get("/api/platform/owner/status", headers=auth(owner_token))
     assert status.status_code == 200
