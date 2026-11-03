@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#080d20">
+<title>مدیریت مالکیت پلتفرم | LEADORA</title>
+<style>
+:root{color-scheme:dark;font-family:Tahoma,Arial,sans-serif;background:#080d20;color:#eef4ff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 85% 8%,#6d45ff3d,transparent 38%),radial-gradient(ellipse at 10% 75%,#18e4d126,transparent 35%),linear-gradient(145deg,#080d20,#101a36 55%,#10112b);padding:24px}
+main{width:min(100%,650px);margin:7vh auto;background:#101a35eF;border:1px solid #ffffff25;border-radius:24px;padding:clamp(22px,5vw,38px);box-shadow:0 24px 80px #0008}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:24px}.mark{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#55f4d5,#7685ff 58%,#c36cff);display:grid;place-items:center;color:#10152f;font-weight:900;font-size:20px}.brand small{display:block;color:#9eacd0;font-size:10px;letter-spacing:2px;margin-top:4px}
+h1{font-size:clamp(22px,5vw,29px);margin:0 0 10px}p{color:#b7c4e3;line-height:1.9;font-size:14px}.panel{border:1px solid #ffffff20;background:#ffffff08;border-radius:16px;padding:18px;margin-top:16px}.panel h2{font-size:17px;margin:0 0 10px}.hint{font-size:12px;color:#9caed3}.status{padding:13px;border-radius:12px;background:#ffffff0d;color:#dce7ff;line-height:1.8;margin:16px 0}.status.good{border:1px solid #3ce0b255;color:#a8f6dc}.status.warn{border:1px solid #f5c26b55;color:#ffdda0}
+label{display:block;font-size:13px;margin:14px 0 8px;color:#d8e2fa}input{width:100%;border-radius:11px;border:1px solid #ffffff35;background:#070f25;color:white;padding:14px;font:inherit;direction:ltr;text-align:left}button,.link{display:inline-block;border:0;border-radius:11px;padding:13px 18px;margin-top:13px;background:linear-gradient(110deg,#55e7d0,#8292ff);color:#09152b;font:inherit;font-weight:bold;text-decoration:none;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.secondary{background:#ffffff12;color:#dbe6ff;border:1px solid #ffffff25}.hidden{display:none!important}.foot{font-size:11px;color:#8999bd;margin-top:22px;line-height:1.9}
+</style>
+</head>
+<body>
+<main>
+<div class="brand"><div class="mark">L</div><div><strong>LEADORA</strong><small>PLATFORM OWNERSHIP</small></div></div>
+<h1>راه‌اندازی مالک پلتفرم</h1>
+<p>این بخش فقط برای حسابی است که ایمیل آن از قبل در تنظیمات امن سرور تعیین شده است. ثبت مالکیت یک‌باره و در پایگاه داده ثبت و ممیزی می‌شود.</p>
+<div id="status" class="status">در حال بررسی وضعیت حساب…</div>
+<div id="loginNeeded" class="panel hidden">
+<p>برای ادامه ابتدا از صفحه اصلی LEADORA وارد حساب کاربری تعیین‌شده شوید؛ سپس دوباره این صفحه را باز کنید.</p>
+<a class="link" href="/">رفتن به صفحه ورود</a>
+</div>
+<section id="claimPanel" class="panel hidden">
+<h2>ثبت اولیه مالک</h2>
+<p class="hint">کد راه‌اندازی را فقط در همین صفحه وارد کنید. این کد را در پیام یا گفت‌وگو برای هیچ‌کس ارسال نکنید.</p>
+<form id="claimForm">
+<label for="bootstrapToken">کد راه‌اندازی اولیه</label>
+<input id="bootstrapToken" type="password" minlength="32" maxlength="256" autocomplete="off" required>
+<button id="claimButton" type="submit">ثبت مالکیت</button>
+</form>
+</section>
+<section id="recoveryPanel" class="panel hidden">
+<h2>بازیابی مالکیت</h2>
+<p class="hint">این مسیر فقط برای ایمیل بازیابی از پیش تعیین‌شده است. کد بازیابی پس از یک بار استفاده دیگر پذیرفته نمی‌شود.</p>
+<form id="recoveryForm">
+<label for="recoveryToken">کد بازیابی یک‌بارمصرف</label>
+<input id="recoveryToken" type="password" minlength="32" maxlength="256" autocomplete="off" required>
+<button id="recoveryButton" type="submit">بازیابی مالکیت</button>
+</form>
+</section>
+<div class="foot">پس از ثبت موفق مالک اولیه، متغیر LEADORA_OWNER_BOOTSTRAP_TOKEN را از تنظیمات Railway حذف کنید. پس از بازیابی نیز کد بازیابی را تعویض و مقدار قبلی را از تنظیمات حذف کنید. این صفحه هیچ‌گاه کدها را ذخیره نمی‌کند.</div>
+<a class="link secondary" href="/">بازگشت به LEADORA</a>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const token=localStorage.getItem('leadora_token')||'';
+function showMessage(message,kind=''){ $('status').textContent=message;$('status').className='status '+kind; }
+async function request(path,body){
+ const response=await fetch(path,{method:body?'POST':'GET',headers:{'Accept':'application/json','Authorization':'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+ let data={};try{data=await response.json()}catch{}
+ if(!response.ok)throw new Error(data.detail||'درخواست ناموفق بود.');
+ return data;
+}
+async function refresh(){
+ if(!token){$('loginNeeded').classList.remove('hidden');showMessage('برای ادامه باید ابتدا وارد حساب کاربری شوید.','warn');return;}
+ try{
+  const data=await request('/api/platform/owner/status');
+  $('loginNeeded').classList.add('hidden');
+  if(data.is_platform_owner){showMessage('این حساب مالک پلتفرم است. دسترسی مالک ثبت و قابل ممیزی است.','good');return;}
+  if(data.bootstrap_eligible){showMessage('حساب شما برای ثبت اولیه مالک تأیید شده است.','warn');$('claimPanel').classList.remove('hidden');return;}
+  if(data.recovery_eligible){showMessage('حساب شما برای بازیابی مالک تأیید شده است.','warn');$('recoveryPanel').classList.remove('hidden');return;}
+  if(data.owner_claimed){showMessage('مالک پلتفرم قبلاً ثبت شده است. این حساب مجاز به تغییر مالک نیست.');return;}
+  showMessage('تنظیمات راه‌اندازی مالک هنوز برای این حساب آماده نیست. تنظیمات ایمیل و کد امن باید در Railway تکمیل شوند.','warn');
+ }catch(error){showMessage(error.message,'warn');}
+}
+$('claimForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('claimButton');button.disabled=true;
+ try{await request('/api/platform/owner/claim',{bootstrap_token:$('bootstrapToken').value});$('bootstrapToken').value='';showMessage('مالکیت با موفقیت ثبت شد. اکنون کد راه‌اندازی را از Railway حذف کنید.','good');$('claimPanel').classList.add('hidden');await refresh();}
+ catch(error){showMessage(error.message,'warn');}
+ finally{button.disabled=false;}
+});
+$('recoveryForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('recoveryButton');button.disabled=true;
+ try{await request('/api/platform/owner/recover',{recovery_token:$('recoveryToken').value});$('recoveryToken').value='';showMessage('مالکیت بازیابی شد. کد بازیابی قبلی یک‌بارمصرف شده است؛ آن را از Railway حذف و کد جدیدی تنظیم کنید.','good');$('recoveryPanel').classList.add('hidden');await refresh();}
+ catch(error){showMessage(error.message,'warn');}
+ finally{button.disabled=false;}
+});
+refresh();
+</script>
+</body>
+</html>
