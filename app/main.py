@@ -2178,7 +2178,7 @@ def _finish_owner_transfer(conn, transfer):
     conn.execute(
         "INSERT INTO user_session_revocations(user_id,revoked_before,reason) VALUES(?,?,?) "
         "ON CONFLICT(user_id) DO UPDATE SET revoked_before=MAX(revoked_before,excluded.revoked_before),reason=excluded.reason",
-        (int(transfer["current_owner_user_id"]), now, "platform_owner_transferred"),
+        (int(transfer["current_owner_user_id"]), now + 1, "platform_owner_transferred"),
     )
     conn.execute(
         "UPDATE platform_owner_transfer_requests SET status='completed',completed_at=? WHERE id=? AND status='pending'",
