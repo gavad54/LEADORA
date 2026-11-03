@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 from urllib.request import Request
+import pytest
 
 _TEST_ROOT = Path(tempfile.mkdtemp(prefix="leadora-email-tests-"))
 os.environ["LEADORA_DB"] = str(_TEST_ROOT / "email-test.db")
@@ -15,7 +16,8 @@ from app.main import app, db
 client = TestClient(app)
 
 
-def register_owner():
+@pytest.fixture
+def owner_headers():
     response = client.post("/api/register", json={
         "company_name": "Email Service Test Company",
         "industry": "retail",
@@ -29,11 +31,14 @@ def register_owner():
         conn.execute("DELETE FROM finance_platform_owner")
         conn.execute("INSERT INTO finance_platform_owner(singleton,user_id,email) VALUES(1,?,?)",
                      (user_id, "email-owner@example.test"))
-    return {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {token}"}
+    yield headers
+    with db() as conn:
+        conn.execute("DELETE FROM finance_platform_owner WHERE user_id=?", (user_id,))
 
 
-def test_platform_owner_can_send_a_test_email_only_to_their_own_account(monkeypatch):
-    headers = register_owner()
+def test_platform_owner_can_send_a_test_email_only_to_their_own_account(monkeypatch, owner_headers):
+    headers = owner_headers
     monkeypatch.setenv("BREVO_API_KEY", "test-api-key-never-return-this")
     monkeypatch.setenv("BREVO_SENDER_EMAIL", "noreply@example.test")
     monkeypatch.setenv("BREVO_SENDER_NAME", "LEADORA")
@@ -71,8 +76,8 @@ def test_platform_owner_can_send_a_test_email_only_to_their_own_account(monkeypa
     assert "test-api-key-never-return-this" not in response.text
 
 
-def test_platform_email_status_does_not_expose_provider_credentials(monkeypatch):
-    headers = register_owner()
+def test_platform_email_status_does_not_expose_provider_credentials(monkeypatch, owner_headers):
+    headers = owner_headers
     monkeypatch.setenv("BREVO_API_KEY", "secret-value-that-must-never-be-returned")
     monkeypatch.setenv("BREVO_SENDER_EMAIL", "noreply@example.test")
     response = client.get("/api/platform/email/status", headers=headers)
