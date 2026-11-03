@@ -139,6 +139,19 @@ def token(uid, tid):
     sig = hmac.new(SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
     return raw + "." + sig
 
+def _is_platform_owner_id(user_id):
+    try:
+        with db() as conn:
+            row = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+        # Once a database owner is claimed, it is authoritative. The legacy ID
+        # allowlist remains a break-glass fallback only while no owner is stored.
+        if row:
+            return str(row["user_id"]) == str(user_id)
+    except sqlite3.OperationalError:
+        pass
+    allowed = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
+    return str(user_id) in allowed
+
 def user_from_header(authorization: str | None = Header(default=None), request: Request = None):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "ابتدا وارد شوید.")
@@ -158,15 +171,7 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
         if not u: raise ValueError()
         user = dict(u)
         # Enforce trial/license state server-side for all tenant business routes.
-        allowed_owner_ids = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
-        is_platform_owner = str(user["id"]) in allowed_owner_ids
-        if not is_platform_owner:
-            try:
-                with db() as owner_conn:
-                    owner_row = owner_conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
-                is_platform_owner = bool(owner_row and str(owner_row["user_id"]) == str(user["id"]))
-            except sqlite3.OperationalError:
-                is_platform_owner = False
+        is_platform_owner = _is_platform_owner_id(user["id"])
         allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health", "/api/logout", "/api/platform/owner/status", "/api/platform/owner/claim", "/api/platform/owner/recover"}
         if (request.url.path if request is not None else "") not in allowed_paths and not is_platform_owner:
             license_row = _license_for_tenant(user["tenant_id"])
@@ -1778,17 +1783,8 @@ from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 
 def _platform_owner(user):
-    allowed = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
-    if str(user.get("id")) in allowed:
+    if _is_platform_owner_id(user.get("id")):
         return True
-    # Reuse the existing, separately secured platform-owner claim instead of requiring a second owner setup.
-    try:
-        with db() as conn:
-            row = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
-        if row and str(row["user_id"]) == str(user.get("id")):
-            return True
-    except sqlite3.OperationalError:
-        pass
     raise HTTPException(403, "این عملیات فقط برای مالک پلتفرم مجاز است.")
 
 def _owner_secret_is_configured(value):
@@ -1809,8 +1805,7 @@ def _owner_status_for(user):
         row = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
     claimed = bool(row)
     owner_id = str(row["user_id"]) if row else ""
-    emergency_ids = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
-    is_owner = owner_id == str(user.get("id")) or str(user.get("id")) in emergency_ids
+    is_owner = _is_platform_owner_id(user.get("id"))
     return {
         "owner_claimed": claimed,
         "is_platform_owner": is_owner,
