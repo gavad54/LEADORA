@@ -66,6 +66,18 @@ def init_db():
         """)
 init_db()
 
+# Additive compatibility migration for owner tables created by older app versions.
+# Existing ownership rows are preserved; only missing metadata columns are added.
+with db() as _owner_schema:
+    _owner_columns = {row["name"] for row in _owner_schema.execute("PRAGMA table_info(finance_platform_owner)").fetchall()}
+    if "email" not in _owner_columns:
+        _owner_schema.execute("ALTER TABLE finance_platform_owner ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+    if "claimed_at" not in _owner_columns:
+        _owner_schema.execute("ALTER TABLE finance_platform_owner ADD COLUMN claimed_at TEXT")
+    _owner_schema.execute(
+        "UPDATE finance_platform_owner SET claimed_at=CURRENT_TIMESTAMP WHERE claimed_at IS NULL OR claimed_at=''"
+    )
+
 # Additive licensing and tenant-owned bank-account metadata; never reset the persistent DB.
 with db() as _conn:
     _conn.executescript("""
@@ -1824,6 +1836,7 @@ def _owner_status_for(user):
             and bool(recovery_email)
             and recovery_email == str(user.get("email", "")).strip().lower()
             and _owner_secret_is_configured(recovery_secret)
+            and (not bootstrap_secret or not hmac.compare_digest(recovery_secret, bootstrap_secret))
         ),
     }
 
@@ -1868,8 +1881,13 @@ def claim_platform_owner(body: dict, user=Depends(user_from_header)):
 def recover_platform_owner(body: dict, user=Depends(user_from_header)):
     recovery_email = os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().lower()
     configured_secret = os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "")
-    if not recovery_email or not _owner_secret_is_configured(configured_secret):
-        raise HTTPException(503, "مسیر بازیابی مالک در تنظیمات امن سرور فعال نشده است.")
+    bootstrap_secret = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "")
+    if (
+        not recovery_email
+        or not _owner_secret_is_configured(configured_secret)
+        or (bootstrap_secret and hmac.compare_digest(configured_secret, bootstrap_secret))
+    ):
+        raise HTTPException(503, "مسیر بازیابی مالک باید با یک کد مستقل در تنظیمات امن سرور فعال شود.")
     if str(user.get("email", "")).strip().lower() != recovery_email:
         raise HTTPException(403, "این حساب با ایمیل تعیین‌شده برای بازیابی مطابقت ندارد.")
     supplied_secret = _owner_request_secret(body, "recovery_token")
