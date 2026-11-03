@@ -2,6 +2,7 @@
 import json
 import os
 import tempfile
+from pathlib import Path
 from urllib.request import Request
 import pytest
 
