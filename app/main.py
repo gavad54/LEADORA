@@ -241,7 +241,7 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
         user = dict(u)
         # Enforce trial/license state server-side for all tenant business routes.
         is_platform_owner = _is_platform_owner_id(user["id"])
-        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health", "/api/logout", "/api/platform/owner/status", "/api/platform/owner/claim", "/api/platform/owner/recover", "/api/platform/owner/recovery/confirm", "/api/platform/owner/transfer/accept"}
+        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health", "/api/logout", "/api/platform/owner/status", "/api/platform/owner/claim", "/api/platform/owner/recover", "/api/platform/owner/recovery/request", "/api/platform/owner/recovery/confirm", "/api/platform/owner/transfer/accept"}
         if (request.url.path if request is not None else "") not in allowed_paths and not is_platform_owner:
             license_row = _license_for_tenant(user["tenant_id"])
             if license_row["status"] in ("expired", "suspended"):
@@ -2291,6 +2291,14 @@ def confirm_platform_owner_recovery(body: OwnerRecoveryConfirmIn, user=Depends(u
             error = (410, "مهلت کد بازیابی پایان یافته است.")
         elif int(request_row["user_id"]) != int(user["id"]) or str(request_row["email"]).casefold() != str(user.get("email", "")).casefold():
             error = (403, "این درخواست بازیابی برای حساب واردشده صادر نشده است.")
+        elif (
+            hashlib.sha256(os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "").strip().encode("utf-8")).hexdigest()
+            != str(request_row["recovery_token_hash"])
+            or os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().casefold() != str(user.get("email", "")).casefold()
+        ):
+            conn.execute("UPDATE platform_owner_recovery_requests SET status='cancelled' WHERE id=?", (body.request_id,))
+            _owner_transfer_audit(conn, body.request_id, user["id"], "recovery.cancelled", {"reason": "server_recovery_config_changed"})
+            error = (409, "تنظیمات بازیابی پس از ارسال کد تغییر کرده است؛ درخواست لغو شد.")
         elif int(request_row["attempts"]) >= 5:
             error = (429, "حداکثر تلاش برای کد بازیابی انجام شده است.")
         else:
