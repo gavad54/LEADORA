@@ -2,8 +2,6 @@
 import json
 import os
 import tempfile
-from pathlib import Path
-from types import SimpleNamespace
 from urllib.request import Request
 
 _TEST_ROOT = Path(tempfile.mkdtemp(prefix="leadora-email-tests-"))
@@ -59,7 +57,7 @@ def test_platform_owner_can_send_a_test_email_only_to_their_own_account(monkeypa
         captured["timeout"] = timeout
         return FakeResponse()
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.email_service.urlopen", fake_urlopen)
     response = client.post("/api/platform/email/test", headers=headers)
 
     assert response.status_code == 200, response.text
