@@ -186,6 +186,7 @@ def test_platform_license_management_rejects_regular_tenant_users():
     assert response.status_code == 403
 
 def test_full_database_backup_is_owner_only_and_can_be_verified_offline(monkeypatch, tmp_path):
+    clear_platform_owner_state()
     token = register("Platform Backup Owner", "platform-owner-backup@example.test")
     user_id = token.split(".", 1)[0].split(":", 1)[0]
     monkeypatch.setenv("LEADORA_OWNER_USER_IDS", user_id)
@@ -217,6 +218,7 @@ def test_full_database_backup_is_owner_only_and_can_be_verified_offline(monkeypa
 
 
 def test_restore_verification_rejects_sqlite_backup_with_broken_foreign_keys(monkeypatch, tmp_path):
+    clear_platform_owner_state()
     import sqlite3
 
     token = register("Broken Backup Tenant", "broken-backup@example.test")
