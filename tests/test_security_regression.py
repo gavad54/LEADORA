@@ -279,6 +279,7 @@ def test_platform_owner_claim_is_one_time_and_bound_to_configured_email(monkeypa
     )
     assert claimed.status_code == 200, claimed.text
     assert claimed.json()["is_platform_owner"] is True
+    assert client.get("/api/platform/licenses", headers=auth(owner_token)).status_code == 200
 
     status = client.get("/api/platform/owner/status", headers=auth(owner_token))
     assert status.status_code == 200
@@ -346,6 +347,8 @@ def test_platform_owner_recovery_is_email_bound_and_recovery_token_is_single_use
     )
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["is_platform_owner"] is True
+    assert client.get("/api/platform/licenses", headers=auth(recovery_token)).status_code == 200
+    assert client.get("/api/platform/licenses", headers=auth(first_token)).status_code == 403
 
     reused = client.post(
         "/api/platform/owner/recover",
