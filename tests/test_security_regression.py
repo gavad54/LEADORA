@@ -13,7 +13,7 @@ os.environ["LEADORA_ENV"] = "test"
 os.environ["LEADORA_SECRET"] = "test-secret-that-is-long-enough-for-regression-tests"
 
 from fastapi.testclient import TestClient
-from app.main import app
+from app.main import app, db
 
 client = TestClient(app)
 
@@ -246,7 +246,15 @@ def test_full_database_backup_endpoints_reject_regular_tenant(monkeypatch):
                        files={"file": ("backup.sqlite3", b"not a database", "application/octet-stream")}).status_code == 403
 
 
+
+def clear_platform_owner_state():
+    with db() as conn:
+        conn.execute("DELETE FROM finance_platform_owner")
+        conn.execute("DELETE FROM finance_platform_owner_recovery_uses")
+
+
 def test_platform_owner_claim_is_one_time_and_bound_to_configured_email(monkeypatch):
+    clear_platform_owner_state()
     owner_token = register("Platform Owner Company", "owner@example.test")
     other_token = register("Unrelated Company", "other@example.test")
     monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "owner@example.test")
@@ -281,6 +289,7 @@ def test_platform_owner_claim_is_one_time_and_bound_to_configured_email(monkeypa
 
 
 def test_platform_owner_claim_requires_strong_configured_bootstrap_token(monkeypatch):
+    clear_platform_owner_state()
     token = register("Bootstrap Guard Company", "bootstrap-guard@example.test")
     monkeypatch.delenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", raising=False)
     monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "bootstrap-guard@example.test")
@@ -302,6 +311,7 @@ def test_platform_owner_claim_requires_strong_configured_bootstrap_token(monkeyp
 
 
 def test_platform_owner_recovery_is_email_bound_and_recovery_token_is_single_use(monkeypatch):
+    clear_platform_owner_state()
     first_token = register("Original Owner Company", "original-owner@example.test")
     recovery_token = register("Recovery Owner Company", "recovery-owner@example.test")
     attacker_token = register("Unrelated Recovery Company", "attacker@example.test")
