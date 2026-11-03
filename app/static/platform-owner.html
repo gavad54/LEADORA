@@ -26,6 +26,35 @@ label{display:block;font-size:13px;margin:14px 0 8px;color:#d8e2fa}input{width:1
 <div id="emailStatus" class="status">در حال بررسی تنظیمات ایمیل…</div>
 <button id="emailTestButton" type="button">ارسال ایمیل آزمایشی</button>
 </section>
+<section id="transferOwnerPanel" class="panel hidden">
+<h2>انتقال امن مالکیت</h2>
+<p class="hint">برای انتقال مالکیت، یک کد جداگانه به ایمیل مالک فعلی و یک کد مستقل به ایمیل حساب مقصد ارسال می‌شود. هر دو نفر باید کد خود را تأیید کنند.</p>
+<form id="requestTransferForm">
+<label for="targetOwnerEmail">ایمیل حساب مالک جدید</label>
+<input id="targetOwnerEmail" type="email" autocomplete="email" required>
+<button id="requestTransferButton" type="submit">ارسال دو کد تأیید</button>
+</form>
+<div id="transferRequestStatus" class="status">درخواست انتقالی ثبت نشده است.</div>
+<form id="confirmCurrentTransferForm">
+<label for="currentTransferId">شناسه درخواست انتقال</label>
+<input id="currentTransferId" type="text" minlength="20" maxlength="64" required>
+<label for="currentTransferCode">کد ارسالی به ایمیل مالک فعلی</label>
+<input id="currentTransferCode" type="password" minlength="24" maxlength="128" autocomplete="off" required>
+<button id="confirmCurrentTransferButton" type="submit">تأیید ایمیل مالک فعلی</button>
+</form>
+</section>
+<section id="acceptTransferPanel" class="panel hidden">
+<h2>پذیرش انتقال مالکیت</h2>
+<p class="hint">با حسابی وارد شوید که ایمیل آن دعوت شده است؛ سپس شناسه درخواست و کد دریافتی را وارد کنید.</p>
+<form id="acceptTransferForm">
+<label for="incomingTransferId">شناسه درخواست انتقال</label>
+<input id="incomingTransferId" type="text" minlength="20" maxlength="64" required>
+<label for="incomingTransferCode">کد ارسالی به ایمیل مالک جدید</label>
+<input id="incomingTransferCode" type="password" minlength="24" maxlength="128" autocomplete="off" required>
+<button id="acceptTransferButton" type="submit">تأیید و پذیرش مالکیت</button>
+</form>
+<div id="acceptTransferStatus" class="status">در انتظار تأیید دعوت انتقال.</div>
+</section>
 <div id="loginNeeded" class="panel hidden">
 <p>برای ادامه ابتدا از صفحه اصلی LEADORA وارد حساب کاربری تعیین‌شده شوید؛ سپس دوباره این صفحه را باز کنید.</p>
 <a class="link" href="/">رفتن به صفحه ورود</a>
@@ -84,15 +113,56 @@ $('emailTestButton').addEventListener('click',async()=>{
   $('emailStatus').className='status warn';
  }finally{button.disabled=false;}
 });
+$('requestTransferForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('requestTransferButton');button.disabled=true;
+ try{
+  const result=await request('/api/platform/owner/transfer/request',{target_email:$('targetOwnerEmail').value.trim()});
+  $('currentTransferId').value=result.transfer_id;
+  $('transferRequestStatus').textContent='دو پیام تأیید برای مالک فعلی و حساب مقصد درخواست شد. شناسه درخواست: '+result.transfer_id+'؛ هر دو کد فقط ۱۰ دقیقه اعتبار دارند.';
+  $('transferRequestStatus').className='status good';
+ }catch(error){
+  $('transferRequestStatus').textContent=error.message;
+  $('transferRequestStatus').className='status warn';
+ }finally{button.disabled=false;}
+});
+$('confirmCurrentTransferForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('confirmCurrentTransferButton');button.disabled=true;
+ try{
+  const result=await request('/api/platform/owner/transfer/confirm-current',{
+   transfer_id:$('currentTransferId').value.trim(),code:$('currentTransferCode').value
+  });
+  $('currentTransferCode').value='';
+  $('transferRequestStatus').textContent=result.completed?'انتقال مالکیت کامل شد. نشست قبلی مالک نیز باطل شد.':'ایمیل مالک فعلی تأیید شد؛ برای تکمیل، مالک جدید باید کد مستقل خود را تأیید کند.';
+  $('transferRequestStatus').className='status good';
+ }catch(error){
+  $('transferRequestStatus').textContent=error.message;
+  $('transferRequestStatus').className='status warn';
+ }finally{button.disabled=false;}
+});
+$('acceptTransferForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('acceptTransferButton');button.disabled=true;
+ try{
+  const result=await request('/api/platform/owner/transfer/accept',{
+   transfer_id:$('incomingTransferId').value.trim(),code:$('incomingTransferCode').value
+  });
+  $('incomingTransferCode').value='';
+  $('acceptTransferStatus').textContent=result.completed?'انتقال مالکیت کامل شد. این حساب اکنون مالک پلتفرم است.':'کد مالک جدید تأیید شد؛ تکمیل نهایی پس از تأیید مالک فعلی انجام می‌شود.';
+  $('acceptTransferStatus').className='status good';
+  if(result.completed) await refresh();
+ }catch(error){
+  $('acceptTransferStatus').textContent=error.message;
+  $('acceptTransferStatus').className='status warn';
+ }finally{button.disabled=false;}
+});
 async function refresh(){
  if(!token){$('loginNeeded').classList.remove('hidden');showMessage('برای ادامه باید ابتدا وارد حساب کاربری شوید.','warn');return;}
  try{
   const data=await request('/api/platform/owner/status');
   $('loginNeeded').classList.add('hidden');
-  if(data.is_platform_owner){showMessage('این حساب مالک پلتفرم است. دسترسی مالک ثبت و قابل ممیزی است.','good');$('emailPanel').classList.remove('hidden');await refreshEmailStatus();return;}
+  if(data.is_platform_owner){showMessage('این حساب مالک پلتفرم است. دسترسی مالک ثبت و قابل ممیزی است.','good');$('emailPanel').classList.remove('hidden');$('transferOwnerPanel').classList.remove('hidden');await refreshEmailStatus();return;}
   if(data.bootstrap_eligible){showMessage('حساب شما برای ثبت اولیه مالک تأیید شده است.','warn');$('claimPanel').classList.remove('hidden');return;}
   if(data.recovery_eligible){showMessage('حساب شما برای بازیابی مالک تأیید شده است.','warn');$('recoveryPanel').classList.remove('hidden');return;}
-  if(data.owner_claimed){showMessage('مالک پلتفرم قبلاً ثبت شده است. این حساب مجاز به تغییر مالک نیست.');return;}
+  if(data.owner_claimed){showMessage('مالک پلتفرم ثبت شده است. اگر دعوت انتقال برای این حساب ارسال شده، کد ایمیل را در بخش پذیرش وارد کنید.','warn');$('acceptTransferPanel').classList.remove('hidden');return;}
   showMessage('تنظیمات راه‌اندازی مالک هنوز برای این حساب آماده نیست. تنظیمات ایمیل و کد امن باید در Railway تکمیل شوند.','warn');
  }catch(error){showMessage(error.message,'warn');}
 }
