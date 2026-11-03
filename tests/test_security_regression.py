@@ -244,3 +244,97 @@ def test_full_database_backup_endpoints_reject_regular_tenant(monkeypatch):
     assert client.post("/api/platform/backup/database", headers=auth(token)).status_code == 403
     assert client.post("/api/platform/backup/verify", headers=auth(token),
                        files={"file": ("backup.sqlite3", b"not a database", "application/octet-stream")}).status_code == 403
+
+
+def test_platform_owner_claim_is_one_time_and_bound_to_configured_email(monkeypatch):
+    owner_token = register("Platform Owner Company", "owner@example.test")
+    other_token = register("Unrelated Company", "other@example.test")
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "owner@example.test")
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "bootstrap-token-with-at-least-32-characters")
+
+    denied = client.post(
+        "/api/platform/owner/claim",
+        headers=auth(other_token),
+        json={"bootstrap_token": "bootstrap-token-with-at-least-32-characters"},
+    )
+    assert denied.status_code == 403
+
+    claimed = client.post(
+        "/api/platform/owner/claim",
+        headers=auth(owner_token),
+        json={"bootstrap_token": "bootstrap-token-with-at-least-32-characters"},
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["is_platform_owner"] is True
+
+    status = client.get("/api/platform/owner/status", headers=auth(owner_token))
+    assert status.status_code == 200
+    assert status.json()["owner_claimed"] is True
+    assert status.json()["is_platform_owner"] is True
+
+    second_claim = client.post(
+        "/api/platform/owner/claim",
+        headers=auth(other_token),
+        json={"bootstrap_token": "bootstrap-token-with-at-least-32-characters"},
+    )
+    assert second_claim.status_code == 409
+
+
+def test_platform_owner_claim_requires_strong_configured_bootstrap_token(monkeypatch):
+    token = register("Bootstrap Guard Company", "bootstrap-guard@example.test")
+    monkeypatch.delenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", raising=False)
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "bootstrap-guard@example.test")
+
+    missing = client.post(
+        "/api/platform/owner/claim",
+        headers=auth(token),
+        json={"bootstrap_token": "bootstrap-token-with-at-least-32-characters"},
+    )
+    assert missing.status_code == 503
+
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "too-short")
+    weak = client.post(
+        "/api/platform/owner/claim",
+        headers=auth(token),
+        json={"bootstrap_token": "too-short"},
+    )
+    assert weak.status_code == 503
+
+
+def test_platform_owner_recovery_is_email_bound_and_recovery_token_is_single_use(monkeypatch):
+    first_token = register("Original Owner Company", "original-owner@example.test")
+    recovery_token = register("Recovery Owner Company", "recovery-owner@example.test")
+    attacker_token = register("Unrelated Recovery Company", "attacker@example.test")
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "original-owner@example.test")
+    monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "initial-bootstrap-token-with-at-least-32-chars")
+    claimed = client.post(
+        "/api/platform/owner/claim",
+        headers=auth(first_token),
+        json={"bootstrap_token": "initial-bootstrap-token-with-at-least-32-chars"},
+    )
+    assert claimed.status_code == 200, claimed.text
+
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", "recovery-owner@example.test")
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", "single-use-recovery-token-with-at-least-32-chars")
+
+    denied = client.post(
+        "/api/platform/owner/recover",
+        headers=auth(attacker_token),
+        json={"recovery_token": "single-use-recovery-token-with-at-least-32-chars"},
+    )
+    assert denied.status_code == 403
+
+    recovered = client.post(
+        "/api/platform/owner/recover",
+        headers=auth(recovery_token),
+        json={"recovery_token": "single-use-recovery-token-with-at-least-32-chars"},
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["is_platform_owner"] is True
+
+    reused = client.post(
+        "/api/platform/owner/recover",
+        headers=auth(first_token),
+        json={"recovery_token": "single-use-recovery-token-with-at-least-32-chars"},
+    )
+    assert reused.status_code == 409
