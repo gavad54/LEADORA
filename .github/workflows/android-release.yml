@@ -35,6 +35,57 @@ jobs:
           test -n "$ANDROID_KEY_ALIAS" || { echo "Missing ANDROID_KEY_ALIAS repository secret"; exit 1; }
           test -n "$ANDROID_KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD repository secret"; exit 1; }
       - uses: actions/checkout@v4
+      - name: Production public-home release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_URL="https://leadora-web-production.up.railway.app"
+          curl -fsS --max-time 20 "$BASE_URL/api/health" -o /tmp/leadora-health.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("/tmp/leadora-health.json").read_text(encoding="utf-8"))
+          assert data.get("database") == "ok", "Production database health is not OK"
+          print("production_api_health=PASS")
+          PY
+          curl -fsS --max-time 20 "$BASE_URL/" -o /tmp/leadora-production-home.html
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+
+          class PageState(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.elements = {}
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  element_id = attrs.get("id")
+                  if element_id in {"publicHome", "authOverlay", "workspaceShell", "publicLoginBtn", "publicStartBtn"}:
+                      self.elements[element_id] = {
+                          "tag": tag,
+                          "hidden": "hidden" in attrs,
+                      }
+
+          html = Path("/tmp/leadora-production-home.html").read_text(encoding="utf-8")
+          page = PageState()
+          page.feed(html)
+          checks = {
+              "rtl_document": 'dir="rtl"' in html,
+              "public_home_present": "publicHome" in page.elements,
+              "public_home_visible": "publicHome" in page.elements and not page.elements["publicHome"]["hidden"],
+              "auth_overlay_hidden": "authOverlay" in page.elements and page.elements["authOverlay"]["hidden"],
+              "workspace_hidden": "workspaceShell" in page.elements and page.elements["workspaceShell"]["hidden"],
+              "public_login_action": "publicLoginBtn" in page.elements,
+              "public_start_action": "publicStartBtn" in page.elements,
+              "startup_renders_public_home": "showPublicHome();" in html,
+              "external_google_font_dependency_absent": "fonts.googleapis.com" not in html,
+          }
+          print("production_release_checks=" + repr(checks))
+          missing = [name for name, passed in checks.items() if not passed]
+          if missing:
+              raise SystemExit("Production public-home release gate failed: " + ", ".join(missing))
+          print("production_public_home_release_gate=PASS")
+          PY
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -97,6 +148,7 @@ jobs:
           name: ${{ inputs.release_name }}
           body: |
             Signed LEADORA Android release.
+            Production public-home acceptance passed before build.
             APK signature and SHA-256 checksum were verified in GitHub Actions.
             Install and perform device acceptance tests before broad commercial rollout.
           files: |
