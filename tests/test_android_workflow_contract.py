@@ -35,9 +35,10 @@ def test_commercial_android_release_is_restricted_to_main_branch():
 
 def test_commercial_android_release_requires_live_public_home_acceptance():
     workflow = Path(".github/workflows/android-release.yml").read_text(encoding="utf-8")
+    assert 'BASE_URL="https://leadora-web-production.up.railway.app"' in workflow
+    assert '"$BASE_URL/api/health"' in workflow
+    assert '"$BASE_URL/"' in workflow
     assert "Production public-home release gate" in workflow
-    assert 'https://leadora-web-production.up.railway.app/api/health' in workflow
-    assert 'https://leadora-web-production.up.railway.app/' in workflow
     for required_check in (
         "public_home_present",
         "public_home_visible",
