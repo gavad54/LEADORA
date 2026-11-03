@@ -64,6 +64,10 @@ def create_router(db_factory, user_dependency):
           email TEXT NOT NULL DEFAULT '',
           claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS finance_platform_owner_recovery_uses(
+          token_hash TEXT PRIMARY KEY,
+          used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         CREATE TABLE IF NOT EXISTS finance_integration_keys(
           tenant_id INTEGER PRIMARY KEY REFERENCES tenants(id),
           key_hash TEXT NOT NULL,
@@ -150,13 +154,15 @@ def create_router(db_factory, user_dependency):
 
     def is_owner(user):
         user_id = str(user.get("id", ""))
-        if user_id and user_id in owner_user_ids():
-            return True
         if not user_id:
             return False
         with db_factory() as owner_db:
             row = owner_db.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
-        return bool(row and str(row["user_id"]) == user_id)
+        # A database claim is authoritative; the legacy ID allowlist is only a
+        # break-glass fallback until the first database owner is established.
+        if row:
+            return str(row["user_id"]) == user_id
+        return user_id in owner_user_ids()
 
     def require_owner(user):
         if not is_owner(user):
@@ -246,44 +252,41 @@ def create_router(db_factory, user_dependency):
 
     @router.post("/owner/claim")
     def claim_owner(body: OwnerClaimIn, user=Depends(user_dependency)):
-        expected = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "")
-        if not expected:
-            raise HTTPException(503, "فرایند ثبت مالک از سمت سرور فعال نشده است.")
-        if owner_user_ids():
-            raise HTTPException(409, "مالک سامانه از طریق تنظیمات امن سرور تعیین شده است؛ ثبت مالک جدید مجاز نیست.")
-        if not secrets_compare(body.token, expected):
-            raise HTTPException(403, "رمز یک‌بارمصرف مالک معتبر نیست.")
+        expected = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "").strip()
         expected_email = os.getenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "").strip().casefold()
+        if len(expected) < 32 or not expected_email:
+            raise HTTPException(503, "راه‌اندازی مالک در تنظیمات امن سرور کامل نشده است.")
+        if not secrets_compare(body.token, expected):
+            raise HTTPException(403, "رمز راه‌اندازی مالک معتبر نیست.")
         account_email = str(user.get("email", "")).strip().casefold()
-        if expected_email and account_email != expected_email:
+        if account_email != expected_email:
             raise HTTPException(403, "این حساب با ایمیل مجاز مالک مطابقت ندارد.")
         user_id = str(user.get("id", ""))
         if not user_id:
             raise HTTPException(400, "شناسه حساب معتبر نیست.")
         with db_factory() as c:
+            c.execute("BEGIN IMMEDIATE")
             existing = c.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
             if existing:
                 if str(existing["user_id"]) == user_id:
                     return {"ok": True, "is_platform_owner": True, "message": "این حساب قبلاً به‌عنوان مالک ثبت شده است."}
                 raise HTTPException(409, "مالک سامانه قبلاً ثبت شده است؛ ثبت مجدد مسدود است.")
-            try:
-                c.execute("INSERT INTO finance_platform_owner(singleton,user_id,email) VALUES(1,?,?)", (user_id, user.get("email", "")))
-            except sqlite3.IntegrityError:
-                raise HTTPException(409, "ثبت مالک هم‌زمان انجام شده است؛ صفحه را تازه‌سازی کنید.")
-            audit(c, user, "finance.owner.claimed", {"user_id": user_id})
+            c.execute(
+                "INSERT INTO finance_platform_owner(singleton,user_id,email) VALUES(1,?,?)",
+                (user_id, account_email),
+            )
+            audit(c, user, "finance.owner.claimed", {"user_id": user_id, "method": "server_configured_bootstrap"})
         return {"ok": True, "is_platform_owner": True, "message": "مالک سامانه با موفقیت ثبت شد."}
 
     @router.post("/owner/recover")
     def recover_owner(body: OwnerClaimIn, user=Depends(user_dependency)):
-        # Recovery is deliberately separate from initial claim and requires two
-        # independent server-side controls: a dedicated token and exact email.
+        # Separate recovery secret; SHA-256 fingerprint is recorded to enforce
+        # single-use semantics without storing the secret itself.
         expected = os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "").strip()
         expected_email = os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().casefold()
         bootstrap_token = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "").strip()
         if len(expected) < 32 or not expected_email or secrets_compare(expected, bootstrap_token):
-            raise HTTPException(503, "بازیابی امن مالک در تنظیمات سرور فعال نشده است.")
-        if owner_user_ids():
-            raise HTTPException(409, "مالک از طریق تنظیمات امن شناسه کاربر تعیین شده است؛ بازیابی از پنل مجاز نیست.")
+            raise HTTPException(503, "بازیابی امن مالک در تنظیمات سرور کامل نشده است.")
         if not secrets_compare(body.token, expected):
             raise HTTPException(403, "کلید بازیابی مالک معتبر نیست.")
         account_email = str(user.get("email", "")).strip().casefold()
@@ -292,13 +295,23 @@ def create_router(db_factory, user_dependency):
         user_id = str(user.get("id", ""))
         if not user_id:
             raise HTTPException(400, "شناسه حساب معتبر نیست.")
+        token_hash = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
         with db_factory() as c:
+            c.execute("BEGIN IMMEDIATE")
             existing = c.execute("SELECT user_id,email FROM finance_platform_owner WHERE singleton=1").fetchone()
             if not existing:
-                raise HTTPException(409, "مالک ثبت‌شده‌ای برای بازیابی وجود ندارد؛ از فرایند ثبت اولیه مالک استفاده کنید.")
+                raise HTTPException(409, "مالک ثبت‌شده‌ای برای بازیابی وجود ندارد؛ ابتدا مالک اولیه را ثبت کنید.")
+            used = c.execute(
+                "SELECT 1 FROM finance_platform_owner_recovery_uses WHERE token_hash=?",
+                (token_hash,),
+            ).fetchone()
+            if used:
+                raise HTTPException(409, "این کد بازیابی قبلاً استفاده شده است.")
             previous_user_id = str(existing["user_id"])
-            if previous_user_id == user_id:
-                return {"ok": True, "is_platform_owner": True, "message": "این حساب از قبل مالک اصلی سامانه است."}
+            c.execute(
+                "INSERT INTO finance_platform_owner_recovery_uses(token_hash) VALUES(?)",
+                (token_hash,),
+            )
             c.execute(
                 "UPDATE finance_platform_owner SET user_id=?,email=?,claimed_at=CURRENT_TIMESTAMP WHERE singleton=1",
                 (user_id, account_email),
@@ -308,7 +321,7 @@ def create_router(db_factory, user_dependency):
                 "previous_email": str(existing["email"]),
                 "new_user_id": user_id,
                 "new_email": account_email,
-                "method": "server_configured_recovery",
+                "method": "single_use_server_configured_recovery",
             })
         return {"ok": True, "is_platform_owner": True, "message": "دسترسی مالک اصلی با تأیید امن بازیابی شد."}
 
