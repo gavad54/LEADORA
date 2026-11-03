@@ -295,7 +295,7 @@ def test_platform_owner_claim_is_one_time_and_bound_to_configured_email(monkeypa
         headers=auth(other_token),
         json={"bootstrap_token": "bootstrap-token-with-at-least-32-characters"},
     )
-    assert second_claim.status_code == 409
+    assert second_claim.status_code == 403
 
 
 def test_platform_owner_claim_requires_strong_configured_bootstrap_token(monkeypatch):
