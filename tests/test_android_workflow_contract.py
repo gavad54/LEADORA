@@ -33,6 +33,26 @@ def test_commercial_android_release_is_restricted_to_main_branch():
     ), "Signed commercial releases must only run from the reviewed main branch."
 
 
+def test_commercial_android_release_requires_live_public_home_acceptance():
+    workflow = Path(".github/workflows/android-release.yml").read_text(encoding="utf-8")
+    assert "Production public-home release gate" in workflow
+    assert 'https://leadora-web-production.up.railway.app/api/health' in workflow
+    assert 'https://leadora-web-production.up.railway.app/' in workflow
+    for required_check in (
+        "public_home_present",
+        "public_home_visible",
+        "auth_overlay_hidden",
+        "workspace_hidden",
+        "public_login_action",
+        "public_start_action",
+        "startup_renders_public_home",
+    ):
+        assert required_check in workflow, (
+            f"Commercial Android release must enforce {required_check}."
+        )
+    assert "Production public-home release gate failed" in workflow
+
+
 def test_avd_home_is_set_before_avd_creation_and_emulator_launch():
     workflow = Path(".github/workflows/android-apk.yml").read_text(encoding="utf-8")
     configure_home = workflow.index('export ANDROID_AVD_HOME="$HOME/.android/avd"')
