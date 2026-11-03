@@ -257,6 +257,8 @@ def test_platform_owner_claim_is_one_time_and_bound_to_configured_email(monkeypa
     clear_platform_owner_state()
     owner_token = register("Platform Owner Company", "owner@example.test")
     other_token = register("Unrelated Company", "other@example.test")
+    with db() as conn:
+        conn.execute("UPDATE tenant_licenses SET status='expired' WHERE tenant_id=(SELECT id FROM users WHERE email='owner@example.test')")
     monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "owner@example.test")
     monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "bootstrap-token-with-at-least-32-characters")
 
