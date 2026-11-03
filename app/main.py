@@ -1804,7 +1804,6 @@ def _owner_status_for(user):
     with db() as conn:
         row = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
     claimed = bool(row)
-    owner_id = str(row["user_id"]) if row else ""
     is_owner = _is_platform_owner_id(user.get("id"))
     return {
         "owner_claimed": claimed,
