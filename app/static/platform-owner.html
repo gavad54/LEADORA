@@ -20,6 +20,12 @@ label{display:block;font-size:13px;margin:14px 0 8px;color:#d8e2fa}input{width:1
 <h1>راه‌اندازی مالک پلتفرم</h1>
 <p>این بخش فقط برای حسابی است که ایمیل آن از قبل در تنظیمات امن سرور تعیین شده است. ثبت مالکیت یک‌باره و در پایگاه داده ثبت و ممیزی می‌شود.</p>
 <div id="status" class="status">در حال بررسی وضعیت حساب…</div>
+<section id="emailPanel" class="panel hidden">
+<h2>سرویس ایمیل تراکنشی</h2>
+<p class="hint">وضعیت اتصال Brevo را ببینید و یک پیام آزمایشی فقط به ایمیل همین حساب ارسال کنید.</p>
+<div id="emailStatus" class="status">در حال بررسی تنظیمات ایمیل…</div>
+<button id="emailTestButton" type="button">ارسال ایمیل آزمایشی</button>
+</section>
 <div id="loginNeeded" class="panel hidden">
 <p>برای ادامه ابتدا از صفحه اصلی LEADORA وارد حساب کاربری تعیین‌شده شوید؛ سپس دوباره این صفحه را باز کنید.</p>
 <a class="link" href="/">رفتن به صفحه ورود</a>
@@ -55,12 +61,35 @@ async function request(path,body){
  if(!response.ok)throw new Error(data.detail||'درخواست ناموفق بود.');
  return data;
 }
+async function refreshEmailStatus(){
+ try{
+  const data=await request('/api/platform/email/status');
+  $('emailStatus').textContent=data.configured?'اتصال از نظر تنظیمات سرور آماده است. برای آزمون ارسال، دکمه زیر را بزنید.':'تنظیمات Brevo کامل نیست؛ متغیرهای امن Railway باید تکمیل شوند.';
+  $('emailStatus').className='status '+(data.configured?'good':'warn');
+  $('emailTestButton').disabled=!data.configured;
+ }catch(error){
+  $('emailStatus').textContent=error.message;
+  $('emailStatus').className='status warn';
+  $('emailTestButton').disabled=true;
+ }
+}
+$('emailTestButton').addEventListener('click',async()=>{
+ const button=$('emailTestButton');button.disabled=true;
+ try{
+  const result=await request('/api/platform/email/test',{});
+  $('emailStatus').textContent='درخواست ارسال توسط Brevo پذیرفته شد. شناسه پیام: '+result.message_id+'؛ تحویل نهایی را در گزارش Brevo بررسی کنید.';
+  $('emailStatus').className='status good';
+ }catch(error){
+  $('emailStatus').textContent=error.message;
+  $('emailStatus').className='status warn';
+ }finally{button.disabled=false;}
+});
 async function refresh(){
  if(!token){$('loginNeeded').classList.remove('hidden');showMessage('برای ادامه باید ابتدا وارد حساب کاربری شوید.','warn');return;}
  try{
   const data=await request('/api/platform/owner/status');
   $('loginNeeded').classList.add('hidden');
-  if(data.is_platform_owner){showMessage('این حساب مالک پلتفرم است. دسترسی مالک ثبت و قابل ممیزی است.','good');return;}
+  if(data.is_platform_owner){showMessage('این حساب مالک پلتفرم است. دسترسی مالک ثبت و قابل ممیزی است.','good');$('emailPanel').classList.remove('hidden');await refreshEmailStatus();return;}
   if(data.bootstrap_eligible){showMessage('حساب شما برای ثبت اولیه مالک تأیید شده است.','warn');$('claimPanel').classList.remove('hidden');return;}
   if(data.recovery_eligible){showMessage('حساب شما برای بازیابی مالک تأیید شده است.','warn');$('recoveryPanel').classList.remove('hidden');return;}
   if(data.owner_claimed){showMessage('مالک پلتفرم قبلاً ثبت شده است. این حساب مجاز به تغییر مالک نیست.');return;}
