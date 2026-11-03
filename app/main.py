@@ -56,7 +56,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, action TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS login_attempts(attempt_key TEXT PRIMARY KEY, attempts INTEGER NOT NULL, window_start INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS revoked_tokens(token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, revoked_at INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS finance_platform_owner(singleton INTEGER PRIMARY KEY CHECK(singleton=1), user_id INTEGER NOT NULL UNIQUE REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS finance_platform_owner(
+          singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+          user_id TEXT NOT NULL UNIQUE,
+          email TEXT NOT NULL DEFAULT '',
+          claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         CREATE TABLE IF NOT EXISTS finance_platform_owner_recovery_uses(token_hash TEXT PRIMARY KEY, used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
         """)
 init_db()
@@ -1852,7 +1857,7 @@ def claim_platform_owner(body: dict, user=Depends(user_from_header)):
         ).fetchone()
         if not valid_user:
             raise HTTPException(403, "حساب کاربری معتبر برای مالکیت پیدا نشد.")
-        conn.execute("INSERT INTO finance_platform_owner(singleton,user_id) VALUES(1,?)", (int(user["id"]),))
+        conn.execute("INSERT INTO finance_platform_owner(singleton,user_id,email) VALUES(1,?,?)", (str(user["id"]), str(user.get("email", ""))))
         conn.execute(
             "INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
             (int(user["tenant_id"]), "platform.owner.claimed"),
