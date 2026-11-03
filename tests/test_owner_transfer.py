@@ -195,3 +195,34 @@ def test_owner_transfer_expired_code_is_rejected(monkeypatch, owner_and_target):
         json={"transfer_id": transfer_id, "code": code},
     )
     assert response.status_code == 410
+
+
+
+def test_owner_transfer_blocks_a_second_active_request(monkeypatch, owner_and_target):
+    monkeypatch.setenv("BREVO_API_KEY", "test-api-key")
+    monkeypatch.setenv("BREVO_SENDER_EMAIL", "noreply@example.test")
+    sent = []
+    monkeypatch.setattr(
+        "app.main.send_transactional_email",
+        lambda recipient, subject, text_content, html_content=None, tags=None: (
+            sent.append(recipient) or f"message-{len(sent)}"
+        ),
+    )
+    first = client.post(
+        "/api/platform/owner/transfer/request",
+        headers=owner_and_target["owner_headers"],
+        json={"target_email": owner_and_target["target_email"]},
+    )
+    assert first.status_code == 200, first.text
+    with db() as conn:
+        conn.execute(
+            "UPDATE platform_owner_transfer_requests SET created_at=? WHERE id=?",
+            (int(time.time()) - 301, first.json()["transfer_id"]),
+        )
+    second = client.post(
+        "/api/platform/owner/transfer/request",
+        headers=owner_and_target["owner_headers"],
+        json={"target_email": owner_and_target["target_email"]},
+    )
+    assert second.status_code == 409
+    assert len(sent) == 2
