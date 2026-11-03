@@ -64,6 +64,38 @@ def init_db():
           claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS finance_platform_owner_recovery_uses(token_hash TEXT PRIMARY KEY, used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS platform_owner_transfer_requests(
+          id TEXT PRIMARY KEY,
+          current_owner_user_id INTEGER NOT NULL,
+          current_owner_email TEXT NOT NULL,
+          target_user_id INTEGER NOT NULL,
+          target_email TEXT NOT NULL,
+          current_code_hash TEXT NOT NULL,
+          target_code_hash TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          current_attempts INTEGER NOT NULL DEFAULT 0,
+          target_attempts INTEGER NOT NULL DEFAULT 0,
+          current_verified_at INTEGER,
+          target_verified_at INTEGER,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','completed','expired','cancelled')),
+          created_at INTEGER NOT NULL,
+          completed_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS platform_owner_transfer_owner_idx
+          ON platform_owner_transfer_requests(current_owner_user_id,created_at,status);
+        CREATE TABLE IF NOT EXISTS platform_owner_transfer_audit(
+          id INTEGER PRIMARY KEY,
+          request_id TEXT NOT NULL,
+          actor_user_id INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          details_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS user_session_revocations(
+          user_id INTEGER PRIMARY KEY,
+          revoked_before INTEGER NOT NULL,
+          reason TEXT NOT NULL DEFAULT 'security_event'
+        );
         """)
 init_db()
 
@@ -179,18 +211,25 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
         if not hmac.compare_digest(sig, expected): raise ValueError()
         uid, tid, exp, _ = raw.split(":", 3)
         if int(exp) < int(time.time()): raise ValueError()
+        issued_at = int(exp) - 43200
         with db() as c:
             token_hash = hashlib.sha256(authorization[7:].encode()).hexdigest()
             revoked = c.execute("SELECT 1 FROM revoked_tokens WHERE token_hash=? AND expires_at>=?",
                                 (token_hash, int(time.time()))).fetchone()
             if revoked:
                 raise ValueError("revoked token")
+            user_revocation = c.execute(
+                "SELECT revoked_before FROM user_session_revocations WHERE user_id=?",
+                (int(uid),),
+            ).fetchone()
+            if user_revocation and issued_at < int(user_revocation["revoked_before"]):
+                raise ValueError("user sessions revoked")
             u = c.execute("SELECT id,tenant_id,email FROM users WHERE id=? AND tenant_id=?", (int(uid),int(tid))).fetchone()
         if not u: raise ValueError()
         user = dict(u)
         # Enforce trial/license state server-side for all tenant business routes.
         is_platform_owner = _is_platform_owner_id(user["id"])
-        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health", "/api/logout", "/api/platform/owner/status", "/api/platform/owner/claim", "/api/platform/owner/recover"}
+        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health", "/api/logout", "/api/platform/owner/status", "/api/platform/owner/claim", "/api/platform/owner/recover", "/api/platform/owner/transfer/accept"}
         if (request.url.path if request is not None else "") not in allowed_paths and not is_platform_owner:
             license_row = _license_for_tenant(user["tenant_id"])
             if license_row["status"] in ("expired", "suspended"):
@@ -2092,3 +2131,251 @@ def platform_email_test(user=Depends(user_from_header)):
     except EmailDeliveryError as exc:
         raise HTTPException(503, str(exc)) from None
     return {"sent": True, "message_id": message_id}
+
+
+class OwnerTransferRequestIn(BaseModel):
+    target_email: str = Field(min_length=5, max_length=180)
+
+
+class OwnerTransferCodeIn(BaseModel):
+    transfer_id: str = Field(min_length=20, max_length=64)
+    code: str = Field(min_length=24, max_length=128)
+
+
+def _owner_transfer_code_hash(transfer_id, purpose, code):
+    payload = f"leadora-owner-transfer:{transfer_id}:{purpose}:{code}".encode("utf-8")
+    return hmac.new(SECRET.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def _owner_transfer_audit(conn, transfer_id, actor_user_id, action, details=None):
+    conn.execute(
+        "INSERT INTO platform_owner_transfer_audit(request_id,actor_user_id,action,details_json,created_at) VALUES(?,?,?,?,?)",
+        (transfer_id, int(actor_user_id), action, json.dumps(details or {}, ensure_ascii=False), int(time.time())),
+    )
+
+
+def _finish_owner_transfer(conn, transfer):
+    if not transfer["current_verified_at"] or not transfer["target_verified_at"]:
+        return False
+    current = conn.execute(
+        "SELECT user_id FROM finance_platform_owner WHERE singleton=1"
+    ).fetchone()
+    if not current or str(current["user_id"]) != str(transfer["current_owner_user_id"]):
+        conn.execute(
+            "UPDATE platform_owner_transfer_requests SET status='cancelled' WHERE id=? AND status='pending'",
+            (transfer["id"],),
+        )
+        _owner_transfer_audit(
+            conn, transfer["id"], transfer["target_user_id"], "transfer.cancelled",
+            {"reason": "current_owner_changed_before_completion"},
+        )
+        raise HTTPException(409, "مالک فعلی پیش از تکمیل درخواست تغییر کرده است؛ درخواست لغو شد.")
+    now = int(time.time())
+    conn.execute(
+        "UPDATE finance_platform_owner SET user_id=?,email=?,claimed_at=CURRENT_TIMESTAMP WHERE singleton=1",
+        (str(transfer["target_user_id"]), transfer["target_email"]),
+    )
+    conn.execute(
+        "INSERT INTO user_session_revocations(user_id,revoked_before,reason) VALUES(?,?,?) "
+        "ON CONFLICT(user_id) DO UPDATE SET revoked_before=MAX(revoked_before,excluded.revoked_before),reason=excluded.reason",
+        (int(transfer["current_owner_user_id"]), now, "platform_owner_transferred"),
+    )
+    conn.execute(
+        "UPDATE platform_owner_transfer_requests SET status='completed',completed_at=? WHERE id=? AND status='pending'",
+        (now, transfer["id"]),
+    )
+    _owner_transfer_audit(
+        conn, transfer["id"], transfer["target_user_id"], "transfer.completed",
+        {"previous_owner_user_id": int(transfer["current_owner_user_id"]),
+         "new_owner_user_id": int(transfer["target_user_id"])},
+    )
+    conn.execute(
+        "INSERT INTO audit_log(tenant_id,action) SELECT tenant_id,'platform.owner.transferred' FROM users WHERE id=?",
+        (int(transfer["current_owner_user_id"]),),
+    )
+    conn.execute(
+        "INSERT INTO audit_log(tenant_id,action) SELECT tenant_id,'platform.owner.received' FROM users WHERE id=?",
+        (int(transfer["target_user_id"]),),
+    )
+    return True
+
+
+@app.post("/api/platform/owner/transfer/request")
+def request_owner_transfer(body: OwnerTransferRequestIn, user=Depends(user_from_header)):
+    _platform_owner(user)
+    target_email = body.target_email.strip().casefold()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", target_email):
+        raise HTTPException(422, "ایمیل مالک جدید معتبر نیست.")
+    current_email = str(user.get("email", "")).strip().casefold()
+    if not current_email or target_email == current_email:
+        raise HTTPException(422, "ایمیل مالک جدید باید با ایمیل مالک فعلی متفاوت باشد.")
+    if not email_service_status()["configured"]:
+        raise HTTPException(503, "سرویس ایمیل تراکنشی هنوز تنظیم نشده است.")
+    with db() as conn:
+        owner = conn.execute(
+            "SELECT user_id,email FROM finance_platform_owner WHERE singleton=1"
+        ).fetchone()
+        if not owner or str(owner["user_id"]) != str(user["id"]):
+            raise HTTPException(403, "مالکیت فعلی برای این حساب تأیید نشد.")
+        targets = conn.execute(
+            "SELECT id,email FROM users WHERE lower(email)=? ORDER BY id LIMIT 2",
+            (target_email,),
+        ).fetchall()
+        if not targets:
+            raise HTTPException(404, "حسابی با ایمیل مالک جدید پیدا نشد.")
+        if len(targets) != 1:
+            raise HTTPException(409, "این ایمیل به بیش از یک حساب متصل است؛ ابتدا حساب مقصد را یکتا کنید.")
+        if int(targets[0]["id"]) == int(user["id"]):
+            raise HTTPException(422, "حساب مقصد نمی‌تواند همان حساب مالک فعلی باشد.")
+        recent = conn.execute(
+            "SELECT id FROM platform_owner_transfer_requests WHERE current_owner_user_id=? AND created_at>=? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (int(user["id"]), int(time.time()) - 300),
+        ).fetchone()
+        if recent:
+            raise HTTPException(429, "برای امنیت، بین درخواست‌های انتقال مالکیت باید پنج دقیقه فاصله باشد.")
+    transfer_id = secrets.token_urlsafe(18)
+    current_code = secrets.token_urlsafe(24)
+    target_code = secrets.token_urlsafe(24)
+    now = int(time.time())
+    expires_at = now + 600
+    current_hash = _owner_transfer_code_hash(transfer_id, "current", current_code)
+    target_hash = _owner_transfer_code_hash(transfer_id, "target", target_code)
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "INSERT INTO platform_owner_transfer_requests("
+            "id,current_owner_user_id,current_owner_email,target_user_id,target_email,current_code_hash,target_code_hash,expires_at,created_at"
+            ") VALUES(?,?,?,?,?,?,?,?,?)",
+            (transfer_id, int(user["id"]), current_email, int(targets[0]["id"]), target_email,
+             current_hash, target_hash, expires_at, now),
+        )
+        _owner_transfer_audit(
+            conn, transfer_id, user["id"], "transfer.requested",
+            {"target_user_id": int(targets[0]["id"]), "expires_at": expires_at},
+        )
+    try:
+        send_transactional_email(
+            recipient=current_email,
+            subject="درخواست تغییر مالکیت LEADORA",
+            text_content=(
+                "درخواست تغییر مالکیت LEADORA ثبت شده است. اگر این درخواست را آغاز نکرده‌اید، آن را نادیده بگیرید.\n"
+                f"شناسه درخواست: {transfer_id}\nکد تأیید: {current_code}\n"
+                "این کد فقط ۱۰ دقیقه اعتبار دارد و آن را در اختیار دیگران قرار ندهید."
+            ),
+            html_content=f"<div dir=\"rtl\"><h2>LEADORA</h2><p>درخواست تغییر مالکیت ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{current_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
+            tags=["owner-transfer-current"],
+        )
+        send_transactional_email(
+            recipient=target_email,
+            subject="دعوت برای پذیرش مالکیت LEADORA",
+            text_content=(
+                "درخواستی برای انتقال مالکیت LEADORA به حساب شما ثبت شده است.\n"
+                f"شناسه درخواست: {transfer_id}\nکد تأیید: {target_code}\n"
+                "برای پذیرش، با حساب مقصد وارد LEADORA شوید و کد را در صفحه مالکیت وارد کنید. "
+                "این کد فقط ۱۰ دقیقه اعتبار دارد."
+            ),
+            html_content=f"<div dir=\"rtl\"><h2>LEADORA</h2><p>درخواستی برای انتقال مالکیت به حساب شما ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{target_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
+            tags=["owner-transfer-target"],
+        )
+    except EmailDeliveryError:
+        with db() as conn:
+            conn.execute(
+                "UPDATE platform_owner_transfer_requests SET status='cancelled',current_code_hash='',target_code_hash='' "
+                "WHERE id=? AND status='pending'",
+                (transfer_id,),
+            )
+            _owner_transfer_audit(conn, transfer_id, user["id"], "transfer.delivery_failed")
+        raise HTTPException(503, "ارسال یکی از ایمیل‌های تأیید انجام نشد؛ درخواست لغو شد و مالکیت تغییری نکرد.") from None
+    return {"requested": True, "transfer_id": transfer_id, "expires_in_seconds": 600, "codes_returned": False}
+
+
+@app.post("/api/platform/owner/transfer/confirm-current")
+def confirm_current_owner_transfer(body: OwnerTransferCodeIn, user=Depends(user_from_header)):
+    _platform_owner(user)
+    error = None
+    completed = False
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        transfer = conn.execute(
+            "SELECT * FROM platform_owner_transfer_requests WHERE id=?",
+            (body.transfer_id,),
+        ).fetchone()
+        if not transfer:
+            error = (404, "درخواست انتقال مالکیت پیدا نشد.")
+        elif transfer["status"] != "pending":
+            error = (409, "این درخواست دیگر در وضعیت قابل تأیید نیست.")
+        elif int(transfer["expires_at"]) <= int(time.time()):
+            conn.execute("UPDATE platform_owner_transfer_requests SET status='expired' WHERE id=?", (body.transfer_id,))
+            _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.expired")
+            error = (410, "مهلت کد تأیید پایان یافته است.")
+        elif str(transfer["current_owner_user_id"]) != str(user["id"]):
+            error = (403, "این درخواست متعلق به حساب مالک فعلی نیست.")
+        elif int(transfer["current_attempts"]) >= 5:
+            error = (429, "حداکثر تلاش برای کد تأیید مالک فعلی انجام شده است.")
+        else:
+            attempts = int(transfer["current_attempts"]) + 1
+            conn.execute(
+                "UPDATE platform_owner_transfer_requests SET current_attempts=? WHERE id=?",
+                (attempts, body.transfer_id),
+            )
+            expected = _owner_transfer_code_hash(body.transfer_id, "current", body.code)
+            if not hmac.compare_digest(expected, transfer["current_code_hash"]):
+                _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.current_code_rejected", {"attempt": attempts})
+                error = (403, "کد تأیید مالک فعلی صحیح نیست.")
+            else:
+                conn.execute(
+                    "UPDATE platform_owner_transfer_requests SET current_verified_at=? WHERE id=?",
+                    (int(time.time()), body.transfer_id),
+                )
+                _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.current_verified")
+                transfer = conn.execute("SELECT * FROM platform_owner_transfer_requests WHERE id=?", (body.transfer_id,)).fetchone()
+                completed = _finish_owner_transfer(conn, transfer)
+    if error:
+        raise HTTPException(error[0], error[1])
+    return {"verified": True, "completed": completed, "message": "تأیید ایمیل مالک فعلی ثبت شد."}
+
+
+@app.post("/api/platform/owner/transfer/accept")
+def accept_owner_transfer(body: OwnerTransferCodeIn, user=Depends(user_from_header)):
+    error = None
+    completed = False
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        transfer = conn.execute(
+            "SELECT * FROM platform_owner_transfer_requests WHERE id=?",
+            (body.transfer_id,),
+        ).fetchone()
+        if not transfer:
+            error = (404, "درخواست انتقال مالکیت پیدا نشد.")
+        elif transfer["status"] != "pending":
+            error = (409, "این درخواست دیگر در وضعیت قابل پذیرش نیست.")
+        elif int(transfer["expires_at"]) <= int(time.time()):
+            conn.execute("UPDATE platform_owner_transfer_requests SET status='expired' WHERE id=?", (body.transfer_id,))
+            _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.expired")
+            error = (410, "مهلت کد تأیید پایان یافته است.")
+        elif str(transfer["target_user_id"]) != str(user["id"]) or str(transfer["target_email"]).casefold() != str(user.get("email", "")).casefold():
+            error = (403, "این درخواست برای حساب مقصد واردشده صادر نشده است.")
+        elif int(transfer["target_attempts"]) >= 5:
+            error = (429, "حداکثر تلاش برای کد تأیید مالک جدید انجام شده است.")
+        else:
+            attempts = int(transfer["target_attempts"]) + 1
+            conn.execute(
+                "UPDATE platform_owner_transfer_requests SET target_attempts=? WHERE id=?",
+                (attempts, body.transfer_id),
+            )
+            expected = _owner_transfer_code_hash(body.transfer_id, "target", body.code)
+            if not hmac.compare_digest(expected, transfer["target_code_hash"]):
+                _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.target_code_rejected", {"attempt": attempts})
+                error = (403, "کد تأیید مالک جدید صحیح نیست.")
+            else:
+                conn.execute(
+                    "UPDATE platform_owner_transfer_requests SET target_verified_at=? WHERE id=?",
+                    (int(time.time()), body.transfer_id),
+                )
+                _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.target_verified")
+                transfer = conn.execute("SELECT * FROM platform_owner_transfer_requests WHERE id=?", (body.transfer_id,)).fetchone()
+                completed = _finish_owner_transfer(conn, transfer)
+    if error:
+        raise HTTPException(error[0], error[1])
+    return {"verified": True, "completed": completed, "message": "تأیید ایمیل مالک جدید ثبت شد."}
