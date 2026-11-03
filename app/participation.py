@@ -279,51 +279,8 @@ def create_router(db_factory, user_dependency):
         return {"ok": True, "is_platform_owner": True, "message": "مالک سامانه با موفقیت ثبت شد."}
 
     @router.post("/owner/recover")
-    def recover_owner(body: OwnerClaimIn, user=Depends(user_dependency)):
-        # Separate recovery secret; SHA-256 fingerprint is recorded to enforce
-        # single-use semantics without storing the secret itself.
-        expected = os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "").strip()
-        expected_email = os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().casefold()
-        bootstrap_token = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "").strip()
-        if len(expected) < 32 or not expected_email or secrets_compare(expected, bootstrap_token):
-            raise HTTPException(503, "بازیابی امن مالک در تنظیمات سرور کامل نشده است.")
-        if not secrets_compare(body.token, expected):
-            raise HTTPException(403, "کلید بازیابی مالک معتبر نیست.")
-        account_email = str(user.get("email", "")).strip().casefold()
-        if account_email != expected_email:
-            raise HTTPException(403, "ایمیل حساب با ایمیل مجاز بازیابی مالک مطابقت ندارد.")
-        user_id = str(user.get("id", ""))
-        if not user_id:
-            raise HTTPException(400, "شناسه حساب معتبر نیست.")
-        token_hash = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
-        with db_factory() as c:
-            c.execute("BEGIN IMMEDIATE")
-            existing = c.execute("SELECT user_id,email FROM finance_platform_owner WHERE singleton=1").fetchone()
-            if not existing:
-                raise HTTPException(409, "مالک ثبت‌شده‌ای برای بازیابی وجود ندارد؛ ابتدا مالک اولیه را ثبت کنید.")
-            used = c.execute(
-                "SELECT 1 FROM finance_platform_owner_recovery_uses WHERE token_hash=?",
-                (token_hash,),
-            ).fetchone()
-            if used:
-                raise HTTPException(409, "این کد بازیابی قبلاً استفاده شده است.")
-            previous_user_id = str(existing["user_id"])
-            c.execute(
-                "INSERT INTO finance_platform_owner_recovery_uses(token_hash) VALUES(?)",
-                (token_hash,),
-            )
-            c.execute(
-                "UPDATE finance_platform_owner SET user_id=?,email=?,claimed_at=CURRENT_TIMESTAMP WHERE singleton=1",
-                (user_id, account_email),
-            )
-            audit(c, user, "finance.owner.recovered", {
-                "previous_user_id": previous_user_id,
-                "previous_email": str(existing["email"]),
-                "new_user_id": user_id,
-                "new_email": account_email,
-                "method": "single_use_server_configured_recovery",
-            })
-        return {"ok": True, "is_platform_owner": True, "message": "دسترسی مالک اصلی با تأیید امن بازیابی شد."}
+    def recover_owner_legacy(user=Depends(user_dependency)):
+        raise HTTPException(410, "بازیابی مستقیم غیرفعال است؛ از مسیر بازیابی دومرحله‌ای ایمیلی در /platform-owner استفاده کنید.")
 
     @router.get("/settings")
     def get_settings(user=Depends(user_dependency)):
