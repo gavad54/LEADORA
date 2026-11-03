@@ -1,7 +1,7 @@
 import os
 import uuid
 from fastapi.testclient import TestClient
-from app.main import app
+from app.main import app, db
 
 
 def register(client, company, email=None):
