@@ -56,6 +56,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, action TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS login_attempts(attempt_key TEXT PRIMARY KEY, attempts INTEGER NOT NULL, window_start INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS revoked_tokens(token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, revoked_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS finance_platform_owner(singleton INTEGER PRIMARY KEY CHECK(singleton=1), user_id INTEGER NOT NULL UNIQUE REFERENCES users(id));
+        CREATE TABLE IF NOT EXISTS finance_platform_owner_recovery_uses(token_hash TEXT PRIMARY KEY, used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
         """)
 init_db()
 
@@ -1788,6 +1790,117 @@ def _platform_owner(user):
     except sqlite3.OperationalError:
         pass
     raise HTTPException(403, "این عملیات فقط برای مالک پلتفرم مجاز است.")
+
+def _owner_secret_is_configured(value):
+    return isinstance(value, str) and len(value) >= 32
+
+def _owner_request_secret(body, field):
+    value = body.get(field) if isinstance(body, dict) else None
+    if not isinstance(value, str) or not 32 <= len(value) <= 256:
+        raise HTTPException(422, "کد امنیتی معتبر نیست.")
+    return value
+
+def _owner_status_for(user):
+    bootstrap_email = os.getenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "").strip().lower()
+    bootstrap_secret = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "")
+    recovery_email = os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().lower()
+    recovery_secret = os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "")
+    with db() as conn:
+        row = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+    claimed = bool(row)
+    owner_id = str(row["user_id"]) if row else ""
+    emergency_ids = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
+    is_owner = owner_id == str(user.get("id")) or str(user.get("id")) in emergency_ids
+    return {
+        "owner_claimed": claimed,
+        "is_platform_owner": is_owner,
+        "bootstrap_eligible": (
+            not claimed
+            and bool(bootstrap_email)
+            and bootstrap_email == str(user.get("email", "")).strip().lower()
+            and _owner_secret_is_configured(bootstrap_secret)
+        ),
+        "recovery_eligible": (
+            claimed
+            and bool(recovery_email)
+            and recovery_email == str(user.get("email", "")).strip().lower()
+            and _owner_secret_is_configured(recovery_secret)
+        ),
+    }
+
+@app.get("/platform-owner")
+def platform_owner_setup_page():
+    return FileResponse(ROOT / "static" / "platform-owner.html")
+
+@app.get("/api/platform/owner/status")
+def platform_owner_status(user=Depends(user_from_header)):
+    return _owner_status_for(user)
+
+@app.post("/api/platform/owner/claim")
+def claim_platform_owner(body: dict, user=Depends(user_from_header)):
+    bootstrap_email = os.getenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "").strip().lower()
+    configured_secret = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "")
+    if not bootstrap_email or not _owner_secret_is_configured(configured_secret):
+        raise HTTPException(503, "راه‌اندازی مالک هنوز در تنظیمات امن سرور تکمیل نشده است.")
+    if str(user.get("email", "")).strip().lower() != bootstrap_email:
+        raise HTTPException(403, "این حساب با ایمیل تعیین‌شده برای مالکیت مطابقت ندارد.")
+    supplied_secret = _owner_request_secret(body, "bootstrap_token")
+    if not hmac.compare_digest(supplied_secret, configured_secret):
+        raise HTTPException(403, "کد راه‌اندازی مالک صحیح نیست.")
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+        if existing:
+            raise HTTPException(409, "مالک پلتفرم قبلاً ثبت شده است؛ برای تغییر مالک از مسیر بازیابی استفاده کنید.")
+        valid_user = conn.execute(
+            "SELECT id,tenant_id,email FROM users WHERE id=? AND lower(email)=?",
+            (int(user["id"]), bootstrap_email),
+        ).fetchone()
+        if not valid_user:
+            raise HTTPException(403, "حساب کاربری معتبر برای مالکیت پیدا نشد.")
+        conn.execute("INSERT INTO finance_platform_owner(singleton,user_id) VALUES(1,?)", (int(user["id"]),))
+        conn.execute(
+            "INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+            (int(user["tenant_id"]), "platform.owner.claimed"),
+        )
+    return {"ok": True, "owner_claimed": True, "is_platform_owner": True}
+
+@app.post("/api/platform/owner/recover")
+def recover_platform_owner(body: dict, user=Depends(user_from_header)):
+    recovery_email = os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().lower()
+    configured_secret = os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "")
+    if not recovery_email or not _owner_secret_is_configured(configured_secret):
+        raise HTTPException(503, "مسیر بازیابی مالک در تنظیمات امن سرور فعال نشده است.")
+    if str(user.get("email", "")).strip().lower() != recovery_email:
+        raise HTTPException(403, "این حساب با ایمیل تعیین‌شده برای بازیابی مطابقت ندارد.")
+    supplied_secret = _owner_request_secret(body, "recovery_token")
+    if not hmac.compare_digest(supplied_secret, configured_secret):
+        raise HTTPException(403, "کد بازیابی مالک صحیح نیست.")
+    token_hash = hashlib.sha256(supplied_secret.encode("utf-8")).hexdigest()
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+        if not existing:
+            raise HTTPException(409, "هنوز مالکی ثبت نشده است؛ ابتدا از مسیر راه‌اندازی اولیه استفاده کنید.")
+        used = conn.execute(
+            "SELECT 1 FROM finance_platform_owner_recovery_uses WHERE token_hash=?",
+            (token_hash,),
+        ).fetchone()
+        if used:
+            raise HTTPException(409, "این کد بازیابی قبلاً استفاده شده است.")
+        conn.execute(
+            "INSERT INTO finance_platform_owner_recovery_uses(token_hash) VALUES(?)",
+            (token_hash,),
+        )
+        conn.execute(
+            "UPDATE finance_platform_owner SET user_id=? WHERE singleton=1",
+            (int(user["id"]),),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+            (int(user["tenant_id"]), "platform.owner.recovered"),
+        )
+    return {"ok": True, "owner_claimed": True, "is_platform_owner": True}
 
 def _license_for_tenant(tenant_id):
     with db() as conn:
