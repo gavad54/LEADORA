@@ -214,14 +214,11 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
     )
     assert missing_email.status_code == 503
 
-    # An explicit server-side owner ID list takes precedence over form recovery.
+    # Once a DB owner exists, it is authoritative over the legacy emergency ID list.
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", recovery["user"]["email"])
     monkeypatch.setenv("LEADORA_OWNER_USER_IDS", "999999999")
-    server_owned = client.post(
-        "/api/finance/owner/recover", headers=recovery_headers, json={"token": recovery_token}
-    )
-    assert server_owned.status_code == 409
-    monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
+    assert client.get("/api/finance/identity", headers=owner_headers).json()["is_platform_owner"] is True
+    assert client.get("/api/finance/identity", headers=other_headers).json()["is_platform_owner"] is False
 
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", recovery_token)
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", recovery["user"]["email"])
@@ -251,6 +248,10 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
     assert client.get("/api/finance/identity", headers=owner_headers).json()["is_platform_owner"] is False
     assert client.get("/api/finance/owner/audit", headers=owner_headers).status_code == 403
     assert client.get("/api/finance/owner/audit", headers=recovery_headers).status_code == 200
+    reused_recovery = client.post(
+        "/api/finance/owner/recover", headers=recovery_headers, json={"token": recovery_token}
+    )
+    assert reused_recovery.status_code == 409
 
 
 def test_integration_webhook_key_rotation_ingest_and_tenant_isolation():
