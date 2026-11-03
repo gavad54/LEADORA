@@ -2169,7 +2169,7 @@ def _finish_owner_transfer(conn, transfer):
             conn, transfer["id"], transfer["target_user_id"], "transfer.cancelled",
             {"reason": "current_owner_changed_before_completion"},
         )
-        raise HTTPException(409, "مالک فعلی پیش از تکمیل درخواست تغییر کرده است؛ درخواست لغو شد.")
+        return "stale"
     now = int(time.time())
     conn.execute(
         "UPDATE finance_platform_owner SET user_id=?,email=?,claimed_at=CURRENT_TIMESTAMP WHERE singleton=1",
@@ -2227,10 +2227,23 @@ def request_owner_transfer(body: OwnerTransferRequestIn, user=Depends(user_from_
             raise HTTPException(409, "این ایمیل به بیش از یک حساب متصل است؛ ابتدا حساب مقصد را یکتا کنید.")
         if int(targets[0]["id"]) == int(user["id"]):
             raise HTTPException(422, "حساب مقصد نمی‌تواند همان حساب مالک فعلی باشد.")
+        now_for_limits = int(time.time())
+        conn.execute(
+            "UPDATE platform_owner_transfer_requests SET status='expired' "
+            "WHERE current_owner_user_id=? AND status='pending' AND expires_at<=?",
+            (int(user["id"]), now_for_limits),
+        )
+        active = conn.execute(
+            "SELECT id FROM platform_owner_transfer_requests WHERE current_owner_user_id=? "
+            "AND status='pending' AND expires_at>? ORDER BY created_at DESC LIMIT 1",
+            (int(user["id"]), now_for_limits),
+        ).fetchone()
+        if active:
+            raise HTTPException(409, "برای این مالک یک درخواست انتقال فعال وجود دارد؛ ابتدا آن را تکمیل یا منقضی کنید.")
         recent = conn.execute(
             "SELECT id FROM platform_owner_transfer_requests WHERE current_owner_user_id=? AND created_at>=? "
             "ORDER BY created_at DESC LIMIT 1",
-            (int(user["id"]), int(time.time()) - 300),
+            (int(user["id"]), now_for_limits - 300),
         ).fetchone()
         if recent:
             raise HTTPException(429, "برای امنیت، بین درخواست‌های انتقال مالکیت باید پنج دقیقه فاصله باشد.")
@@ -2330,7 +2343,11 @@ def confirm_current_owner_transfer(body: OwnerTransferCodeIn, user=Depends(user_
                 )
                 _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.current_verified")
                 transfer = conn.execute("SELECT * FROM platform_owner_transfer_requests WHERE id=?", (body.transfer_id,)).fetchone()
-                completed = _finish_owner_transfer(conn, transfer)
+                completion = _finish_owner_transfer(conn, transfer)
+                if completion == "stale":
+                    error = (409, "مالک فعلی پیش از تکمیل درخواست تغییر کرده است؛ درخواست لغو شد.")
+                else:
+                    completed = completion
     if error:
         raise HTTPException(error[0], error[1])
     return {"verified": True, "completed": completed, "message": "تأیید ایمیل مالک فعلی ثبت شد."}
@@ -2375,7 +2392,11 @@ def accept_owner_transfer(body: OwnerTransferCodeIn, user=Depends(user_from_head
                 )
                 _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.target_verified")
                 transfer = conn.execute("SELECT * FROM platform_owner_transfer_requests WHERE id=?", (body.transfer_id,)).fetchone()
-                completed = _finish_owner_transfer(conn, transfer)
+                completion = _finish_owner_transfer(conn, transfer)
+                if completion == "stale":
+                    error = (409, "مالک فعلی پیش از تکمیل درخواست تغییر کرده است؛ درخواست لغو شد.")
+                else:
+                    completed = completion
     if error:
         raise HTTPException(error[0], error[1])
     return {"verified": True, "completed": completed, "message": "تأیید ایمیل مالک جدید ثبت شد."}
