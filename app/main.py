@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 import csv, io, json
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, AliasChoices
+from app.email_service import EmailDeliveryError, email_service_status, send_transactional_email
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = os.getenv("LEADORA_DB", str(ROOT.parent / "data" / "leadora.db"))
@@ -2068,3 +2069,26 @@ install_procurement(app, db, user_from_header, ROOT)
 # Additive tenant-isolated commercial licensing, support desk, and cross-module workflow queue.
 from app.commercial_ops import create_router as create_commercial_ops_router
 app.include_router(create_commercial_ops_router(db, user_from_header))
+
+
+# --- Owner-only transactional email diagnostics ---
+@app.get("/api/platform/email/status")
+def platform_email_status(user=Depends(user_from_header)):
+    _platform_owner(user)
+    return email_service_status()
+
+
+@app.post("/api/platform/email/test")
+def platform_email_test(user=Depends(user_from_header)):
+    _platform_owner(user)
+    try:
+        message_id = send_transactional_email(
+            recipient=user["email"],
+            subject="آزمون اتصال ایمیل LEADORA",
+            text_content="این پیام برای بررسی اتصال ایمیل تراکنشی LEADORA ارسال شده است. اگر آن را دریافت کرده‌اید، ارسال پیام آزمایشی انجام شده است.",
+            html_content="<div dir=\"rtl\"><h2>LEADORA</h2><p>این پیام برای بررسی اتصال ایمیل تراکنشی LEADORA ارسال شده است.</p></div>",
+            tags=["owner-email-test"],
+        )
+    except EmailDeliveryError as exc:
+        raise HTTPException(503, str(exc)) from None
+    return {"sent": True, "message_id": message_id}
