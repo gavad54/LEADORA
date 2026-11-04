@@ -2,9 +2,9 @@ name: LEADORA regression and security tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'fix/public-home-optional-auth']
   workflow_dispatch:
 
 permissions:

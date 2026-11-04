@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#080d20">
+<title>مدیریت مالکیت پلتفرم | LEADORA</title>
+<style>
+:root{color-scheme:dark;font-family:Tahoma,Arial,sans-serif;background:#080d20;color:#eef4ff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 85% 8%,#6d45ff3d,transparent 38%),radial-gradient(ellipse at 10% 75%,#18e4d126,transparent 35%),linear-gradient(145deg,#080d20,#101a36 55%,#10112b);padding:24px}
+main{width:min(100%,650px);margin:7vh auto;background:#101a35eF;border:1px solid #ffffff25;border-radius:24px;padding:clamp(22px,5vw,38px);box-shadow:0 24px 80px #0008}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:24px}.mark{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#55f4d5,#7685ff 58%,#c36cff);display:grid;place-items:center;color:#10152f;font-weight:900;font-size:20px}.brand small{display:block;color:#9eacd0;font-size:10px;letter-spacing:2px;margin-top:4px}
+h1{font-size:clamp(22px,5vw,29px);margin:0 0 10px}p{color:#b7c4e3;line-height:1.9;font-size:14px}.panel{border:1px solid #ffffff20;background:#ffffff08;border-radius:16px;padding:18px;margin-top:16px}.panel h2{font-size:17px;margin:0 0 10px}.hint{font-size:12px;color:#9caed3}.status{padding:13px;border-radius:12px;background:#ffffff0d;color:#dce7ff;line-height:1.8;margin:16px 0}.status.good{border:1px solid #3ce0b255;color:#a8f6dc}.status.warn{border:1px solid #f5c26b55;color:#ffdda0}
+label{display:block;font-size:13px;margin:14px 0 8px;color:#d8e2fa}input{width:100%;border-radius:11px;border:1px solid #ffffff35;background:#070f25;color:white;padding:14px;font:inherit;direction:ltr;text-align:left}button,.link{display:inline-block;border:0;border-radius:11px;padding:13px 18px;margin-top:13px;background:linear-gradient(110deg,#55e7d0,#8292ff);color:#09152b;font:inherit;font-weight:bold;text-decoration:none;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.secondary{background:#ffffff12;color:#dbe6ff;border:1px solid #ffffff25}.hidden{display:none!important}.foot{font-size:11px;color:#8999bd;margin-top:22px;line-height:1.9}
+</style>
+</head>
+<body>
+<main>
+<div class="brand"><div class="mark">L</div><div><strong>LEADORA</strong><small>PLATFORM OWNERSHIP</small></div></div>
+<h1>راه‌اندازی مالک پلتفرم</h1>
+<p>این بخش فقط برای حسابی است که ایمیل آن از قبل در تنظیمات امن سرور تعیین شده است. ثبت مالکیت یک‌باره و در پایگاه داده ثبت و ممیزی می‌شود.</p>
+<div id="status" class="status">در حال بررسی وضعیت حساب…</div>
+<section id="emailPanel" class="panel hidden">
+<h2>سرویس ایمیل تراکنشی</h2>
+<p class="hint">وضعیت اتصال Brevo را ببینید و یک پیام آزمایشی فقط به ایمیل همین حساب ارسال کنید.</p>
+<div id="emailStatus" class="status">در حال بررسی تنظیمات ایمیل…</div>
+<button id="emailTestButton" type="button">ارسال ایمیل آزمایشی</button>
+</section>
+<section id="transferOwnerPanel" class="panel hidden">
+<h2>انتقال امن مالکیت</h2>
+<p class="hint">برای انتقال مالکیت، یک کد جداگانه به ایمیل مالک فعلی و یک کد مستقل به ایمیل حساب مقصد ارسال می‌شود. هر دو نفر باید کد خود را تأیید کنند.</p>
+<form id="requestTransferForm">
+<label for="targetOwnerEmail">ایمیل حساب مالک جدید</label>
+<input id="targetOwnerEmail" type="email" autocomplete="email" required>
+<button id="requestTransferButton" type="submit">ارسال دو کد تأیید</button>
+</form>
+<div id="transferRequestStatus" class="status">درخواست انتقالی ثبت نشده است.</div>
+<form id="confirmCurrentTransferForm">
+<label for="currentTransferId">شناسه درخواست انتقال</label>
+<input id="currentTransferId" type="text" minlength="20" maxlength="64" required>
+<label for="currentTransferCode">کد ارسالی به ایمیل مالک فعلی</label>
+<input id="currentTransferCode" type="password" minlength="24" maxlength="128" autocomplete="off" required>
+<button id="confirmCurrentTransferButton" type="submit">تأیید ایمیل مالک فعلی</button>
+</form>
+</section>
+<section id="acceptTransferPanel" class="panel hidden">
+<h2>پذیرش انتقال مالکیت</h2>
+<p class="hint">با حسابی وارد شوید که ایمیل آن دعوت شده است؛ سپس شناسه درخواست و کد دریافتی را وارد کنید.</p>
+<form id="acceptTransferForm">
+<label for="incomingTransferId">شناسه درخواست انتقال</label>
+<input id="incomingTransferId" type="text" minlength="20" maxlength="64" required>
+<label for="incomingTransferCode">کد ارسالی به ایمیل مالک جدید</label>
+<input id="incomingTransferCode" type="password" minlength="24" maxlength="128" autocomplete="off" required>
+<button id="acceptTransferButton" type="submit">تأیید و پذیرش مالکیت</button>
+</form>
+<div id="acceptTransferStatus" class="status">در انتظار تأیید دعوت انتقال.</div>
+</section>
+<div id="loginNeeded" class="panel hidden">
+<p>برای ادامه ابتدا از صفحه اصلی LEADORA وارد حساب کاربری تعیین‌شده شوید؛ سپس دوباره این صفحه را باز کنید.</p>
+<a class="link" href="/">رفتن به صفحه ورود</a>
+</div>
+<section id="claimPanel" class="panel hidden">
+<h2>ثبت اولیه مالک</h2>
+<p class="hint">کد راه‌اندازی را فقط در همین صفحه وارد کنید. این کد را در پیام یا گفت‌وگو برای هیچ‌کس ارسال نکنید.</p>
+<form id="claimForm">
+<label for="bootstrapToken">کد راه‌اندازی اولیه</label>
+<input id="bootstrapToken" type="password" minlength="32" maxlength="256" autocomplete="off" required>
+<button id="claimButton" type="submit">ثبت مالکیت</button>
+</form>
+</section>
+<section id="recoveryPanel" class="panel hidden">
+<h2>بازیابی مالکیت</h2>
+<p class="hint">این مسیر فقط برای ایمیل بازیابی از پیش تعیین‌شده است. کد بازیابی پس از یک بار استفاده دیگر پذیرفته نمی‌شود.</p>
+<form id="recoveryForm">
+<label for="recoveryToken">کد بازیابی یک‌بارمصرف</label>
+<input id="recoveryToken" type="password" minlength="32" maxlength="256" autocomplete="off" required>
+<button id="recoveryButton" type="submit">بازیابی مالکیت</button>
+</form>
+<form id="recoveryCodeForm" class="hidden">
+<label for="recoveryRequestId">شناسه درخواست بازیابی</label>
+<input id="recoveryRequestId" type="text" readonly>
+<label for="recoveryCode">کد تأیید ارسال‌شده به ایمیل بازیابی</label>
+<input id="recoveryCode" type="password" minlength="24" maxlength="128" autocomplete="off" required>
+<button id="recoveryConfirmButton" type="submit">تأیید کد و تکمیل بازیابی</button>
+</form>
+</section>
+<div class="foot">پس از ثبت موفق مالک اولیه، متغیر LEADORA_OWNER_BOOTSTRAP_TOKEN را از تنظیمات Railway حذف کنید. پس از بازیابی نیز کد بازیابی را تعویض و مقدار قبلی را از تنظیمات حذف کنید. این صفحه هیچ‌گاه کدها را ذخیره نمی‌کند.</div>
+<a class="link secondary" href="/">بازگشت به LEADORA</a>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const token=localStorage.getItem('leadora_token')||'';
+function showMessage(message,kind=''){ $('status').textContent=message;$('status').className='status '+kind; }
+async function request(path,body){
+ const response=await fetch(path,{method:body?'POST':'GET',headers:{'Accept':'application/json','Authorization':'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+ let data={};try{data=await response.json()}catch{}
+ if(!response.ok)throw new Error(data.detail||'درخواست ناموفق بود.');
+ return data;
+}
+async function refreshEmailStatus(){
+ try{
+  const data=await request('/api/platform/email/status');
+  $('emailStatus').textContent=data.configured?'اتصال از نظر تنظیمات سرور آماده است. برای آزمون ارسال، دکمه زیر را بزنید.':'تنظیمات Brevo کامل نیست؛ متغیرهای امن Railway باید تکمیل شوند.';
+  $('emailStatus').className='status '+(data.configured?'good':'warn');
+  $('emailTestButton').disabled=!data.configured;
+ }catch(error){
+  $('emailStatus').textContent=error.message;
+  $('emailStatus').className='status warn';
+  $('emailTestButton').disabled=true;
+ }
+}
+$('emailTestButton').addEventListener('click',async()=>{
+ const button=$('emailTestButton');button.disabled=true;
+ try{
+  const result=await request('/api/platform/email/test',{});
+  $('emailStatus').textContent='درخواست ارسال توسط Brevo پذیرفته شد. شناسه پیام: '+result.message_id+'؛ تحویل نهایی را در گزارش Brevo بررسی کنید.';
+  $('emailStatus').className='status good';
+ }catch(error){
+  $('emailStatus').textContent=error.message;
+  $('emailStatus').className='status warn';
+ }finally{button.disabled=false;}
+});
+$('requestTransferForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('requestTransferButton');button.disabled=true;
+ try{
+  const result=await request('/api/platform/owner/transfer/request',{target_email:$('targetOwnerEmail').value.trim()});
+  $('currentTransferId').value=result.transfer_id;
+  $('transferRequestStatus').textContent='دو پیام تأیید برای مالک فعلی و حساب مقصد درخواست شد. شناسه درخواست: '+result.transfer_id+'؛ هر دو کد فقط ۱۰ دقیقه اعتبار دارند.';
+  $('transferRequestStatus').className='status good';
+ }catch(error){
+  $('transferRequestStatus').textContent=error.message;
+  $('transferRequestStatus').className='status warn';
+ }finally{button.disabled=false;}
+});
+$('confirmCurrentTransferForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('confirmCurrentTransferButton');button.disabled=true;
+ try{
+  const result=await request('/api/platform/owner/transfer/confirm-current',{
+   transfer_id:$('currentTransferId').value.trim(),code:$('currentTransferCode').value
+  });
+  $('currentTransferCode').value='';
+  $('transferRequestStatus').textContent=result.completed?'انتقال مالکیت کامل شد. نشست قبلی مالک نیز باطل شد.':'ایمیل مالک فعلی تأیید شد؛ برای تکمیل، مالک جدید باید کد مستقل خود را تأیید کند.';
+  $('transferRequestStatus').className='status good';
+ }catch(error){
+  $('transferRequestStatus').textContent=error.message;
+  $('transferRequestStatus').className='status warn';
+ }finally{button.disabled=false;}
+});
+$('acceptTransferForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('acceptTransferButton');button.disabled=true;
+ try{
+  const result=await request('/api/platform/owner/transfer/accept',{
+   transfer_id:$('incomingTransferId').value.trim(),code:$('incomingTransferCode').value
+  });
+  $('incomingTransferCode').value='';
+  $('acceptTransferStatus').textContent=result.completed?'انتقال مالکیت کامل شد. این حساب اکنون مالک پلتفرم است.':'کد مالک جدید تأیید شد؛ تکمیل نهایی پس از تأیید مالک فعلی انجام می‌شود.';
+  $('acceptTransferStatus').className='status good';
+  if(result.completed) await refresh();
+ }catch(error){
+  $('acceptTransferStatus').textContent=error.message;
+  $('acceptTransferStatus').className='status warn';
+ }finally{button.disabled=false;}
+});
+async function refresh(){
+ if(!token){$('loginNeeded').classList.remove('hidden');showMessage('برای ادامه باید ابتدا وارد حساب کاربری شوید.','warn');return;}
+ try{
+  const data=await request('/api/platform/owner/status');
+  $('loginNeeded').classList.add('hidden');
+  if(data.is_platform_owner){showMessage('این حساب مالک پلتفرم است. دسترسی مالک ثبت و قابل ممیزی است.','good');$('emailPanel').classList.remove('hidden');$('transferOwnerPanel').classList.remove('hidden');await refreshEmailStatus();return;}
+  if(data.bootstrap_eligible){showMessage('حساب شما برای ثبت اولیه مالک تأیید شده است.','warn');$('claimPanel').classList.remove('hidden');return;}
+  if(data.recovery_eligible){showMessage('حساب شما برای بازیابی مالک تأیید شده است.','warn');$('recoveryPanel').classList.remove('hidden');return;}
+  if(data.owner_claimed){showMessage('مالک پلتفرم ثبت شده است. اگر دعوت انتقال برای این حساب ارسال شده، کد ایمیل را در بخش پذیرش وارد کنید.','warn');$('acceptTransferPanel').classList.remove('hidden');return;}
+  showMessage('تنظیمات راه‌اندازی مالک هنوز برای این حساب آماده نیست. تنظیمات ایمیل و کد امن باید در Railway تکمیل شوند.','warn');
+ }catch(error){showMessage(error.message,'warn');}
+}
+$('claimForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('claimButton');button.disabled=true;
+ try{await request('/api/platform/owner/claim',{bootstrap_token:$('bootstrapToken').value});$('bootstrapToken').value='';showMessage('مالکیت با موفقیت ثبت شد. اکنون کد راه‌اندازی را از Railway حذف کنید.','good');$('claimPanel').classList.add('hidden');await refresh();}
+ catch(error){showMessage(error.message,'warn');}
+ finally{button.disabled=false;}
+});
+$('recoveryForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('recoveryButton');button.disabled=true;
+ try{
+  const result=await request('/api/platform/owner/recovery/request',{token:$('recoveryToken').value});
+  $('recoveryToken').value='';
+  $('recoveryRequestId').value=result.request_id;
+  $('recoveryCodeForm').classList.remove('hidden');
+  showMessage('کد تأیید بازیابی به ایمیل تعیین‌شده ارسال شد. کد فقط ۱۰ دقیقه اعتبار دارد.','good');
+ }catch(error){showMessage(error.message,'warn');}
+ finally{button.disabled=false;}
+});
+$('recoveryCodeForm').addEventListener('submit',async event=>{
+ event.preventDefault();const button=$('recoveryConfirmButton');button.disabled=true;
+ try{
+  await request('/api/platform/owner/recovery/confirm',{
+   request_id:$('recoveryRequestId').value.trim(),code:$('recoveryCode').value
+  });
+  $('recoveryCode').value='';
+  showMessage('بازیابی مالکیت با تأیید ایمیل انجام شد. کد بازیابی سرور را برای استفاده بعدی تعویض کنید.','good');
+  $('recoveryPanel').classList.add('hidden');
+  await refresh();
+ }catch(error){showMessage(error.message,'warn');}
+ finally{button.disabled=false;}
+});
+
+refresh();
+</script>
+</body>
+</html>

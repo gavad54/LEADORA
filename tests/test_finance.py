@@ -1,7 +1,8 @@
 import os
+import re
 import uuid
 from fastapi.testclient import TestClient
-from app.main import app
+from app.main import app, db
 
 
 def register(client, company, email=None):
@@ -169,6 +170,11 @@ def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(m
 
 
 def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
+    with db() as conn:
+        conn.execute("DELETE FROM finance_platform_owner")
+        conn.execute("DELETE FROM finance_platform_owner_recovery_uses")
+        conn.execute("DELETE FROM platform_owner_recovery_requests")
+        conn.execute("DELETE FROM user_session_revocations")
     client = TestClient(app)
     monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
     bootstrap = "test-owner-bootstrap-token-0123456789-abcdef"
@@ -194,63 +200,99 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
     allowed = client.get("/api/finance/owner/audit", headers=owner_headers)
     assert allowed.status_code == 200
 
-    # Recovery is an explicit, separately gated path for a wrongly claimed owner account.
     recovery_headers, recovery = register(client, "Recovery Owner")
-
-    # Fail closed if the recovery token reuses the bootstrap token.
+    recovery_token = "test-owner-recovery-token-0123456789-abcdef"
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", bootstrap)
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", recovery["user"]["email"])
     same_token = client.post(
-        "/api/finance/owner/recover", headers=recovery_headers, json={"token": bootstrap}
+        "/api/platform/owner/recovery/request", headers=recovery_headers, json={"token": bootstrap}
     )
     assert same_token.status_code == 503
 
-    # Missing recovery email must fail closed.
-    recovery_token = "test-owner-recovery-token-0123456789-abcdef"
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", recovery_token)
     monkeypatch.delenv("LEADORA_OWNER_RECOVERY_EMAIL", raising=False)
     missing_email = client.post(
-        "/api/finance/owner/recover", headers=recovery_headers, json={"token": recovery_token}
+        "/api/platform/owner/recovery/request", headers=recovery_headers, json={"token": recovery_token}
     )
     assert missing_email.status_code == 503
 
-    # An explicit server-side owner ID list takes precedence over form recovery.
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", recovery["user"]["email"])
     monkeypatch.setenv("LEADORA_OWNER_USER_IDS", "999999999")
-    server_owned = client.post(
-        "/api/finance/owner/recover", headers=recovery_headers, json={"token": recovery_token}
-    )
-    assert server_owned.status_code == 409
-    monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
+    assert client.get("/api/finance/identity", headers=owner_headers).json()["is_platform_owner"] is True
+    assert client.get("/api/finance/identity", headers=other_headers).json()["is_platform_owner"] is False
 
-    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", recovery_token)
-    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", recovery["user"]["email"])
+    monkeypatch.setenv("BREVO_API_KEY", "test-recovery-api-key")
+    monkeypatch.setenv("BREVO_SENDER_EMAIL", "noreply@example.test")
+    sent = []
+
+    def fake_send(recipient, subject, text_content, html_content=None, tags=None):
+        sent.append({"recipient": recipient, "text": text_content})
+        return f"recovery-message-{len(sent)}"
+
+    monkeypatch.setattr("app.main.send_transactional_email", fake_send)
 
     bad_token = client.post(
-        "/api/finance/owner/recover",
+        "/api/platform/owner/recovery/request",
         headers=recovery_headers,
         json={"token": "wrong-owner-recovery-token-0123456789"},
     )
     assert bad_token.status_code == 403
 
     wrong_account = client.post(
-        "/api/finance/owner/recover",
+        "/api/platform/owner/recovery/request",
         headers=other_headers,
         json={"token": recovery_token},
     )
     assert wrong_account.status_code == 403
 
-    recovered = client.post(
-        "/api/finance/owner/recover",
+    # The old recovery routes must not bypass the email OTP confirmation.
+    legacy_finance_recovery = client.post(
+        "/api/finance/owner/recover", headers=recovery_headers, json={"token": recovery_token}
+    )
+    assert legacy_finance_recovery.status_code == 410
+    legacy_platform_recovery = client.post(
+        "/api/platform/owner/recover", headers=recovery_headers, json={"token": recovery_token}
+    )
+    assert legacy_platform_recovery.status_code == 410
+
+    request = client.post(
+        "/api/platform/owner/recovery/request",
         headers=recovery_headers,
         json={"token": recovery_token},
+    )
+    assert request.status_code == 200, request.text
+    request_id = request.json()["request_id"]
+    assert request.json()["code_returned"] is False
+    assert len(sent) == 1
+    code_match = re.search(r"کد تأیید بازیابی: ([A-Za-z0-9_-]+)", sent[0]["text"])
+    assert code_match
+    recovery_code = code_match.group(1)
+    assert sent[0]["recipient"] == recovery["user"]["email"]
+
+    bad_code = client.post(
+        "/api/platform/owner/recovery/confirm",
+        headers=recovery_headers,
+        json={"request_id": request_id, "code": "incorrect-code-with-at-least-24-chars"},
+    )
+    assert bad_code.status_code == 403
+
+    recovered = client.post(
+        "/api/platform/owner/recovery/confirm",
+        headers=recovery_headers,
+        json={"request_id": request_id, "code": recovery_code},
     )
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["is_platform_owner"] is True
     assert client.get("/api/finance/identity", headers=recovery_headers).json()["is_platform_owner"] is True
-    assert client.get("/api/finance/identity", headers=owner_headers).json()["is_platform_owner"] is False
-    assert client.get("/api/finance/owner/audit", headers=owner_headers).status_code == 403
+    assert client.get("/api/finance/identity", headers=owner_headers).status_code == 401
     assert client.get("/api/finance/owner/audit", headers=recovery_headers).status_code == 200
+
+    reused_recovery = client.post(
+        "/api/platform/owner/recovery/request",
+        headers=recovery_headers,
+        json={"token": recovery_token},
+    )
+    assert reused_recovery.status_code == 409
 
 
 def test_integration_webhook_key_rotation_ingest_and_tenant_isolation():

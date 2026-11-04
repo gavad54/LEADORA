@@ -1,9 +1,9 @@
 name: LEADORA CI
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'fix/public-home-optional-auth']
   workflow_dispatch:
 
 concurrency:
@@ -42,6 +42,7 @@ jobs:
               ('app/static/accounting.html', '/tmp/leadora-accounting.js'),
               ('app/static/lead-discovery.html', '/tmp/leadora-lead-discovery.js'),
               ('app/static/procurement.html', '/tmp/leadora-procurement.js'),
+              ('app/static/platform-owner.html', '/tmp/leadora-platform-owner.js'),
           ]:
               page = Path(source).read_text(encoding='utf-8')
               Path(output).write_text('\\n'.join(re.findall(r'<script>(.*?)</script>', page, re.S)), encoding='utf-8')
@@ -61,6 +62,7 @@ jobs:
       - run: node --check /tmp/leadora-accounting.js
       - run: node --check /tmp/leadora-lead-discovery.js
       - run: node --check /tmp/leadora-procurement.js
+      - run: node --check /tmp/leadora-platform-owner.js
       - run: node --check app/static/service-worker.js
       - name: Validate PWA manifest
         run: python -c "import json; json.load(open('app/static/manifest.webmanifest', encoding='utf-8'))"

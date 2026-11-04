@@ -4,6 +4,12 @@ from fastapi.testclient import TestClient
 from app.main import app, db
 
 
+def clear_platform_owner_state():
+    with db() as conn:
+        conn.execute("DELETE FROM finance_platform_owner")
+        conn.execute("DELETE FROM finance_platform_owner_recovery_uses")
+
+
 def register(client, company):
     suffix = uuid.uuid4().hex[:10]
     response = client.post("/api/register", json={
@@ -36,6 +42,7 @@ def test_bank_accounts_are_tenant_scoped_and_never_claim_transfers():
 
 
 def test_activation_key_is_one_time_and_tenant_bound(monkeypatch):
+    clear_platform_owner_state()
     client = TestClient(app)
     owner_headers, owner = register(client, "Platform Owner")
     company_headers, company = register(client, "Licensed Company")
@@ -78,6 +85,7 @@ def test_only_platform_owner_can_issue_keys(monkeypatch):
 
 
 def test_platform_license_sales_accept_only_whole_irr_amounts(monkeypatch):
+    clear_platform_owner_state()
     client = TestClient(app)
     owner_headers, owner = register(client, "License Sale Owner")
     company_headers, company = register(client, "License Sale Customer")
