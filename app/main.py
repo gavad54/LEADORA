@@ -2365,7 +2365,7 @@ def confirm_platform_owner_recovery(body: OwnerRecoveryConfirmIn, user=Depends(u
 def request_owner_transfer(body: OwnerTransferRequestIn, user=Depends(user_from_header)):
     _platform_owner(user)
     target_email = body.target_email.strip().casefold()
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", target_email):
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", target_email):
         raise HTTPException(422, "ایمیل مالک جدید معتبر نیست.")
     current_email = str(user.get("email", "")).strip().casefold()
     if not current_email or target_email == current_email:
@@ -2438,23 +2438,23 @@ def request_owner_transfer(body: OwnerTransferRequestIn, user=Depends(user_from_
             recipient=current_email,
             subject="درخواست تغییر مالکیت LEADORA",
             text_content=(
-                "درخواست تغییر مالکیت LEADORA ثبت شده است. اگر این درخواست را آغاز نکرده‌اید، آن را نادیده بگیرید.\\n"
-                f"شناسه درخواست: {transfer_id}\\nکد تأیید: {current_code}\\n"
+                "درخواست تغییر مالکیت LEADORA ثبت شده است. اگر این درخواست را آغاز نکرده‌اید، آن را نادیده بگیرید.\n"
+                f"شناسه درخواست: {transfer_id}\nکد تأیید: {current_code}\n"
                 "این کد فقط ۱۰ دقیقه اعتبار دارد و آن را در اختیار دیگران قرار ندهید."
             ),
-            html_content=f"<div dir=\\"rtl\\"><h2>LEADORA</h2><p>درخواست تغییر مالکیت ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{current_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
+            html_content=f"<div dir=\"rtl\"><h2>LEADORA</h2><p>درخواست تغییر مالکیت ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{current_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
             tags=["owner-transfer-current"],
         )
         send_transactional_email(
             recipient=target_email,
             subject="دعوت برای پذیرش مالکیت LEADORA",
             text_content=(
-                "درخواستی برای انتقال مالکیت LEADORA به حساب شما ثبت شده است.\\n"
-                f"شناسه درخواست: {transfer_id}\\nکد تأیید: {target_code}\\n"
+                "درخواستی برای انتقال مالکیت LEADORA به حساب شما ثبت شده است.\n"
+                f"شناسه درخواست: {transfer_id}\nکد تأیید: {target_code}\n"
                 "برای پذیرش، با حساب مقصد وارد LEADORA شوید و کد را در صفحه مالکیت وارد کنید. "
                 "این کد فقط ۱۰ دقیقه اعتبار دارد."
             ),
-            html_content=f"<div dir=\\"rtl\\"><h2>LEADORA</h2><p>درخواستی برای انتقال مالکیت به حساب شما ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{target_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
+            html_content=f"<div dir=\"rtl\"><h2>LEADORA</h2><p>درخواستی برای انتقال مالکیت به حساب شما ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{target_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
             tags=["owner-transfer-target"],
         )
     except EmailDeliveryError:
