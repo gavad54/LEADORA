@@ -9,6 +9,12 @@ on:
       - "app/**"
       - "Dockerfile"
       - ".github/workflows/android-apk.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - "app/**"
+      - "Dockerfile"
+      - ".github/workflows/android-apk.yml"
 
 permissions:
   contents: write
@@ -16,6 +22,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -36,29 +43,223 @@ jobs:
           fi
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" --install "platform-tools" "emulator" "platforms;android-35" "build-tools;35.0.0" "system-images;android-30;google_apis;x86_64"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
       - name: Build installable APK
         working-directory: android
-        run: gradle --no-daemon --stacktrace assembleDebug
+        run: gradle --no-daemon --stacktrace assembleDebug && mkdir -p ../release && cp app/build/outputs/apk/debug/app-debug.apk ../release/LEADORA-Android.apk
+      - name: Public production smoke checks
+        id: production_smoke
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/api/health" -o /tmp/leadora-health.json
+          python - <<'PY'
+          import json
+          with open("/tmp/leadora-health.json", encoding="utf-8") as f:
+              data = json.load(f)
+          assert data.get("database") == "ok", "public health endpoint did not report database=ok"
+          print("public_api_health=PASS")
+          PY
+          curl -fsS --max-time 20 "https://leadora-web-production.up.railway.app/" -o /tmp/leadora-home.html
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+
+          class PageState(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.elements = {}
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  element_id = attrs.get("id")
+                  if element_id in {"publicHome", "authOverlay", "workspaceShell"}:
+                      self.elements[element_id] = {
+                          "tag": tag,
+                          "hidden": "hidden" in attrs,
+                          "attrs": attrs,
+                      }
+
+          html = Path("/tmp/leadora-home.html").read_text(encoding="utf-8")
+          page = PageState()
+          page.feed(html)
+          checks = {
+              "rtl_document": 'dir="rtl"' in html,
+              "public_home_present": "publicHome" in page.elements,
+              "public_home_visible": "publicHome" in page.elements and not page.elements["publicHome"]["hidden"],
+              "auth_overlay_hidden": "authOverlay" in page.elements and page.elements["authOverlay"]["hidden"],
+              "workspace_hidden": "workspaceShell" in page.elements and page.elements["workspaceShell"]["hidden"],
+              "startup_renders_public_home": "showPublicHome();" in html,
+              "public_login_action": "ورود / ساخت حساب" in html,
+          }
+          print("production_home_checks=" + repr(checks))
+          missing = [name for name, passed in checks.items() if not passed]
+          if missing:
+              raise SystemExit("Production public-home acceptance failed: " + ", ".join(missing))
+          Path("release/production-smoke.txt").write_text(
+              "result=PASS\n" + "\n".join(f"{name}=PASS" for name in checks) + "\n",
+              encoding="utf-8",
+          )
+          Path("release/production-home.html").write_text(html, encoding="utf-8")
+          print("public_homepage_smoke=PASS")
+          PY
+      - name: Record production smoke status
+        if: steps.production_smoke.outcome == 'failure'
+        shell: bash
+        run: |
+          mkdir -p release
+          {
+            echo "result=BLOCKED"
+            echo "reason=Production homepage failed public-home acceptance checks"
+            echo "required=publicHome visible; authOverlay hidden; workspaceShell hidden; showPublicHome startup"
+          } > release/production-smoke.txt
+          {
+            echo "### Production smoke check: BLOCKED"
+            echo "The deployed Railway homepage is not the PR #46 public landing page. Health may be available, but the public-home DOM acceptance checks failed."
+            echo "The APK build may continue for diagnostics; this is a release blocker until the existing Railway service runs the reviewed public-home commit."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Install and launch APK on a manually managed Android emulator
+        shell: bash
+        env:
+          ANDROID_API_LEVEL: "30"
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -n 1)"
+          fi
+          AVDMANAGER="$(dirname "$SDKMANAGER")/avdmanager"
+          # Use the same AVD home for creation and emulator lookup.
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME" release
+          # GitHub-hosted Linux runners may expose /dev/kvm without granting
+          # the runner user access. Fix permissions only on this ephemeral
+          # runner, then prove acceleration works before starting the AVD.
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+            if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+              echo "KVM device exists but is not readable/writable by the runner."
+              ls -l /dev/kvm || true
+              exit 1
+            fi
+          else
+            echo "KVM device /dev/kvm is not exposed by this runner; x86_64 emulator cannot boot."
+            exit 1
+          fi
+          "$AVDMANAGER" create avd --name leadora_api30 --package "system-images;android-${ANDROID_API_LEVEL};google_apis;x86_64" --device pixel_2 --force
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          test -x "$EMULATOR"
+          "$EMULATOR" -avd leadora_api30 -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect -no-metrics > /tmp/leadora-emulator.log 2>&1 &
+          EMULATOR_PID=$!
+          capture_diagnostics() {
+            set +e
+            timeout 10s adb devices -l > release/android-adb-devices.txt 2>&1
+            timeout 15s adb logcat -d -t 3000 > release/android-emulator-logcat.txt 2>&1
+            timeout 10s adb shell dumpsys activity activities > release/android-activities.txt 2>&1
+            cp /tmp/leadora-emulator.log release/android-emulator-boot.log 2>/dev/null || true
+            set -e
+          }
+          cleanup() {
+            capture_diagnostics
+            timeout 10s adb emu kill >/dev/null 2>&1 || true
+            kill "$EMULATOR_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          timeout 45s adb wait-for-device
+          booted=false
+          for attempt in $(seq 1 180); do
+            if [ "$(timeout 12s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = "1" ]; then
+              booted=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$booted" != true ]; then
+            cat /tmp/leadora-emulator.log
+            echo "Android emulator did not complete boot within 15 minutes."
+            exit 1
+          fi
+          # Avoid unbounded package-manager enumeration: this command hung on
+          # the previous runner after sys.boot_completed became 1.
+          timeout 30s adb get-state
+          APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
+          test -s "$APK"
+          timeout 120s adb install -r "$APK"
+          timeout 30s adb shell pm path com.leadora.app
+          timeout 20s adb logcat -c
+          timeout 45s adb shell am start -W -n com.leadora.app/.MainActivity
+          sleep 8
+          timeout 30s adb shell dumpsys activity activities > release/android-activities-after-launch.txt
+          grep -q 'com.leadora.app' release/android-activities-after-launch.txt
+          # A foreground Activity alone is not proof that WebView rendered content.
+          dom_ready=false
+          for attempt in $(seq 1 20); do
+            timeout 15s adb logcat -d -t 5000 -s LEADORA_WEBVIEW_DOM:I > release/android-webview-dom.txt 2>&1 || true
+            if grep -Eq 'textLength=[1-9][0-9]*' release/android-webview-dom.txt \
+              && grep -Eq 'visibleTextNodes=[1-9][0-9]*' release/android-webview-dom.txt; then
+              dom_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$dom_ready" != true ]; then
+            echo "WebView did not prove visible DOM text after page load."
+            cat release/android-webview-dom.txt || true
+            timeout 20s adb logcat -d -t 5000 -s LEADORA_WEBVIEW_CONSOLE:W LEADORA_WEBVIEW_ERROR:E > release/android-webview-errors.txt 2>&1 || true
+            cat release/android-webview-errors.txt || true
+            exit 1
+          fi
+          timeout 30s adb logcat -d -t 5000 -s LEADORA_WEBVIEW_CONSOLE:W LEADORA_WEBVIEW_ERROR:E > release/android-webview-errors.txt 2>&1 || true
+          timeout 30s adb exec-out screencap -p > release/android-emulator-home.png
+          test -s release/android-emulator-home.png
+          timeout 30s adb logcat -d -t 5000 -s AndroidRuntime:E > release/android-runtime-errors.txt
+          if grep -q 'FATAL EXCEPTION' release/android-runtime-errors.txt; then
+            cat release/android-runtime-errors.txt
+            exit 1
+          fi
+          printf 'result=PASS\npackage=com.leadora.app\napi_level=%s\nchecks=install,activity_launch,foreground_activity,screenshot,no_fatal_exception\n' "$ANDROID_API_LEVEL" > release/android-emulator-smoke.txt
       - name: Verify and prepare APK
         shell: bash
         run: |
           set -euo pipefail
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
+          APK="$GITHUB_WORKSPACE/release/LEADORA-Android.apk"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          test -s "$APK" || { echo "ERROR: staged APK missing during verification"; exit 1; }
           mkdir -p release
-          cp "$APK" release/LEADORA-Android.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose release/LEADORA-Android.apk
+          "$BUILD_TOOLS/aapt" dump badging release/LEADORA-Android.apk > release/LEADORA-Android-metadata.txt
+          {
+            echo "source_commit=$GITHUB_SHA"
+            echo "apk_size_bytes=$(stat -c '%s' release/LEADORA-Android.apk)"
+            sha256sum release/LEADORA-Android.apk
+          } > release/LEADORA-Android-build-info.txt
           sha256sum release/LEADORA-Android.apk > release/LEADORA-Android.apk.sha256
           file release/LEADORA-Android.apk
-      - name: Upload build artifact
+          cat release/LEADORA-Android-build-info.txt
+      - name: Upload build and emulator evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: LEADORA-Android-APK
           path: release/*
           retention-days: 30
+      - name: Enforce production smoke release gate
+        if: always()
+        shell: bash
+        env:
+          PRODUCTION_SMOKE_OUTCOME: ${{ steps.production_smoke.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "${PRODUCTION_SMOKE_OUTCOME}" != "success" ]; then
+            echo "::error::Production public-home smoke checks failed. This run is diagnostic only and cannot qualify for release."
+            exit 1
+          fi
       - name: Publish APK release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-test-v1.0.${{ github.run_number }}
@@ -71,5 +272,6 @@ jobs:
           files: |
             release/LEADORA-Android.apk
             release/LEADORA-Android.apk.sha256
+            release/LEADORA-Android-build-info.txt
           prerelease: true
           make_latest: false

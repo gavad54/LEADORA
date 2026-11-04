@@ -62,16 +62,17 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page = browser.new_page()
         page.on("pageerror", lambda error: browser_errors.append(str(error)))
         page.goto(live_app, wait_until="networkidle")
-        assert page.locator("#view-dashboard").is_visible()
+        assert page.locator("#publicHome").is_visible()
+        assert page.locator("#workspaceShell").is_hidden()
         assert page.locator("#authOverlay").is_hidden()
-        assert page.get_by_role("heading", name="نمای کلی").is_visible()
+        assert page.get_by_text("کسب‌وکار خود را", exact=False).is_visible()
 
-        # An unauthenticated visit and refresh must show the dashboard, not a forced login overlay.
+        # Refreshing as a visitor keeps the public landing visible without forcing authentication.
         page.reload(wait_until="networkidle")
-        assert page.locator("#view-dashboard").is_visible()
+        assert page.locator("#publicHome").is_visible()
         assert page.locator("#authOverlay").is_hidden()
 
-        page.locator("#authOpenBtn").click()
+        page.locator("#publicStartBtn").click()
         assert page.locator("#authOverlay").is_visible()
         page.locator('[data-auth-mode="register"]').click()
         page.locator("#company").fill(company)
@@ -80,12 +81,16 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         page.locator("#password").fill(password)
         page.locator("#authSubmit").click()
 
-        page.wait_for_function("document.getElementById('authOverlay').style.display === 'none'")
+        page.wait_for_function("document.getElementById('authOverlay').hidden === true")
+        assert page.locator("#workspaceShell").is_visible()
+        assert page.locator("#publicHome").is_hidden()
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
         assert page.locator("#runtimeError").is_hidden()
 
         page.reload(wait_until="networkidle")
-        page.wait_for_function("document.getElementById('authOverlay').style.display === 'none'")
+        page.wait_for_function("document.getElementById('savedSessionBtn')?.hidden === false")
+        page.locator("#savedSessionBtn").click()
+        page.wait_for_function("document.getElementById('authOverlay').hidden === true")
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
         assert page.locator("#runtimeError").is_hidden()
 
@@ -97,17 +102,130 @@ def test_company_register_login_reload_and_logout_do_not_blank(live_app):
         assert "reduce-motion" in page.locator("body").get_attribute("class")
         assert "leadora_preferences" in page.evaluate("Object.keys(localStorage).join(',')")
         page.reload(wait_until="networkidle")
+        page.wait_for_function("document.getElementById('savedSessionBtn')?.hidden === false")
+        page.locator("#savedSessionBtn").click()
         page.locator('[data-view="settings"]:visible').click()
         assert page.locator("#densitySetting").input_value() == "compact"
         assert page.locator("#motionSetting").input_value() == "reduced"
         page.locator("#logoutBtn").click()
+        page.locator("#publicHome").wait_for(state="visible")
+        assert page.locator("#authOverlay").is_hidden()
+        page.locator("#publicLoginBtn").click()
         assert page.locator("#authOverlay").is_visible()
         page.locator("#company").fill(company)
         page.locator("#email").fill(email)
         page.locator("#password").fill(password)
         page.locator("#authSubmit").click()
-        page.wait_for_function("document.getElementById('authOverlay').style.display === 'none'")
+        page.wait_for_function("document.getElementById('authOverlay').hidden === true")
         page.wait_for_function("document.getElementById('connectionState').textContent.includes('اطلاعات دریافت شد')")
 
+        # Mobile viewport smoke test: public landing stays visible and the auth dialog is opt-in.
+        mobile = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+        mobile_errors = []
+        mobile.on("pageerror", lambda error: mobile_errors.append(str(error)))
+        mobile.goto(live_app, wait_until="networkidle")
+        assert mobile.locator("#publicHome").is_visible()
+        assert mobile.locator("#authOverlay").is_hidden()
+        assert mobile.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        mobile.locator("#publicLoginBtn").click()
+        assert mobile.locator("#authOverlay").is_visible()
+        assert mobile_errors == [], "Mobile browser JavaScript errors: " + "; ".join(mobile_errors)
+
         assert browser_errors == [], "Browser JavaScript errors: " + "; ".join(browser_errors)
+        browser.close()
+
+
+def test_saved_session_stays_on_public_home_when_server_is_temporarily_unreachable(live_app):
+    """A transient API/network failure must not expose an unvalidated workspace."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.route("**/api/**", lambda route: route.abort())
+        page.goto(live_app, wait_until="networkidle")
+        page.evaluate("""() => {
+            localStorage.setItem('leadora_token', 'previously-saved-session');
+            localStorage.setItem('leadora_email', 'returning@example.test');
+            localStorage.setItem('leadora_company', 'Returning Company');
+        }""")
+        page.reload(wait_until="networkidle")
+        page.wait_for_function(
+            "document.getElementById('connectionState').textContent.includes('ارتباط با سرور برقرار نشد')"
+        )
+        assert page.locator("#publicHome").is_visible()
+        assert page.locator("#workspaceShell").is_hidden()
+        assert page.locator("#authOverlay").is_hidden()
+        assert page.evaluate("localStorage.getItem('leadora_token')") == "previously-saved-session"
+        browser.close()
+
+def test_expired_local_session_recovers_to_public_home_without_login_loop(live_app):
+    """An invalid stored bearer token must not trap visitors on the workspace/auth screen."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(live_app, wait_until="networkidle")
+        page.evaluate("""() => {
+            localStorage.setItem('leadora_token', 'expired-or-invalid-token');
+            localStorage.setItem('leadora_email', 'stale@example.test');
+            localStorage.setItem('leadora_company', 'Stale workspace');
+        }""")
+        page.reload(wait_until="networkidle")
+        page.locator("#publicHome").wait_for(state="visible")
+        assert page.locator("#workspaceShell").is_hidden()
+        assert page.locator("#authOverlay").is_hidden()
+        assert page.evaluate("localStorage.getItem('leadora_token')") is None
+        assert page.evaluate("localStorage.getItem('leadora_email')") is None
+        assert page.evaluate("localStorage.getItem('leadora_company')") is None
+        assert errors == [], "Browser JavaScript errors: " + "; ".join(errors)
+        browser.close()
+
+
+def test_finance_ui_is_irr_only_and_owner_participation_is_absent(live_app):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(live_app + "/finance", wait_until="networkidle")
+        assert page.locator("#currency").input_value() == "IRR"
+        assert page.locator("#currency option").count() == 1
+        assert page.locator("#adjCurrency").input_value() == "IRR"
+        body = page.locator("body").inner_text()
+        assert "سهم مالک" not in body
+        assert "ثبت رسید پرداخت" not in body
+        assert "تومان" not in body
+        assert "ریال ایران (IRR)" in page.content()
+        assert errors == [], "Finance browser JavaScript errors: " + "; ".join(errors)
+        browser.close()
+
+
+def test_valid_saved_session_keeps_public_home_until_user_chooses_workspace(live_app):
+    """A valid remembered session must not skip the public landing page on startup."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        suffix = str(time.time_ns())
+        company = "Remembered Company " + suffix[-8:]
+        email = "remembered-" + suffix + "@example.test"
+        password = "remembered-session-password-2026"
+
+        page.goto(live_app, wait_until="networkidle")
+        page.locator("#publicStartBtn").click()
+        page.locator('[data-auth-mode="register"]').click()
+        page.locator("#company").fill(company)
+        page.locator("#industry").fill("retail")
+        page.locator("#email").fill(email)
+        page.locator("#password").fill(password)
+        page.locator("#authSubmit").click()
+        page.locator("#workspaceShell").wait_for(state="visible")
+
+        page.reload(wait_until="networkidle")
+        assert page.locator("#publicHome").is_visible()
+        assert page.locator("#workspaceShell").is_hidden()
+        assert page.locator("#authOverlay").is_hidden()
+        page.wait_for_function("document.getElementById('savedSessionBtn')?.hidden === false")
+        page.locator("#savedSessionBtn").click()
+        assert page.locator("#workspaceShell").is_visible()
+        assert page.locator("#publicHome").is_hidden()
         browser.close()

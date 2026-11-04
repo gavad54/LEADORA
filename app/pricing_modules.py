@@ -16,8 +16,9 @@ CURRENCY_DEFAULT = "IRR"
 class PriceUpdate(BaseModel):
     modules: dict[str, StrictInt] = Field(description="Monthly price per module in the configured currency; 0 means free")
     active_modules: list[str] = Field(default_factory=lambda: list(MODULES))
-    currency: str = Field(min_length=2, max_length=12)
-    currency_label: str = Field(min_length=1, max_length=40)
+    currency: str = Field(pattern="^IRR$")
+    currency_label: str = Field(pattern="^ریال$")
+    unit_review_confirmed: bool = False
     base_monthly_price: StrictInt = Field(ge=0)
     pricing_note: str = Field(default="", max_length=500)
 
@@ -31,7 +32,7 @@ def create_router(db, user_from_header):
         );
         CREATE TABLE IF NOT EXISTS leadora_pricing_settings(
             id INTEGER PRIMARY KEY CHECK(id=1), currency TEXT NOT NULL DEFAULT 'IRR',
-            currency_label TEXT NOT NULL DEFAULT 'تومان', base_monthly_price INTEGER NOT NULL DEFAULT 0,
+            currency_label TEXT NOT NULL DEFAULT 'ریال', base_monthly_price INTEGER NOT NULL DEFAULT 0,
             pricing_note TEXT NOT NULL DEFAULT ''
         );
         INSERT OR IGNORE INTO leadora_pricing_settings(id) VALUES(1);
@@ -105,6 +106,9 @@ def create_router(db, user_from_header):
         if any(type(v) is not int or v < 0 for v in body.modules.values()):
             raise HTTPException(422, "قیمت هر ماژول باید عدد صحیح و غیرمنفی باشد.")
         with db() as c:
+            current = c.execute("SELECT currency,currency_label FROM leadora_pricing_settings WHERE id=1").fetchone()
+            if (current["currency"] != "IRR" or current["currency_label"] != "ریال") and not body.unit_review_confirmed:
+                raise HTTPException(409, "قیمت‌های قبلی واحد تأییدشده ندارند؛ مبالغ پایه و ماژول‌ها را بررسی کنید و تأیید بازبینی واحد ریال را فعال کنید.")
             c.execute("UPDATE leadora_pricing_settings SET currency=?,currency_label=?,base_monthly_price=?,pricing_note=? WHERE id=1",
                       (body.currency.upper(),body.currency_label,body.base_monthly_price,body.pricing_note))
             for key, price in body.modules.items():

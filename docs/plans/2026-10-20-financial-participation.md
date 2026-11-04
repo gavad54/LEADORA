@@ -1,3 +1,5 @@
+> **وضعیت سند: تاریخی/بازنشسته.** طرح اولیه مشارکت مالی مالک دیگر نیازمندی فعال محصول نیست. PR شماره 46 مسیرهای قرارداد، سهم مالک، داشبورد مشارکت و تسویه سهم را حذف می‌کند. این سند صرفاً برای سابقه تصمیم‌ها نگهداری شده و نباید برای افزودن مجدد این قابلیت استفاده شود؛ داده‌های تاریخی بدون سیاست نگهداری و مهاجرت تأییدشده پاک نمی‌شوند.
+
 # LEADORA Financial Participation Implementation Plan
 
 > **For agentic workers:** Use the host's available task-by-task implementation workflow. Steps use checkbox (`- [ ]`) syntax for tracking.
