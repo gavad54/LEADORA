@@ -409,3 +409,82 @@ def test_platform_and_finance_owner_routes_share_one_claim_and_recovery_state(mo
     former_owner_status = client.get("/api/platform/owner/status", headers=auth(first_token))
     assert owner_status.json()["is_platform_owner"] is True
     assert former_owner_status.json()["is_platform_owner"] is False
+
+
+def test_concurrent_owner_transfer_requests_are_serialized(monkeypatch):
+    """Two simultaneous requests from one owner must not create two active transfers."""
+    from contextlib import contextmanager
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    import app.main as main_module
+
+    clear_platform_owner_state()
+    owner_token = register("Concurrent Transfer Owner", "concurrent-owner@example.test")
+    target_token = register("Concurrent Transfer Target", "concurrent-target@example.test")
+    owner_id = owner_token.split(".", 1)[0].split(":", 1)[0]
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO finance_platform_owner(singleton,user_id,email) VALUES(1,?,?)",
+            (owner_id, "concurrent-owner@example.test"),
+        )
+
+    monkeypatch.setattr(main_module, "email_service_status", lambda: {"configured": True})
+    monkeypatch.setattr(main_module, "send_transactional_email", lambda **kwargs: "mock-message")
+    barrier = Barrier(2)
+    original_db = main_module.db
+
+    class ConnectionProxy:
+        def __init__(self, connection):
+            self.connection = connection
+            self.checked_active_request = False
+            self.inserted_transfer = False
+
+        def execute(self, sql, parameters=()):
+            normalized = " ".join(sql.lower().split())
+            if "select id from platform_owner_transfer_requests" in normalized and "status='pending'" in normalized:
+                self.checked_active_request = True
+            if "insert into platform_owner_transfer_requests" in normalized:
+                self.inserted_transfer = True
+            return self.connection.execute(sql, parameters)
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+    @contextmanager
+    def synchronized_db():
+        connection = original_db()
+        proxy = ConnectionProxy(connection)
+        try:
+            yield proxy
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        # On the vulnerable implementation, force both requests to finish the
+        # active-request check before either can insert its transfer row.
+        if proxy.checked_active_request and not proxy.inserted_transfer:
+            barrier.wait(timeout=10)
+
+    monkeypatch.setattr(main_module, "db", synchronized_db)
+
+    def request_transfer():
+        with TestClient(app) as local_client:
+            return local_client.post(
+                "/api/platform/owner/transfer/request",
+                headers=auth(owner_token),
+                json={"target_email": "concurrent-target@example.test"},
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda _: request_transfer(), range(2)))
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    with original_db() as conn:
+        pending = conn.execute(
+            "SELECT COUNT(*) AS count FROM platform_owner_transfer_requests "
+            "WHERE current_owner_user_id=? AND status='pending'",
+            (int(owner_id),),
+        ).fetchone()["count"]
+    assert pending == 1
