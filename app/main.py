@@ -2365,14 +2365,26 @@ def confirm_platform_owner_recovery(body: OwnerRecoveryConfirmIn, user=Depends(u
 def request_owner_transfer(body: OwnerTransferRequestIn, user=Depends(user_from_header)):
     _platform_owner(user)
     target_email = body.target_email.strip().casefold()
-    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", target_email):
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", target_email):
         raise HTTPException(422, "ایمیل مالک جدید معتبر نیست.")
     current_email = str(user.get("email", "")).strip().casefold()
     if not current_email or target_email == current_email:
         raise HTTPException(422, "ایمیل مالک جدید باید با ایمیل مالک فعلی متفاوت باشد.")
     if not email_service_status()["configured"]:
         raise HTTPException(503, "سرویس ایمیل تراکنشی هنوز تنظیم نشده است.")
+
+    # Serialize owner/target validation, throttling, and request insertion in
+    # one SQLite write transaction. This prevents concurrent duplicate requests.
+    transfer_id = secrets.token_urlsafe(18)
+    current_code = secrets.token_urlsafe(24)
+    target_code = secrets.token_urlsafe(24)
+    now = int(time.time())
+    expires_at = now + 600
+    current_hash = _owner_transfer_code_hash(transfer_id, "current", current_code)
+    target_hash = _owner_transfer_code_hash(transfer_id, "target", target_code)
+
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         owner = conn.execute(
             "SELECT user_id,email FROM finance_platform_owner WHERE singleton=1"
         ).fetchone()
@@ -2388,35 +2400,27 @@ def request_owner_transfer(body: OwnerTransferRequestIn, user=Depends(user_from_
             raise HTTPException(409, "این ایمیل به بیش از یک حساب متصل است؛ ابتدا حساب مقصد را یکتا کنید.")
         if int(targets[0]["id"]) == int(user["id"]):
             raise HTTPException(422, "حساب مقصد نمی‌تواند همان حساب مالک فعلی باشد.")
-        now_for_limits = int(time.time())
+
         conn.execute(
             "UPDATE platform_owner_transfer_requests SET status='expired' "
             "WHERE current_owner_user_id=? AND status='pending' AND expires_at<=?",
-            (int(user["id"]), now_for_limits),
+            (int(user["id"]), now),
         )
         active = conn.execute(
             "SELECT id FROM platform_owner_transfer_requests WHERE current_owner_user_id=? "
             "AND status='pending' AND expires_at>? ORDER BY created_at DESC LIMIT 1",
-            (int(user["id"]), now_for_limits),
+            (int(user["id"]), now),
         ).fetchone()
         if active:
             raise HTTPException(409, "برای این مالک یک درخواست انتقال فعال وجود دارد؛ ابتدا آن را تکمیل یا منقضی کنید.")
         recent = conn.execute(
             "SELECT id FROM platform_owner_transfer_requests WHERE current_owner_user_id=? AND created_at>=? "
             "ORDER BY created_at DESC LIMIT 1",
-            (int(user["id"]), now_for_limits - 300),
+            (int(user["id"]), now - 300),
         ).fetchone()
         if recent:
             raise HTTPException(429, "برای امنیت، بین درخواست‌های انتقال مالکیت باید پنج دقیقه فاصله باشد.")
-    transfer_id = secrets.token_urlsafe(18)
-    current_code = secrets.token_urlsafe(24)
-    target_code = secrets.token_urlsafe(24)
-    now = int(time.time())
-    expires_at = now + 600
-    current_hash = _owner_transfer_code_hash(transfer_id, "current", current_code)
-    target_hash = _owner_transfer_code_hash(transfer_id, "target", target_code)
-    with db() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+
         conn.execute(
             "INSERT INTO platform_owner_transfer_requests("
             "id,current_owner_user_id,current_owner_email,target_user_id,target_email,current_code_hash,target_code_hash,expires_at,created_at"
@@ -2428,28 +2432,29 @@ def request_owner_transfer(body: OwnerTransferRequestIn, user=Depends(user_from_
             conn, transfer_id, user["id"], "transfer.requested",
             {"target_user_id": int(targets[0]["id"]), "expires_at": expires_at},
         )
+
     try:
         send_transactional_email(
             recipient=current_email,
             subject="درخواست تغییر مالکیت LEADORA",
             text_content=(
-                "درخواست تغییر مالکیت LEADORA ثبت شده است. اگر این درخواست را آغاز نکرده‌اید، آن را نادیده بگیرید.\n"
-                f"شناسه درخواست: {transfer_id}\nکد تأیید: {current_code}\n"
+                "درخواست تغییر مالکیت LEADORA ثبت شده است. اگر این درخواست را آغاز نکرده‌اید، آن را نادیده بگیرید.\\n"
+                f"شناسه درخواست: {transfer_id}\\nکد تأیید: {current_code}\\n"
                 "این کد فقط ۱۰ دقیقه اعتبار دارد و آن را در اختیار دیگران قرار ندهید."
             ),
-            html_content=f"<div dir=\"rtl\"><h2>LEADORA</h2><p>درخواست تغییر مالکیت ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{current_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
+            html_content=f"<div dir=\\"rtl\\"><h2>LEADORA</h2><p>درخواست تغییر مالکیت ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{current_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
             tags=["owner-transfer-current"],
         )
         send_transactional_email(
             recipient=target_email,
             subject="دعوت برای پذیرش مالکیت LEADORA",
             text_content=(
-                "درخواستی برای انتقال مالکیت LEADORA به حساب شما ثبت شده است.\n"
-                f"شناسه درخواست: {transfer_id}\nکد تأیید: {target_code}\n"
+                "درخواستی برای انتقال مالکیت LEADORA به حساب شما ثبت شده است.\\n"
+                f"شناسه درخواست: {transfer_id}\\nکد تأیید: {target_code}\\n"
                 "برای پذیرش، با حساب مقصد وارد LEADORA شوید و کد را در صفحه مالکیت وارد کنید. "
                 "این کد فقط ۱۰ دقیقه اعتبار دارد."
             ),
-            html_content=f"<div dir=\"rtl\"><h2>LEADORA</h2><p>درخواستی برای انتقال مالکیت به حساب شما ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{target_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
+            html_content=f"<div dir=\\"rtl\\"><h2>LEADORA</h2><p>درخواستی برای انتقال مالکیت به حساب شما ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{target_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
             tags=["owner-transfer-target"],
         )
     except EmailDeliveryError:
