@@ -253,7 +253,10 @@ def clear_platform_owner_state():
     with db() as conn:
         conn.execute("DELETE FROM finance_platform_owner")
         conn.execute("DELETE FROM finance_platform_owner_recovery_uses")
-
+        conn.execute("DELETE FROM platform_owner_transfer_requests")
+        conn.execute("DELETE FROM platform_owner_recovery_requests")
+        conn.execute("DELETE FROM platform_owner_transfer_audit")
+        conn.execute("DELETE FROM user_session_revocations")
 
 def test_platform_owner_claim_is_one_time_and_bound_to_configured_email(monkeypatch):
     clear_platform_owner_state()
@@ -323,6 +326,8 @@ def test_platform_owner_claim_requires_strong_configured_bootstrap_token(monkeyp
 
 
 def test_platform_owner_recovery_is_email_bound_and_recovery_token_is_single_use(monkeypatch):
+    import app.main as main_module
+
     clear_platform_owner_state()
     first_token = register("Original Owner Company", "original-owner@example.test")
     recovery_token = register("Recovery Owner Company", "recovery-owner@example.test")
@@ -336,33 +341,54 @@ def test_platform_owner_recovery_is_email_bound_and_recovery_token_is_single_use
     )
     assert claimed.status_code == 200, claimed.text
 
+    recovery_secret = "single-use-recovery-token-with-at-least-32-chars"
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", "recovery-owner@example.test")
-    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", "single-use-recovery-token-with-at-least-32-chars")
+    monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", recovery_secret)
+    monkeypatch.setattr(main_module, "email_service_status", lambda: {"configured": True})
+    sent = []
+    monkeypatch.setattr(main_module, "send_transactional_email", lambda **kwargs: sent.append(kwargs) or "mock-message")
+
+    requested = client.post(
+        "/api/platform/owner/recovery/request",
+        headers=auth(recovery_token),
+        json={"token": recovery_secret},
+    )
+    assert requested.status_code == 200, requested.text
+    assert requested.json()["code_returned"] is False
+    assert len(sent) == 1
+    code_line = next(line for line in sent[0]["text_content"].splitlines() if line.startswith("کد تأیید بازیابی: "))
+    code = code_line.split(": ", 1)[1]
 
     denied = client.post(
-        "/api/platform/owner/recover",
+        "/api/platform/owner/recovery/confirm",
         headers=auth(attacker_token),
-        json={"recovery_token": "single-use-recovery-token-with-at-least-32-chars"},
+        json={"request_id": requested.json()["request_id"], "code": code},
     )
     assert denied.status_code == 403
 
     recovered = client.post(
-        "/api/platform/owner/recover",
+        "/api/platform/owner/recovery/confirm",
         headers=auth(recovery_token),
-        json={"recovery_token": "single-use-recovery-token-with-at-least-32-chars"},
+        json={"request_id": requested.json()["request_id"], "code": code},
     )
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["is_platform_owner"] is True
     assert client.get("/api/platform/licenses", headers=auth(recovery_token)).status_code == 200
-    assert client.get("/api/platform/licenses", headers=auth(first_token)).status_code == 403
+    assert client.get("/api/platform/licenses", headers=auth(first_token)).status_code == 401
 
     reused = client.post(
-        "/api/platform/owner/recover",
+        "/api/platform/owner/recovery/confirm",
         headers=auth(recovery_token),
-        json={"recovery_token": "single-use-recovery-token-with-at-least-32-chars"},
+        json={"request_id": requested.json()["request_id"], "code": code},
     )
     assert reused.status_code == 409
 
+    legacy = client.post(
+        "/api/platform/owner/recover",
+        headers=auth(recovery_token),
+        json={"recovery_token": recovery_secret},
+    )
+    assert legacy.status_code == 410
 
 def test_platform_owner_setup_page_is_served():
     response = client.get("/platform-owner")
@@ -373,6 +399,8 @@ def test_platform_owner_setup_page_is_served():
 
 
 def test_platform_and_finance_owner_routes_share_one_claim_and_recovery_state(monkeypatch):
+    import app.main as main_module
+
     clear_platform_owner_state()
     monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
     first_token = register("Unified Original Owner", "unified-owner@example.test")
@@ -391,25 +419,42 @@ def test_platform_and_finance_owner_routes_share_one_claim_and_recovery_state(mo
 
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_EMAIL", "unified-recovery@example.test")
     monkeypatch.setenv("LEADORA_OWNER_RECOVERY_TOKEN", recovery)
-    recovered_via_finance = client.post(
+    monkeypatch.setattr(main_module, "email_service_status", lambda: {"configured": True})
+    sent = []
+    monkeypatch.setattr(main_module, "send_transactional_email", lambda **kwargs: sent.append(kwargs) or "mock-message")
+
+    disabled_legacy = client.post(
         "/api/finance/owner/recover",
         headers=auth(recovery_token),
         json={"token": recovery},
     )
-    assert recovered_via_finance.status_code == 200, recovered_via_finance.text
+    assert disabled_legacy.status_code == 410
 
-    reused_via_platform = client.post(
+    requested = client.post(
+        "/api/platform/owner/recovery/request",
+        headers=auth(recovery_token),
+        json={"token": recovery},
+    )
+    assert requested.status_code == 200, requested.text
+    code_line = next(line for line in sent[0]["text_content"].splitlines() if line.startswith("کد تأیید بازیابی: "))
+    code = code_line.split(": ", 1)[1]
+    completed = client.post(
+        "/api/platform/owner/recovery/confirm",
+        headers=auth(recovery_token),
+        json={"request_id": requested.json()["request_id"], "code": code},
+    )
+    assert completed.status_code == 200, completed.text
+
+    owner_status = client.get("/api/platform/owner/status", headers=auth(recovery_token))
+    finance_identity = client.get("/api/finance/identity", headers=auth(recovery_token))
+    assert owner_status.json()["is_platform_owner"] is True
+    assert finance_identity.json()["is_platform_owner"] is True
+    assert client.post(
         "/api/platform/owner/recover",
         headers=auth(recovery_token),
         json={"recovery_token": recovery},
-    )
-    assert reused_via_platform.status_code == 409
-
-    owner_status = client.get("/api/platform/owner/status", headers=auth(recovery_token))
-    former_owner_status = client.get("/api/platform/owner/status", headers=auth(first_token))
-    assert owner_status.json()["is_platform_owner"] is True
-    assert former_owner_status.json()["is_platform_owner"] is False
-
+    ).status_code == 410
+    assert client.get("/api/platform/owner/status", headers=auth(first_token)).status_code == 401
 
 def test_concurrent_owner_transfer_requests_are_serialized(monkeypatch):
     """Two simultaneous requests from one owner must not create two active transfers."""
