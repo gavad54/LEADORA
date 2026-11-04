@@ -1,5 +1,6 @@
 """Commercial licensing, support desk, and auditable cross-module workflow queue."""
 import json
+import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, StrictInt
@@ -123,6 +124,8 @@ def create_router(db, user_from_header):
 
     @router.post("/api/platform/license-sales")
     def create_license_sale(body: LicenseSaleIn, user=Depends(user_from_header)):
+        if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+            raise HTTPException(404, "مدیریت فروش و صدور مجوز فقط در مرکز کنترل مالک انجام می‌شود.")
         if not is_owner(user):
             raise HTTPException(403, "ثبت فروش مجوز فقط برای مالک پلتفرم مجاز است.")
         if body.currency.upper() != "IRR":
@@ -142,6 +145,8 @@ def create_router(db, user_from_header):
 
     @router.get("/api/platform/license-sales")
     def list_license_sales(status: str = "all", user=Depends(user_from_header)):
+        if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+            raise HTTPException(404, "مدیریت فروش و صدور مجوز فقط در مرکز کنترل مالک انجام می‌شود.")
         if not is_owner(user):
             raise HTTPException(403, "فقط مالک پلتفرم مجاز است.")
         if status != "all" and status not in LICENSE_STATUSES:
@@ -154,6 +159,8 @@ def create_router(db, user_from_header):
 
     @router.patch("/api/platform/license-sales/{sale_id}")
     def update_license_sale(sale_id: int, body: LicenseSaleStatusIn, user=Depends(user_from_header)):
+        if os.getenv("LEADORA_ENFORCE_INSTANCE_CONFIG") == "1":
+            raise HTTPException(404, "مدیریت فروش و صدور مجوز فقط در مرکز کنترل مالک انجام می‌شود.")
         if not is_owner(user):
             raise HTTPException(403, "فقط مالک پلتفرم مجاز است.")
         if body.status not in LICENSE_STATUSES:

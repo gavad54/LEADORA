@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#09111f">
+<title>مرکز کنترل مالک LEADORA</title>
+<style>
+:root{color-scheme:dark;--bg:#08111f;--panel:rgba(17,31,52,.82);--line:rgba(93,225,255,.24);--cyan:#61e5ff;--violet:#a78bfa;--text:#eef6ff;--muted:#9eb0c8;--danger:#ff738d;--ok:#65e6b1}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% 5%,#17264a 0,transparent 35%),radial-gradient(circle at 85% 15%,#172c42 0,transparent 32%),var(--bg);color:var(--text);font-family:Tahoma,Arial,sans-serif;min-height:100vh}
+main{width:min(1100px,94vw);margin:28px auto 70px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:22px}.brand{font-size:clamp(22px,4vw,32px);font-weight:800;letter-spacing:-.5px}.brand span{color:var(--cyan)}.sub{color:var(--muted);font-size:13px;margin-top:7px}.status{border:1px solid var(--line);border-radius:99px;padding:8px 13px;color:var(--cyan);font-size:12px;background:#0b1a2b}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 12px 42px rgba(0,0,0,.22);backdrop-filter:blur(16px);min-width:0}.panel h2{font-size:17px;margin:0 0 14px}.wide{grid-column:1/-1}.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.field{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}.field.full{grid-column:1/-1}label{font-size:12px;color:var(--muted)}input,select,textarea{width:100%;border:1px solid rgba(140,175,210,.25);border-radius:10px;background:#0a1728;color:var(--text);padding:11px;font:inherit;font-size:14px;min-width:0}textarea{min-height:90px;resize:vertical;direction:ltr;text-align:left}.checks{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:13px;margin:8px 0 14px}.checks label{display:flex;align-items:center;gap:5px}.checks input{width:auto}
+button{border:1px solid rgba(97,229,255,.4);border-radius:10px;background:linear-gradient(110deg,rgba(35,174,210,.22),rgba(128,94,220,.2));color:var(--text);padding:10px 15px;font:inherit;font-size:13px;cursor:pointer}button:hover{border-color:var(--cyan)}button.secondary{background:#15243a;border-color:#334760}button.danger{border-color:rgba(255,115,141,.5);color:#ffc0cb}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.result{white-space:pre-wrap;overflow-wrap:anywhere;background:#07101d;border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px;font-size:12px;color:var(--muted);max-height:220px;overflow:auto}.items{display:grid;gap:9px}.item{border:1px solid rgba(140,175,210,.16);background:rgba(7,16,29,.58);border-radius:12px;padding:12px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.item strong{display:block;font-size:13px}.item small{display:block;color:var(--muted);margin-top:5px;direction:ltr;text-align:right;overflow-wrap:anywhere}.pill{font-size:11px;color:var(--ok);border:1px solid rgba(101,230,177,.3);border-radius:99px;padding:4px 8px}.hidden{display:none!important}.hint{font-size:12px;color:var(--muted);line-height:1.8}.error{color:var(--danger)}.ok{color:var(--ok)}.login{max-width:520px;margin:50px auto}.footer{margin-top:22px;color:var(--muted);font-size:11px;line-height:1.8;text-align:center}
+@media(max-width:720px){main{margin-top:16px}.grid{grid-template-columns:1fr}.wide{grid-column:auto}.fields{grid-template-columns:1fr}.panel{padding:14px}.login{margin:24px auto}}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div><div class="brand">LEADORA <span>CONTROL</span></div><div class="sub">مرکز مستقل مالک، مجوزها، کارکنان و پشتیبانی</div></div>
+    <div class="status" id="connection">اتصال برقرار نشده</div>
+  </header>
+
+  <section class="panel login" id="loginPanel">
+    <h2>ورود امن</h2>
+    <div class="field"><label for="loginMode">نوع حساب</label><select id="loginMode"><option value="owner">مالک اصلی · عبارت فارسی + کد دومرحله‌ای</option><option value="staff">کارمند · ایمیل + گذرواژه</option></select></div>
+    <div class="field"><label for="email">ایمیل</label><input id="email" type="email" autocomplete="username" required></div>
+    <div class="field" id="keywordField"><label for="keyword">عبارت محرمانه فارسی مالک</label><input id="keyword" type="password" autocomplete="current-password"></div>
+    <div class="field" id="totpField"><label for="totp">کد ۶ رقمی برنامه احراز هویت</label><input id="totp" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>
+    <div class="field hidden" id="passwordField"><label for="password">گذرواژه کارمند</label><input id="password" type="password" autocomplete="current-password"></div>
+    <button id="loginButton">ورود به مرکز کنترل</button>
+    <div class="result" id="loginMessage" aria-live="polite">اطلاعات ورود را فقط در همین صفحه امن وارد کنید؛ هیچ کلید خصوصی در این صفحه درخواست نمی‌شود.</div>
+  </section>
+
+  <section id="dashboard" class="hidden">
+    <div class="panel wide row" style="justify-content:space-between;margin-bottom:16px">
+      <div><strong id="identity"></strong><div class="hint" id="scopes"></div></div>
+      <button class="secondary" id="logoutButton">خروج امن</button>
+    </div>
+    <div class="grid">
+      <section class="panel">
+        <h2>صدور مجوز نصب مستقل</h2>
+        <form id="licenseForm">
+          <div class="field"><label>شناسه یکتای نصب</label><input id="instanceId" pattern="[a-z0-9][a-z0-9-]{1,61}[a-z0-9]" minlength="3" maxlength="63" required placeholder="customer-alpha-7f3a"></div>
+          <div class="field"><label>شناسه مشتری</label><input id="customerRef" minlength="3" maxlength="120" required></div>
+          <div class="fields">
+            <div class="field"><label>ویرایش</label><select id="edition"><option value="business">Business</option><option value="enterprise">Enterprise</option><option value="starter">Starter</option></select></div>
+            <div class="field"><label>مهلت آفلاین (روز)</label><input id="grace" type="number" min="0" max="30" value="14"></div>
+          </div>
+          <div class="field"><label>ماژول‌های مجاز (با کاما جدا شوند)</label><input id="modules" value="distribution,accounting,prospecting,warehouse,ai" required></div>
+          <div class="field"><label>تاریخ پایان مجوز</label><input id="expiresAt" type="datetime-local" required></div>
+          <button type="submit">صدور و امضای مجوز</button>
+        </form>
+        <div class="result" id="licenseResult" aria-live="polite">توکن صادرشده فقط یک‌بار نمایش داده می‌شود؛ آن را از مسیر امن به نصب مشتری منتقل کنید.</div>
+      </section>
+
+      <section class="panel">
+        <h2>کارکنان و سطح دسترسی</h2>
+        <form id="staffForm">
+          <div class="field"><label>ایمیل کارمند</label><input id="staffEmail" type="email" required></div>
+          <div class="checks">
+            <label><input type="checkbox" value="licenses:read" checked> مشاهده مجوز</label>
+            <label><input type="checkbox" value="licenses:write"> صدور/تمدید مجوز</label>
+            <label><input type="checkbox" value="support:read" checked> مشاهده پشتیبانی</label>
+            <label><input type="checkbox" value="support:write"> مدیریت پشتیبانی</label>
+            <label><input type="checkbox" value="audit:read"> ممیزی</label>
+          </div>
+          <button type="submit">ایجاد دعوت‌نامه یک‌بارمصرف</button>
+        </form>
+        <div class="result" id="staffResult" aria-live="polite"></div>
+        <div class="items" id="staffList"></div>
+      </section>
+
+      <section class="panel">
+        <h2>قرارداد پشتیبانی</h2>
+        <form id="supportForm">
+          <div class="field"><label>شناسه مشتری</label><input id="supportCustomer" required></div>
+          <div class="field"><label>شناسه نصب</label><input id="supportInstance" required></div>
+          <div class="field"><label>طرح پشتیبانی</label><input id="supportPlan" value="سالانه" required></div>
+          <div class="fields">
+            <div class="field"><label>شروع</label><input id="supportStart" type="datetime-local" required></div>
+            <div class="field"><label>پایان</label><input id="supportEnd" type="datetime-local" required></div>
+          </div>
+          <div class="field"><label>یادداشت عملیاتی</label><input id="supportNotes" maxlength="500"></div>
+          <button type="submit">ثبت قرارداد</button>
+        </form>
+        <div class="items" id="supportList"></div>
+      </section>
+
+      <section class="panel">
+        <h2>مجوزهای صادرشده</h2>
+        <button class="secondary" id="refreshLicenses">به‌روزرسانی فهرست</button>
+        <div class="items" id="licenseList"></div>
+      </section>
+
+      <section class="panel wide">
+        <h2>گزارش ممیزی</h2>
+        <button class="secondary" id="refreshAudit">بارگذاری رویدادها</button>
+        <div class="items" id="auditList"></div>
+      </section>
+    </div>
+  </section>
+  <div class="footer">مرکز کنترل فقط فراداده مجوز، کارکنان و پشتیبانی را نگهداری می‌کند؛ پایگاه داده و فایل‌های عملیاتی مشتریان در این سرویس قرار ندارند.</div>
+</main>
+<script>
+let accessToken = "";
+let currentUser = null;
+const $ = (id) => document.getElementById(id);
+const show = (id, visible) => $(id).classList.toggle("hidden", !visible);
+function message(id, text, bad=false){ const el=$(id); el.textContent=text; el.className="result"+(bad?" error":""); }
+function isoLocal(id){ const value=$(id).value; return value ? new Date(value).toISOString() : ""; }
+async function api(path, options={}){
+  const headers = Object.assign({"Content-Type":"application/json"}, options.headers||{});
+  if(accessToken) headers.Authorization = "Bearer " + accessToken;
+  const response = await fetch(path, Object.assign({},options,{headers}));
+  const data = await response.json().catch(()=>({detail:"پاسخ سرور قابل خواندن نیست."}));
+  if(!response.ok) throw new Error(data.detail || ("HTTP " + response.status));
+  return data;
+}
+function renderItems(id, items, formatter){
+  const root=$(id); root.replaceChildren();
+  if(!items.length){ const empty=document.createElement("div"); empty.className="hint"; empty.textContent="موردی ثبت نشده است."; root.append(empty); return; }
+  for(const item of items){ const node=document.createElement("div"); node.className="item"; const text=document.createElement("div"); const title=document.createElement("strong"); title.textContent=formatter.title(item); const detail=document.createElement("small"); detail.textContent=formatter.detail(item); text.append(title,detail); node.append(text); if(formatter.status){const badge=document.createElement("span");badge.className="pill";badge.textContent=formatter.status(item);node.append(badge);} if(formatter.action){const button=document.createElement("button");button.className="danger";button.textContent=formatter.action.label;button.addEventListener("click",()=>formatter.action.run(item));node.append(button);} root.append(node); }
+}
+async function loadMe(){
+  currentUser=await api("/api/control/me");
+  $("identity").textContent=currentUser.email+" · "+currentUser.role;
+  $("scopes").textContent=currentUser.role==="owner"?"دسترسی کامل مالک اصلی":("دسترسی‌ها: "+currentUser.scopes.join("، "));
+  $("connection").textContent="نشست امن فعال";
+  show("loginPanel",false); show("dashboard",true);
+  await Promise.all([loadLicenses(),loadStaff(),loadSupport(),loadAudit()]);
+}
+$("loginMode").addEventListener("change",()=>{
+ const owner=$("loginMode").value==="owner";
+ show("keywordField",owner);show("totpField",owner);show("passwordField",!owner);
+});
+$("loginButton").addEventListener("click",async()=>{
+ try{
+  const owner=$("loginMode").value==="owner";
+  const path=owner?"/api/control/auth/owner/login":"/api/control/auth/staff/login";
+  const body=owner?{email:$("email").value,keyword:$("keyword").value,totp:$("totp").value}:{email:$("email").value,password:$("password").value};
+  const result=await api(path,{method:"POST",body:JSON.stringify(body)});
+  accessToken=result.access_token;
+  await loadMe();
+  message("loginMessage","ورود موفق بود.");
+ }catch(error){message("loginMessage",error.message,true);}
+});
+$("logoutButton").addEventListener("click",async()=>{
+ try{await api("/api/control/auth/logout",{method:"POST",body:"{}"});}catch(_){}
+ accessToken="";currentUser=null;show("dashboard",false);show("loginPanel",true);$("connection").textContent="نشست بسته شد";
+});
+async function loadLicenses(){
+ try{const rows=await api("/api/control/licenses");renderItems("licenseList",rows,{title:x=>x.instance_id+" · "+x.edition,detail:x=>x.license_id+" | "+x.customer_ref+" | "+x.expires_at,status:x=>x.status,action:x=>x.status==="active"?{label:"لغو",run:async y=>{if(!confirm("مجوز این نصب لغو شود؟"))return;try{await api("/api/control/licenses/"+encodeURIComponent(y.license_id)+"/revoke",{method:"POST"});await loadLicenses();}catch(e){alert(e.message);}}}:null});}catch(e){message("licenseResult",e.message,true);}
+}
+async function loadStaff(){
+ try{const rows=await api("/api/control/staff");renderItems("staffList",rows,{title:x=>x.email,detail:x=>x.role+" | "+x.scopes.join("، "),status:x=>x.active?"فعال":"غیرفعال",action:x=>x.active?{label:"لغو دسترسی",run:async y=>{try{await api("/api/control/staff/"+y.id,{method:"PATCH",body:JSON.stringify({active:false})});await loadStaff();}catch(e){alert(e.message);}}}:null});}catch(e){if(currentUser?.role==="owner")message("staffResult",e.message,true);}
+}
+async function loadSupport(){
+ try{const rows=await api("/api/control/support");renderItems("supportList",rows,{title:x=>x.customer_ref+" · "+x.plan,detail:x=>x.instance_id+" | "+x.starts_at+" تا "+x.ends_at,status:x=>x.status});}catch(e){}
+}
+async function loadAudit(){
+ try{const rows=await api("/api/control/audit?limit=100");renderItems("auditList",rows,{title:x=>x.action,detail:x=>x.target_type+":"+x.target_id+" | "+x.created_at});}catch(e){}
+}
+$("licenseForm").addEventListener("submit",async(event)=>{
+ event.preventDefault();
+ try{
+  const body={instance_id:$("instanceId").value.trim(),customer_ref:$("customerRef").value.trim(),edition:$("edition").value,modules:$("modules").value.split(",").map(x=>x.trim()).filter(Boolean),expires_at:isoLocal("expiresAt"),offline_grace_days:Number($("grace").value)};
+  const result=await api("/api/control/licenses",{method:"POST",body:JSON.stringify(body)});
+  message("licenseResult","شناسه: "+result.license_id+"\nتوکن امضاشده (فقط یک‌بار نمایش داده می‌شود):\n"+result.license_token);
+  await loadLicenses();await loadAudit();
+ }catch(e){message("licenseResult",e.message,true);}
+});
+$("staffForm").addEventListener("submit",async(event)=>{
+ event.preventDefault();
+ try{
+  const scopes=[...document.querySelectorAll("#staffForm input[type=checkbox]:checked")].map(x=>x.value);
+  const result=await api("/api/control/staff/invitations",{method:"POST",body:JSON.stringify({email:$("staffEmail").value,scopes})});
+  const activation=await api("/api/control/staff/activate",{method:"POST",body:JSON.stringify({invitation_code:result.invitation_code,password:prompt("گذرواژه موقت قوی را برای کارمند وارد کنید (حداقل ۱۲ نویسه):")||""})});
+  message("staffResult","دعوت‌نامه فعال شد. شناسه کارمند: "+activation.staff_id+"\nگذرواژه را از مسیر امن به کارمند بدهید.");
+  await loadStaff();await loadAudit();
+ }catch(e){message("staffResult",e.message,true);}
+});
+$("supportForm").addEventListener("submit",async(event)=>{
+ event.preventDefault();
+ try{
+  await api("/api/control/support",{method:"POST",body:JSON.stringify({customer_ref:$("supportCustomer").value,instance_id:$("supportInstance").value,plan:$("supportPlan").value,starts_at:isoLocal("supportStart"),ends_at:isoLocal("supportEnd"),notes:$("supportNotes").value})});
+  await loadSupport();await loadAudit();
+ }catch(e){alert(e.message);}
+});
+$("refreshLicenses").addEventListener("click",loadLicenses);
+$("refreshAudit").addEventListener("click",loadAudit);
+</script>
+</body>
+</html>
