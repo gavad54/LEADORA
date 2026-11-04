@@ -483,11 +483,14 @@ def test_concurrent_owner_transfer_requests_are_serialized(monkeypatch):
             self.connection = connection
             self.checked_active_request = False
             self.inserted_transfer = False
+            self.explicit_immediate = False
 
         def execute(self, sql, parameters=()):
             normalized = " ".join(sql.lower().split())
             if "select id from platform_owner_transfer_requests" in normalized and "status='pending'" in normalized:
                 self.checked_active_request = True
+            if normalized.startswith("begin immediate"):
+                self.explicit_immediate = True
             if "insert into platform_owner_transfer_requests" in normalized:
                 self.inserted_transfer = True
             return self.connection.execute(sql, parameters)
@@ -509,7 +512,7 @@ def test_concurrent_owner_transfer_requests_are_serialized(monkeypatch):
             connection.close()
         # On the vulnerable implementation, force both requests to finish the
         # active-request check before either can insert its transfer row.
-        if proxy.checked_active_request and not proxy.inserted_transfer:
+        if proxy.checked_active_request and not proxy.inserted_transfer and not proxy.explicit_immediate:
             barrier.wait(timeout=10)
 
     monkeypatch.setattr(main_module, "db", synchronized_db)
