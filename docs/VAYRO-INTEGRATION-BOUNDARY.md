@@ -16,7 +16,8 @@ This is a deliberate safety boundary, not a rejection of future integration.
 - The products have different release pipelines, data models, identity lifecycles and operational responsibilities.
 - VAYRO PR #2 remains open and draft. VAYRO CI and CodeQL pass on commit `fbe8da07f43096d081c92ad997c107bac7eaf82f`; this does not make VAYRO production-ready.
 - The connected Railway workspace currently has no VAYRO project. Do not point VAYRO configuration or secrets at the LEADORA or ARIA Web production services.
-- LEADORA PR #46 contains public-home/auth and owner-participation retirement work, but the production public-home acceptance workflow on 2026-11-04 still failed because the deployed homepage did not match the expected public landing page. The same Android workflow did install and launch the APK in its emulator; the workflow correctly blocked release because the public-home smoke gate failed.
+- Railway currently reports one LEADORA production service sourced from `gavad54/LEADORA` branch `main`, with a persistent 500 MB volume mounted at `/data`. The latest deployment shown by the environment inventory is `SUCCESS` from 2026-10-21; the inventory does not expose its exact source commit. No VAYRO service is present.
+- LEADORA PR #46 contains public-home/auth and owner-participation retirement work. On 2026-11-04, its CI and regression/security workflows passed, but its Android workflow failed the production public-home acceptance gate. The APK installed and launched successfully in the emulator; the gate failed because the deployed homepage lacked the expected public landing-page elements. The workflow correctly blocked release.
 
 ## Product and data boundaries
 
