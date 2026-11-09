@@ -248,7 +248,10 @@ jobs:
           path: release/*
           retention-days: 30
       - name: Enforce production smoke release gate
-        if: always()
+        # PR builds are diagnostic and must not be blocked by the currently
+        # deployed production homepage. Enforce the live smoke only on main,
+        # where a release artifact may be published.
+        if: github.ref == 'refs/heads/main' && always()
         shell: bash
         env:
           PRODUCTION_SMOKE_OUTCOME: ${{ steps.production_smoke.outcome }}
