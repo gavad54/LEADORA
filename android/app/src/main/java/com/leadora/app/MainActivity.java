@@ -5,6 +5,8 @@ import android.os.Bundle;
 import android.graphics.Color;
 import android.view.View;
 import android.webkit.WebChromeClient;
+import android.webkit.ConsoleMessage;
+import android.util.Log;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -26,8 +28,11 @@ public class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Color.rgb(16, 27, 53));
         buildLayout();
         configureWebView();
-        if (savedInstanceState != null) web.restoreState(savedInstanceState);
-        else web.loadUrl(HOME);
+        // Always start from the canonical public landing page. Restoring WebView's
+        // saved DOM can resurrect a stale login overlay or an obsolete route after
+        // an app update/process recreation. WebView DOM state is intentionally not
+        // restored; authenticated sessions remain in origin-scoped DOM storage.
+        web.loadUrl(HOME);
     }
 
     private void buildLayout() {
@@ -77,8 +82,27 @@ public class MainActivity extends Activity {
         s.setAllowContentAccess(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         web.setBackgroundColor(Color.rgb(244,246,251));
-        web.setWebChromeClient(new WebChromeClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onConsoleMessage(ConsoleMessage message) {
+                Log.w("LEADORA_WEBVIEW_CONSOLE",
+                    message.message() + " (line " + message.lineNumber() + ")");
+                return true;
+            }
+        });
         web.setWebViewClient(new WebViewClient() {
+            @Override public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                String probe = "(function(){"
+                    + "var b=document.body;var t=b?(b.innerText||'').trim():'';var n=0;"
+                    + "if(b){var e=b.querySelectorAll('*');for(var i=0;i<e.length;i++){"
+                    + "var r=e[i].getBoundingClientRect();var s=getComputedStyle(e[i]);"
+                    + "if(r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&(e[i].innerText||'').trim())n++;}}"
+                    + "return 'ready='+document.readyState+';title='+document.title"
+                    + "+';textLength='+t.length+';visibleTextNodes='+n+';bodyHeight='+(b?b.scrollHeight:0);"
+                    + "})()";
+                view.evaluateJavascript(probe,
+                    value -> Log.i("LEADORA_WEBVIEW_DOM", value));
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 String host = uri.getHost();
@@ -90,6 +114,11 @@ public class MainActivity extends Activity {
                 return true;
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                Log.e("LEADORA_WEBVIEW_ERROR",
+                    "main_frame=" + request.isForMainFrame()
+                    + ";code=" + error.getErrorCode()
+                    + ";description=" + error.getDescription()
+                    + ";url=" + request.getUrl());
                 if (request.isForMainFrame()) {
                     web.setVisibility(View.GONE);
                     offline.setVisibility(View.VISIBLE);

@@ -1,10 +1,11 @@
 import os, sqlite3, secrets, hashlib, hmac, time, re
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 import csv, io, json
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, AliasChoices
+from app.email_service import EmailDeliveryError, email_service_status, send_transactional_email
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = os.getenv("LEADORA_DB", str(ROOT.parent / "data" / "leadora.db"))
@@ -55,8 +56,72 @@ def init_db():
         CREATE TABLE IF NOT EXISTS customers(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL REFERENCES tenants(id), name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '');
         CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, action TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS login_attempts(attempt_key TEXT PRIMARY KEY, attempts INTEGER NOT NULL, window_start INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS revoked_tokens(token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, revoked_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS finance_platform_owner(
+          singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+          user_id TEXT NOT NULL UNIQUE,
+          email TEXT NOT NULL DEFAULT '',
+          claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS finance_platform_owner_recovery_uses(token_hash TEXT PRIMARY KEY, used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS platform_owner_transfer_requests(
+          id TEXT PRIMARY KEY,
+          current_owner_user_id INTEGER NOT NULL,
+          current_owner_email TEXT NOT NULL,
+          target_user_id INTEGER NOT NULL,
+          target_email TEXT NOT NULL,
+          current_code_hash TEXT NOT NULL,
+          target_code_hash TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          current_attempts INTEGER NOT NULL DEFAULT 0,
+          target_attempts INTEGER NOT NULL DEFAULT 0,
+          current_verified_at INTEGER,
+          target_verified_at INTEGER,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','completed','expired','cancelled')),
+          created_at INTEGER NOT NULL,
+          completed_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS platform_owner_transfer_owner_idx
+          ON platform_owner_transfer_requests(current_owner_user_id,created_at,status);
+        CREATE TABLE IF NOT EXISTS platform_owner_transfer_audit(
+          id INTEGER PRIMARY KEY,
+          request_id TEXT NOT NULL,
+          actor_user_id INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          details_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS user_session_revocations(
+          user_id INTEGER PRIMARY KEY,
+          revoked_before INTEGER NOT NULL,
+          reason TEXT NOT NULL DEFAULT 'security_event'
+        );
+        CREATE TABLE IF NOT EXISTS platform_owner_recovery_requests(
+          id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          email TEXT NOT NULL,
+          recovery_token_hash TEXT NOT NULL,
+          code_hash TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','completed','expired','cancelled')),
+          created_at INTEGER NOT NULL,
+          completed_at INTEGER
+        );
         """)
 init_db()
+
+# Additive compatibility migration for owner tables created by older app versions.
+# Existing ownership rows are preserved; only missing metadata columns are added.
+with db() as _owner_schema:
+    _owner_columns = {row["name"] for row in _owner_schema.execute("PRAGMA table_info(finance_platform_owner)").fetchall()}
+    if "email" not in _owner_columns:
+        _owner_schema.execute("ALTER TABLE finance_platform_owner ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+    if "claimed_at" not in _owner_columns:
+        _owner_schema.execute("ALTER TABLE finance_platform_owner ADD COLUMN claimed_at TEXT")
+    _owner_schema.execute(
+        "UPDATE finance_platform_owner SET claimed_at=CURRENT_TIMESTAMP WHERE claimed_at IS NULL OR claimed_at=''"
+    )
 
 # Additive licensing and tenant-owned bank-account metadata; never reset the persistent DB.
 with db() as _conn:
@@ -87,13 +152,14 @@ with db() as _conn:
       institution TEXT NOT NULL DEFAULT '',
       account_holder TEXT NOT NULL DEFAULT '',
       iban_masked TEXT NOT NULL DEFAULT '',
-      currency TEXT NOT NULL DEFAULT 'EUR',
+      currency TEXT NOT NULL DEFAULT 'IRR',
       is_default INTEGER NOT NULL DEFAULT 0,
       provider TEXT NOT NULL DEFAULT 'manual',
       connection_status TEXT NOT NULL DEFAULT 'not_configured',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_bank_accounts_tenant ON tenant_bank_accounts(tenant_id,id);
+
     """)
     # Preserve existing tenants and create a maximum 90-day trial for legacy accounts without a license row.
     _now = datetime.now(timezone.utc) if 'datetime' in globals() else __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
@@ -135,6 +201,19 @@ def token(uid, tid):
     sig = hmac.new(SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
     return raw + "." + sig
 
+def _is_platform_owner_id(user_id):
+    try:
+        with db() as conn:
+            row = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+        # Once a database owner is claimed, it is authoritative. The legacy ID
+        # allowlist remains a break-glass fallback only while no owner is stored.
+        if row:
+            return str(row["user_id"]) == str(user_id)
+    except sqlite3.OperationalError:
+        pass
+    allowed = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
+    return str(user_id) in allowed
+
 def user_from_header(authorization: str | None = Header(default=None), request: Request = None):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "ابتدا وارد شوید.")
@@ -144,21 +223,25 @@ def user_from_header(authorization: str | None = Header(default=None), request: 
         if not hmac.compare_digest(sig, expected): raise ValueError()
         uid, tid, exp, _ = raw.split(":", 3)
         if int(exp) < int(time.time()): raise ValueError()
+        issued_at = int(exp) - 43200
         with db() as c:
+            token_hash = hashlib.sha256(authorization[7:].encode()).hexdigest()
+            revoked = c.execute("SELECT 1 FROM revoked_tokens WHERE token_hash=? AND expires_at>=?",
+                                (token_hash, int(time.time()))).fetchone()
+            if revoked:
+                raise ValueError("revoked token")
+            user_revocation = c.execute(
+                "SELECT revoked_before FROM user_session_revocations WHERE user_id=?",
+                (int(uid),),
+            ).fetchone()
+            if user_revocation and issued_at < int(user_revocation["revoked_before"]):
+                raise ValueError("user sessions revoked")
             u = c.execute("SELECT id,tenant_id,email FROM users WHERE id=? AND tenant_id=?", (int(uid),int(tid))).fetchone()
         if not u: raise ValueError()
         user = dict(u)
         # Enforce trial/license state server-side for all tenant business routes.
-        allowed_owner_ids = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
-        is_platform_owner = str(user["id"]) in allowed_owner_ids
-        if not is_platform_owner:
-            try:
-                with db() as owner_conn:
-                    owner_row = owner_conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
-                is_platform_owner = bool(owner_row and str(owner_row["user_id"]) == str(user["id"]))
-            except sqlite3.OperationalError:
-                is_platform_owner = False
-        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health"}
+        is_platform_owner = _is_platform_owner_id(user["id"])
+        allowed_paths = {"/api/account/license", "/api/account/license/activate", "/api/health", "/api/logout", "/api/platform/owner/status", "/api/platform/owner/claim", "/api/platform/owner/recover", "/api/platform/owner/recovery/request", "/api/platform/owner/recovery/confirm", "/api/platform/owner/transfer/accept"}
         if (request.url.path if request is not None else "") not in allowed_paths and not is_platform_owner:
             license_row = _license_for_tenant(user["tenant_id"])
             if license_row["status"] in ("expired", "suspended"):
@@ -255,6 +338,28 @@ def login(body: LoginIn):
         raise HTTPException(401,"اطلاعات ورود صحیح نیست.")
     clear_login_failures(attempt_key)
     return {"token":token(row["id"],row["tenant_id"]),"user":{"email":row["email"]}}
+
+@app.post("/api/logout")
+def logout_session(authorization: str | None = Header(default=None), user=Depends(user_from_header)):
+    """Revoke the current signed bearer token server-side until its original expiry."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "ابتدا وارد شوید.")
+    token_value = authorization[7:]
+    try:
+        raw = token_value.rsplit(".", 1)[0]
+        expires_at = int(raw.split(":", 3)[2])
+    except (IndexError, ValueError):
+        raise HTTPException(401, "نشست نامعتبر یا منقضی است.")
+    now = int(time.time())
+    token_hash = hashlib.sha256(token_value.encode()).hexdigest()
+    with db() as c:
+        c.execute("INSERT OR REPLACE INTO revoked_tokens(token_hash,expires_at,revoked_at) VALUES(?,?,?)",
+                  (token_hash, expires_at, now))
+        c.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (now,))
+        c.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                  (user["tenant_id"], "auth.logout"))
+    return {"ok": True, "message": "نشست پایان یافت."}
+
 
 @app.get("/api/products")
 def products(user=Depends(user_from_header)):
@@ -1158,10 +1263,10 @@ def full_tenant_backup(user=Depends(user_from_header)):
 
 @app.post("/api/backup/snapshot")
 def create_backup_snapshot(user=Depends(user_from_header)):
-    backup_dir=Path(os.getenv("LEADORA_BACKUP_DIR",str(ROOT.parent/"backups")))
+    backup_dir=Path(os.getenv("LEADORA_BACKUP_DIR") or (Path(DB_PATH).parent/"backups"))
     try:
         backup_dir.mkdir(parents=True,exist_ok=True)
-        stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         target=backup_dir/f"leadora-tenant-{user['tenant_id']}-{stamp}.json"
         raw=json.dumps(_tenant_backup_payload(user["tenant_id"]),ensure_ascii=False,indent=2).encode("utf-8")
         # Exclusive creation avoids overwriting a previous backup if two requests arrive in the same second.
@@ -1183,10 +1288,167 @@ def storage_status(user=Depends(user_from_header)):
                 except sqlite3.OperationalError: counts[table]=0
         return {"database":"sqlite","persistent_path_configured":bool(os.getenv("LEADORA_DB")),"database_bytes":p.stat().st_size if p.exists() else 0,
           "integrity":integrity,"records_by_table":counts,"backup_directory_configured":bool(os.getenv("LEADORA_BACKUP_DIR")),
-          "backup_directory":os.getenv("LEADORA_BACKUP_DIR",str(ROOT.parent/"backups")),
+          "backup_directory":os.getenv("LEADORA_BACKUP_DIR") or str(Path(DB_PATH).parent/"backups"),
           "note":"برای پایداری پس از راه‌اندازی مجدد، مسیر data و backups باید روی volume پایدار سرور نگاشت شوند؛ این endpoint وجود مسیر را تضمین نمی‌کند."}
     except sqlite3.Error:
         raise HTTPException(500,"بررسی وضعیت پایگاه داده ناموفق بود.")
+
+
+# Verified full-database backup and isolated restore verification.
+# These endpoints are platform-owner-only because a full SQLite image contains
+# all tenants and authentication records. Keep an off-volume copy of downloads.
+import tempfile
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@app.post("/api/platform/backup/database")
+def create_full_database_backup(user=Depends(user_from_header)):
+    _platform_owner(user)
+    source_path = Path(DB_PATH)
+    if not source_path.is_file():
+        raise HTTPException(503, "فایل پایگاه داده پیدا نشد؛ نسخه پشتیبان ساخته نشد.")
+    backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (source_path.parent / "backups"))
+    target = None
+    sidecar = None
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        target = backup_dir / f"leadora-db-{stamp}.sqlite3"
+        # Refuse to overwrite a prior snapshot even if clocks or requests collide.
+        with target.open("xb"):
+            pass
+        # SQLite's online backup API creates a transactionally consistent copy,
+        # including committed data, without copying a live WAL file by hand.
+        with db() as source:
+            destination = sqlite3.connect(str(target), timeout=30)
+            try:
+                source.backup(destination)
+                integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
+                if integrity != "ok":
+                    raise sqlite3.DatabaseError("integrity_check failed")
+                foreign_key_violations = destination.execute("PRAGMA foreign_key_check").fetchmany(100)
+                if foreign_key_violations:
+                    raise sqlite3.DatabaseError("foreign_key_check failed")
+                tables = {row[0] for row in destination.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()}
+                if not {"tenants", "users", "products"}.issubset(tables):
+                    raise sqlite3.DatabaseError("required tables missing")
+            finally:
+                destination.close()
+        digest = _sha256_file(target)
+        sidecar = target.with_suffix(target.suffix + ".sha256")
+        with sidecar.open("x", encoding="ascii") as handle:
+            handle.write(f"{digest}  {target.name}\n")
+        with db() as conn:
+            conn.execute("INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+                         (user["tenant_id"], "backup.full_database.created"))
+        return {
+            "status": "verified",
+            "filename": target.name,
+            "sha256": digest,
+            "bytes": target.stat().st_size,
+            "integrity_check": integrity,
+            "foreign_key_check": "ok",
+            "download_path": f"/api/platform/backup/database/{target.name}",
+            "checksum_path": f"/api/platform/backup/database/{sidecar.name}",
+            "storage_path": str(target),
+            "offsite_copy_required": True,
+            "message": "نسخه کامل ساخته و بررسی شد؛ فایل دانلودشده را خارج از سرور نگه دارید."
+        }
+    except HTTPException:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        # Remove only artifacts created by this attempt; never leave an empty or
+        # incomplete snapshot that could be mistaken for a valid recovery point.
+        for artifact in (sidecar, target):
+            if artifact is not None:
+                try:
+                    artifact.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        raise HTTPException(500, "ساخت یا بررسی نسخه پشتیبان کامل ناموفق بود؛ فضای Volume و مجوز نوشتن را بررسی کنید.") from exc
+
+@app.get("/api/platform/backup/database/{filename}")
+def download_full_database_backup(filename: str, user=Depends(user_from_header)):
+    _platform_owner(user)
+    if not re.fullmatch(r"leadora-db-[0-9]{8}T[0-9]{12}Z\.sqlite3(?:\.sha256)?", filename):
+        raise HTTPException(404, "فایل پشتیبان پیدا نشد.")
+    backup_dir = Path(os.getenv("LEADORA_BACKUP_DIR") or (Path(DB_PATH).parent / "backups"))
+    target = backup_dir / filename
+    if not target.is_file():
+        raise HTTPException(404, "فایل پشتیبان پیدا نشد.")
+    media_type = "text/plain; charset=utf-8" if filename.endswith(".sha256") else "application/vnd.sqlite3"
+    return FileResponse(target, media_type=media_type,
+        filename=filename, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+@app.post("/api/platform/backup/verify")
+async def verify_uploaded_database_backup(file: UploadFile = File(...), user=Depends(user_from_header)):
+    _platform_owner(user)
+    # Verify an uploaded backup in an isolated temporary file. This never replaces
+    # or writes to the live production database.
+    temp_path = None
+    try:
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in {".sqlite3", ".db", ".sqlite"}:
+            raise HTTPException(415, "فقط فایل پشتیبان SQLite با پسوند db، sqlite یا sqlite3 پذیرفته می‌شود.")
+        total = 0
+        with tempfile.NamedTemporaryFile(prefix="leadora-restore-check-", suffix=".sqlite3", delete=False) as temp:
+            temp_path = Path(temp.name)
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 1024 * 1024 * 1024:
+                    raise HTTPException(413, "حجم فایل پشتیبان بیش از سقف ۱ گیگابایت است.")
+                temp.write(chunk)
+        if total == 0:
+            raise HTTPException(400, "فایل پشتیبان خالی است.")
+        with sqlite3.connect(f"file:{temp_path}?mode=ro", uri=True, timeout=15) as check:
+            integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+            tables = {row[0] for row in check.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            missing = sorted({"tenants", "users", "products"}.difference(tables))
+            if integrity != "ok" or missing:
+                raise HTTPException(422, "نسخه پشتیبان معتبر نیست یا جدول‌های اصلی را ندارد.")
+            foreign_key_violations = check.execute("PRAGMA foreign_key_check").fetchmany(100)
+            if foreign_key_violations:
+                raise HTTPException(422, "نسخه پشتیبان دارای رابطه‌های شکسته یا رکوردهای یتیم است.")
+            counts = {}
+            for table in ("tenants", "users", "products", "customers"):
+                if table in tables:
+                    counts[table] = check.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        return {
+            "status": "verified",
+            "integrity_check": integrity,
+            "foreign_key_check": "ok",
+            "bytes": total,
+            "sha256": _sha256_file(temp_path),
+            "core_tables_present": True,
+            "record_counts": counts,
+            "production_database_changed": False,
+            "message": "فایل در پایگاه داده موقت باز شد و بررسی سلامت موفق بود؛ پایگاه داده تولیدی تغییر نکرد."
+        }
+    except HTTPException:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(422, "فایل پشتیبان قابل بازکردن یا بررسی نیست.") from exc
+    finally:
+        await file.close()
+        if temp_path:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
 
 # Unified order/invoice tracking with tenant-scoped status history.
 from datetime import date, timedelta
@@ -1221,7 +1483,7 @@ class WorkflowDocumentIn(BaseModel):
  party_contact:str=Field(default="",max_length=200)
  direction:str=Field(default="outgoing",pattern="^(incoming|outgoing)$")
  amount:float=Field(default=0,ge=0,le=1000000000000)
- currency:str=Field(default="IRR",min_length=3,max_length=8)
+ currency:str=Field(default="IRR",pattern="^IRR$")
  issue_date:str=Field(default="",max_length=10)
  due_date:str=Field(default="",max_length=10)
  status:str=Field(default="registered",pattern="^(registered|review|approved|in_progress|sent|received|awaiting_customer|awaiting_supplier|awaiting_payment|partially_paid|paid|fulfilled|completed|on_hold|cancelled|overdue)$")
@@ -1590,18 +1852,86 @@ from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 
 def _platform_owner(user):
-    allowed = {part.strip() for part in os.getenv("LEADORA_OWNER_USER_IDS", "").split(",") if part.strip()}
-    if str(user.get("id")) in allowed:
+    if _is_platform_owner_id(user.get("id")):
         return True
-    # Reuse the existing, separately secured platform-owner claim instead of requiring a second owner setup.
-    try:
-        with db() as conn:
-            row = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
-        if row and str(row["user_id"]) == str(user.get("id")):
-            return True
-    except sqlite3.OperationalError:
-        pass
     raise HTTPException(403, "این عملیات فقط برای مالک پلتفرم مجاز است.")
+
+def _owner_secret_is_configured(value):
+    return isinstance(value, str) and len(value) >= 32
+
+def _owner_request_secret(body, field):
+    value = body.get(field) if isinstance(body, dict) else None
+    if not isinstance(value, str) or not 32 <= len(value) <= 256:
+        raise HTTPException(422, "کد امنیتی معتبر نیست.")
+    return value
+
+def _owner_status_for(user):
+    bootstrap_email = os.getenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "").strip().lower()
+    bootstrap_secret = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "")
+    recovery_email = os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().lower()
+    recovery_secret = os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "")
+    with db() as conn:
+        row = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+    claimed = bool(row)
+    is_owner = _is_platform_owner_id(user.get("id"))
+    return {
+        "owner_claimed": claimed,
+        "is_platform_owner": is_owner,
+        "bootstrap_eligible": (
+            not claimed
+            and bool(bootstrap_email)
+            and bootstrap_email == str(user.get("email", "")).strip().lower()
+            and _owner_secret_is_configured(bootstrap_secret)
+        ),
+        "recovery_eligible": (
+            claimed
+            and bool(recovery_email)
+            and recovery_email == str(user.get("email", "")).strip().lower()
+            and _owner_secret_is_configured(recovery_secret)
+            and (not bootstrap_secret or not hmac.compare_digest(recovery_secret, bootstrap_secret))
+        ),
+    }
+
+@app.get("/platform-owner")
+def platform_owner_setup_page():
+    return FileResponse(ROOT / "static" / "platform-owner.html")
+
+@app.get("/api/platform/owner/status")
+def platform_owner_status(user=Depends(user_from_header)):
+    return _owner_status_for(user)
+
+@app.post("/api/platform/owner/claim")
+def claim_platform_owner(body: dict, user=Depends(user_from_header)):
+    bootstrap_email = os.getenv("LEADORA_OWNER_BOOTSTRAP_EMAIL", "").strip().lower()
+    configured_secret = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "")
+    if not bootstrap_email or not _owner_secret_is_configured(configured_secret):
+        raise HTTPException(503, "راه‌اندازی مالک هنوز در تنظیمات امن سرور تکمیل نشده است.")
+    if str(user.get("email", "")).strip().lower() != bootstrap_email:
+        raise HTTPException(403, "این حساب با ایمیل تعیین‌شده برای مالکیت مطابقت ندارد.")
+    supplied_secret = _owner_request_secret(body, "bootstrap_token")
+    if not hmac.compare_digest(supplied_secret, configured_secret):
+        raise HTTPException(403, "کد راه‌اندازی مالک صحیح نیست.")
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+        if existing:
+            raise HTTPException(409, "مالک پلتفرم قبلاً ثبت شده است؛ برای تغییر مالک از مسیر بازیابی استفاده کنید.")
+        valid_user = conn.execute(
+            "SELECT id,tenant_id,email FROM users WHERE id=? AND lower(email)=?",
+            (int(user["id"]), bootstrap_email),
+        ).fetchone()
+        if not valid_user:
+            raise HTTPException(403, "حساب کاربری معتبر برای مالکیت پیدا نشد.")
+        conn.execute("INSERT INTO finance_platform_owner(singleton,user_id,email) VALUES(1,?,?)", (str(user["id"]), str(user.get("email", ""))))
+        conn.execute(
+            "INSERT INTO audit_log(tenant_id,action) VALUES(?,?)",
+            (int(user["tenant_id"]), "platform.owner.claimed"),
+        )
+    return {"ok": True, "owner_claimed": True, "is_platform_owner": True}
+
+@app.post("/api/platform/owner/recover")
+def recover_platform_owner_legacy(user=Depends(user_from_header)):
+    raise HTTPException(410, "بازیابی مستقیم غیرفعال شده است؛ از مسیر بازیابی دومرحله‌ای ایمیلی استفاده کنید.")
 
 def _license_for_tenant(tenant_id):
     with db() as conn:
@@ -1637,7 +1967,7 @@ class BankAccountIn(BaseModel):
     institution: str = Field(default="", max_length=120)
     account_holder: str = Field(default="", max_length=120)
     iban_masked: str = Field(default="", max_length=40)
-    currency: str = Field(default="EUR", min_length=3, max_length=8)
+    currency: str = Field(default="IRR", pattern="^IRR$")
     is_default: bool = False
     provider: str = Field(default="manual", max_length=40)
 
@@ -1752,3 +2082,487 @@ install_procurement(app, db, user_from_header, ROOT)
 # Additive tenant-isolated commercial licensing, support desk, and cross-module workflow queue.
 from app.commercial_ops import create_router as create_commercial_ops_router
 app.include_router(create_commercial_ops_router(db, user_from_header))
+
+
+# --- Owner-only transactional email diagnostics ---
+@app.get("/api/platform/email/status")
+def platform_email_status(user=Depends(user_from_header)):
+    _platform_owner(user)
+    return email_service_status()
+
+
+@app.post("/api/platform/email/test")
+def platform_email_test(user=Depends(user_from_header)):
+    _platform_owner(user)
+    try:
+        message_id = send_transactional_email(
+            recipient=user["email"],
+            subject="آزمون اتصال ایمیل LEADORA",
+            text_content="این پیام برای بررسی اتصال ایمیل تراکنشی LEADORA ارسال شده است. اگر آن را دریافت کرده‌اید، ارسال پیام آزمایشی انجام شده است.",
+            html_content="<div dir=\"rtl\"><h2>LEADORA</h2><p>این پیام برای بررسی اتصال ایمیل تراکنشی LEADORA ارسال شده است.</p></div>",
+            tags=["owner-email-test"],
+        )
+    except EmailDeliveryError as exc:
+        raise HTTPException(503, str(exc)) from None
+    return {"sent": True, "message_id": message_id}
+
+
+class OwnerTransferRequestIn(BaseModel):
+    target_email: str = Field(min_length=5, max_length=180)
+
+
+class OwnerTransferCodeIn(BaseModel):
+    transfer_id: str = Field(min_length=20, max_length=64)
+    code: str = Field(min_length=24, max_length=128)
+
+
+def _owner_transfer_code_hash(transfer_id, purpose, code):
+    payload = f"leadora-owner-transfer:{transfer_id}:{purpose}:{code}".encode("utf-8")
+    return hmac.new(SECRET.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def _owner_transfer_audit(conn, transfer_id, actor_user_id, action, details=None):
+    conn.execute(
+        "INSERT INTO platform_owner_transfer_audit(request_id,actor_user_id,action,details_json,created_at) VALUES(?,?,?,?,?)",
+        (transfer_id, int(actor_user_id), action, json.dumps(details or {}, ensure_ascii=False), int(time.time())),
+    )
+
+
+def _finish_owner_transfer(conn, transfer):
+    if not transfer["current_verified_at"] or not transfer["target_verified_at"]:
+        return False
+    current = conn.execute(
+        "SELECT user_id FROM finance_platform_owner WHERE singleton=1"
+    ).fetchone()
+    if not current or str(current["user_id"]) != str(transfer["current_owner_user_id"]):
+        conn.execute(
+            "UPDATE platform_owner_transfer_requests SET status='cancelled' WHERE id=? AND status='pending'",
+            (transfer["id"],),
+        )
+        _owner_transfer_audit(
+            conn, transfer["id"], transfer["target_user_id"], "transfer.cancelled",
+            {"reason": "current_owner_changed_before_completion"},
+        )
+        return "stale"
+    now = int(time.time())
+    conn.execute(
+        "UPDATE finance_platform_owner SET user_id=?,email=?,claimed_at=CURRENT_TIMESTAMP WHERE singleton=1",
+        (str(transfer["target_user_id"]), transfer["target_email"]),
+    )
+    conn.execute(
+        "INSERT INTO user_session_revocations(user_id,revoked_before,reason) VALUES(?,?,?) "
+        "ON CONFLICT(user_id) DO UPDATE SET revoked_before=MAX(revoked_before,excluded.revoked_before),reason=excluded.reason",
+        (int(transfer["current_owner_user_id"]), now + 1, "platform_owner_transferred"),
+    )
+    conn.execute(
+        "UPDATE platform_owner_transfer_requests SET status='completed',completed_at=? WHERE id=? AND status='pending'",
+        (now, transfer["id"]),
+    )
+    _owner_transfer_audit(
+        conn, transfer["id"], transfer["target_user_id"], "transfer.completed",
+        {"previous_owner_user_id": int(transfer["current_owner_user_id"]),
+         "new_owner_user_id": int(transfer["target_user_id"])},
+    )
+    conn.execute(
+        "INSERT INTO audit_log(tenant_id,action) SELECT tenant_id,'platform.owner.transferred' FROM users WHERE id=?",
+        (int(transfer["current_owner_user_id"]),),
+    )
+    conn.execute(
+        "INSERT INTO audit_log(tenant_id,action) SELECT tenant_id,'platform.owner.received' FROM users WHERE id=?",
+        (int(transfer["target_user_id"]),),
+    )
+    return True
+
+
+class OwnerRecoveryRequestIn(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+
+
+class OwnerRecoveryConfirmIn(BaseModel):
+    request_id: str = Field(min_length=20, max_length=64)
+    code: str = Field(min_length=24, max_length=128)
+
+
+def _owner_recovery_code_hash(request_id, code):
+    payload = f"leadora-owner-recovery:{request_id}:{code}".encode("utf-8")
+    return hmac.new(SECRET.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+@app.post("/api/platform/owner/recovery/request")
+def request_platform_owner_recovery(body: OwnerRecoveryRequestIn, user=Depends(user_from_header)):
+    recovery_email = os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().casefold()
+    recovery_secret = os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "").strip()
+    bootstrap_secret = os.getenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", "").strip()
+    if (
+        not recovery_email
+        or len(recovery_secret) < 32
+        or hmac.compare_digest(recovery_secret, bootstrap_secret)
+    ):
+        raise HTTPException(503, "تنظیمات امن بازیابی مالک کامل نیست یا کد بازیابی مستقل نیست.")
+    if not hmac.compare_digest(body.token, recovery_secret):
+        raise HTTPException(403, "کد بازیابی مالک معتبر نیست.")
+    account_email = str(user.get("email", "")).strip().casefold()
+    if account_email != recovery_email:
+        raise HTTPException(403, "ایمیل حساب با ایمیل مجاز بازیابی مالک مطابقت ندارد.")
+    if not email_service_status()["configured"]:
+        raise HTTPException(503, "سرویس ایمیل برای ارسال کد بازیابی آماده نیست.")
+    token_hash = hashlib.sha256(recovery_secret.encode("utf-8")).hexdigest()
+    now = int(time.time())
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        owner = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+        if not owner:
+            raise HTTPException(409, "هنوز مالکی ثبت نشده است؛ بازیابی مالک امکان‌پذیر نیست.")
+        used = conn.execute(
+            "SELECT 1 FROM finance_platform_owner_recovery_uses WHERE token_hash=?",
+            (token_hash,),
+        ).fetchone()
+        if used:
+            raise HTTPException(409, "این کد بازیابی قبلاً مصرف شده است؛ کد مستقل جدیدی تنظیم کنید.")
+        conn.execute(
+            "UPDATE platform_owner_recovery_requests SET status='expired' "
+            "WHERE user_id=? AND status='pending' AND expires_at<=?",
+            (int(user["id"]), now),
+        )
+        active = conn.execute(
+            "SELECT id FROM platform_owner_recovery_requests WHERE user_id=? AND status='pending' AND expires_at>?",
+            (int(user["id"]), now),
+        ).fetchone()
+        if active:
+            raise HTTPException(409, "برای این حساب یک درخواست بازیابی فعال وجود دارد.")
+        recent = conn.execute(
+            "SELECT id FROM platform_owner_recovery_requests WHERE user_id=? AND created_at>=?",
+            (int(user["id"]), now - 300),
+        ).fetchone()
+        if recent:
+            raise HTTPException(429, "برای امنیت، بین درخواست‌های بازیابی باید پنج دقیقه فاصله باشد.")
+        request_id = secrets.token_urlsafe(18)
+        code = secrets.token_urlsafe(24)
+        code_hash = _owner_recovery_code_hash(request_id, code)
+        conn.execute(
+            "INSERT INTO platform_owner_recovery_requests(id,user_id,email,recovery_token_hash,code_hash,expires_at,created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (request_id, int(user["id"]), account_email, token_hash, code_hash, now + 600, now),
+        )
+        _owner_transfer_audit(
+            conn, request_id, user["id"], "recovery.requested",
+            {"recovery_user_id": int(user["id"]), "expires_at": now + 600},
+        )
+    try:
+        send_transactional_email(
+            recipient=account_email,
+            subject="کد بازیابی مالک LEADORA",
+            text_content=(
+                "درخواست بازیابی مالکیت LEADORA ثبت شده است. اگر این درخواست را آغاز نکرده‌اید، آن را نادیده بگیرید.\n"
+                f"شناسه درخواست: {request_id}\nکد تأیید بازیابی: {code}\n"
+                "کد فقط ۱۰ دقیقه اعتبار دارد و نباید در اختیار دیگران قرار گیرد."
+            ),
+            html_content=f"<div dir=\"rtl\"><h2>LEADORA</h2><p>درخواست بازیابی مالکیت ثبت شده است.</p><p>شناسه درخواست: <b>{request_id}</b></p><p>کد تأیید بازیابی: <b>{code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
+            tags=["owner-recovery"],
+        )
+    except EmailDeliveryError:
+        with db() as conn:
+            conn.execute(
+                "UPDATE platform_owner_recovery_requests SET status='cancelled',code_hash='' WHERE id=? AND status='pending'",
+                (request_id,),
+            )
+            _owner_transfer_audit(conn, request_id, user["id"], "recovery.delivery_failed")
+        raise HTTPException(503, "ارسال ایمیل بازیابی انجام نشد؛ درخواست لغو شد و مالکیت تغییر نکرد.") from None
+    return {"requested": True, "request_id": request_id, "expires_in_seconds": 600, "code_returned": False}
+
+
+@app.post("/api/platform/owner/recovery/confirm")
+def confirm_platform_owner_recovery(body: OwnerRecoveryConfirmIn, user=Depends(user_from_header)):
+    error = None
+    recovered = False
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        request_row = conn.execute(
+            "SELECT * FROM platform_owner_recovery_requests WHERE id=?",
+            (body.request_id,),
+        ).fetchone()
+        if not request_row:
+            error = (404, "درخواست بازیابی مالک پیدا نشد.")
+        elif request_row["status"] != "pending":
+            error = (409, "این درخواست بازیابی دیگر فعال نیست.")
+        elif int(request_row["expires_at"]) <= int(time.time()):
+            conn.execute("UPDATE platform_owner_recovery_requests SET status='expired' WHERE id=?", (body.request_id,))
+            _owner_transfer_audit(conn, body.request_id, user["id"], "recovery.expired")
+            error = (410, "مهلت کد بازیابی پایان یافته است.")
+        elif int(request_row["user_id"]) != int(user["id"]) or str(request_row["email"]).casefold() != str(user.get("email", "")).casefold():
+            error = (403, "این درخواست بازیابی برای حساب واردشده صادر نشده است.")
+        elif (
+            hashlib.sha256(os.getenv("LEADORA_OWNER_RECOVERY_TOKEN", "").strip().encode("utf-8")).hexdigest()
+            != str(request_row["recovery_token_hash"])
+            or os.getenv("LEADORA_OWNER_RECOVERY_EMAIL", "").strip().casefold() != str(user.get("email", "")).casefold()
+        ):
+            conn.execute("UPDATE platform_owner_recovery_requests SET status='cancelled' WHERE id=?", (body.request_id,))
+            _owner_transfer_audit(conn, body.request_id, user["id"], "recovery.cancelled", {"reason": "server_recovery_config_changed"})
+            error = (409, "تنظیمات بازیابی پس از ارسال کد تغییر کرده است؛ درخواست لغو شد.")
+        elif int(request_row["attempts"]) >= 5:
+            error = (429, "حداکثر تلاش برای کد بازیابی انجام شده است.")
+        else:
+            attempts = int(request_row["attempts"]) + 1
+            conn.execute(
+                "UPDATE platform_owner_recovery_requests SET attempts=? WHERE id=?",
+                (attempts, body.request_id),
+            )
+            expected = _owner_recovery_code_hash(body.request_id, body.code)
+            if not hmac.compare_digest(expected, request_row["code_hash"]):
+                _owner_transfer_audit(conn, body.request_id, user["id"], "recovery.code_rejected", {"attempt": attempts})
+                error = (403, "کد تأیید بازیابی صحیح نیست.")
+            else:
+                current = conn.execute("SELECT user_id FROM finance_platform_owner WHERE singleton=1").fetchone()
+                if not current:
+                    error = (409, "مالک ثبت‌شده‌ای برای بازیابی وجود ندارد.")
+                else:
+                    previous_user_id = int(current["user_id"])
+                    token_hash = str(request_row["recovery_token_hash"])
+                    used = conn.execute(
+                        "SELECT 1 FROM finance_platform_owner_recovery_uses WHERE token_hash=?",
+                        (token_hash,),
+                    ).fetchone()
+                    if used:
+                        error = (409, "این کد بازیابی قبلاً مصرف شده است.")
+                    else:
+                        now = int(time.time())
+                        conn.execute(
+                            "INSERT INTO finance_platform_owner_recovery_uses(token_hash) VALUES(?)",
+                            (token_hash,),
+                        )
+                        conn.execute(
+                            "UPDATE finance_platform_owner SET user_id=?,email=?,claimed_at=CURRENT_TIMESTAMP WHERE singleton=1",
+                            (str(user["id"]), str(user.get("email", "")).strip().casefold()),
+                        )
+                        conn.execute(
+                            "INSERT INTO user_session_revocations(user_id,revoked_before,reason) VALUES(?,?,?) "
+                            "ON CONFLICT(user_id) DO UPDATE SET revoked_before=MAX(revoked_before,excluded.revoked_before),reason=excluded.reason",
+                            (previous_user_id, now + 1, "platform_owner_recovered"),
+                        )
+                        conn.execute(
+                            "UPDATE platform_owner_recovery_requests SET status='completed',completed_at=? WHERE id=?",
+                            (now, body.request_id),
+                        )
+                        _owner_transfer_audit(
+                            conn, body.request_id, user["id"], "recovery.completed",
+                            {"previous_owner_user_id": previous_user_id, "new_owner_user_id": int(user["id"])},
+                        )
+                        conn.execute(
+                            "INSERT INTO audit_log(tenant_id,action) SELECT tenant_id,'platform.owner.recovered' FROM users WHERE id=?",
+                            (previous_user_id,),
+                        )
+                        conn.execute(
+                            "INSERT INTO audit_log(tenant_id,action) SELECT tenant_id,'platform.owner.recovered' FROM users WHERE id=?",
+                            (int(user["id"]),),
+                        )
+                        recovered = True
+    if error:
+        raise HTTPException(error[0], error[1])
+    return {"recovered": recovered, "is_platform_owner": recovered, "message": "بازیابی مالکیت با تأیید ایمیل انجام شد."}
+
+
+@app.post("/api/platform/owner/transfer/request")
+def request_owner_transfer(body: OwnerTransferRequestIn, user=Depends(user_from_header)):
+    _platform_owner(user)
+    target_email = body.target_email.strip().casefold()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", target_email):
+        raise HTTPException(422, "ایمیل مالک جدید معتبر نیست.")
+    current_email = str(user.get("email", "")).strip().casefold()
+    if not current_email or target_email == current_email:
+        raise HTTPException(422, "ایمیل مالک جدید باید با ایمیل مالک فعلی متفاوت باشد.")
+    if not email_service_status()["configured"]:
+        raise HTTPException(503, "سرویس ایمیل تراکنشی هنوز تنظیم نشده است.")
+
+    # Serialize owner/target validation, throttling, and request insertion in
+    # one SQLite write transaction. This prevents concurrent duplicate requests.
+    transfer_id = secrets.token_urlsafe(18)
+    current_code = secrets.token_urlsafe(24)
+    target_code = secrets.token_urlsafe(24)
+    now = int(time.time())
+    expires_at = now + 600
+    current_hash = _owner_transfer_code_hash(transfer_id, "current", current_code)
+    target_hash = _owner_transfer_code_hash(transfer_id, "target", target_code)
+
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        owner = conn.execute(
+            "SELECT user_id,email FROM finance_platform_owner WHERE singleton=1"
+        ).fetchone()
+        if not owner or str(owner["user_id"]) != str(user["id"]):
+            raise HTTPException(403, "مالکیت فعلی برای این حساب تأیید نشد.")
+        targets = conn.execute(
+            "SELECT id,email FROM users WHERE lower(email)=? ORDER BY id LIMIT 2",
+            (target_email,),
+        ).fetchall()
+        if not targets:
+            raise HTTPException(404, "حسابی با ایمیل مالک جدید پیدا نشد.")
+        if len(targets) != 1:
+            raise HTTPException(409, "این ایمیل به بیش از یک حساب متصل است؛ ابتدا حساب مقصد را یکتا کنید.")
+        if int(targets[0]["id"]) == int(user["id"]):
+            raise HTTPException(422, "حساب مقصد نمی‌تواند همان حساب مالک فعلی باشد.")
+
+        conn.execute(
+            "UPDATE platform_owner_transfer_requests SET status='expired' "
+            "WHERE current_owner_user_id=? AND status='pending' AND expires_at<=?",
+            (int(user["id"]), now),
+        )
+        active = conn.execute(
+            "SELECT id FROM platform_owner_transfer_requests WHERE current_owner_user_id=? "
+            "AND status='pending' AND expires_at>? ORDER BY created_at DESC LIMIT 1",
+            (int(user["id"]), now),
+        ).fetchone()
+        if active:
+            raise HTTPException(409, "برای این مالک یک درخواست انتقال فعال وجود دارد؛ ابتدا آن را تکمیل یا منقضی کنید.")
+        recent = conn.execute(
+            "SELECT id FROM platform_owner_transfer_requests WHERE current_owner_user_id=? AND created_at>=? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (int(user["id"]), now - 300),
+        ).fetchone()
+        if recent:
+            raise HTTPException(429, "برای امنیت، بین درخواست‌های انتقال مالکیت باید پنج دقیقه فاصله باشد.")
+
+        conn.execute(
+            "INSERT INTO platform_owner_transfer_requests("
+            "id,current_owner_user_id,current_owner_email,target_user_id,target_email,current_code_hash,target_code_hash,expires_at,created_at"
+            ") VALUES(?,?,?,?,?,?,?,?,?)",
+            (transfer_id, int(user["id"]), current_email, int(targets[0]["id"]), target_email,
+             current_hash, target_hash, expires_at, now),
+        )
+        _owner_transfer_audit(
+            conn, transfer_id, user["id"], "transfer.requested",
+            {"target_user_id": int(targets[0]["id"]), "expires_at": expires_at},
+        )
+
+    try:
+        send_transactional_email(
+            recipient=current_email,
+            subject="درخواست تغییر مالکیت LEADORA",
+            text_content=(
+                "درخواست تغییر مالکیت LEADORA ثبت شده است. اگر این درخواست را آغاز نکرده‌اید، آن را نادیده بگیرید.\n"
+                f"شناسه درخواست: {transfer_id}\nکد تأیید: {current_code}\n"
+                "این کد فقط ۱۰ دقیقه اعتبار دارد و آن را در اختیار دیگران قرار ندهید."
+            ),
+            html_content=f"<div dir=\"rtl\"><h2>LEADORA</h2><p>درخواست تغییر مالکیت ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{current_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
+            tags=["owner-transfer-current"],
+        )
+        send_transactional_email(
+            recipient=target_email,
+            subject="دعوت برای پذیرش مالکیت LEADORA",
+            text_content=(
+                "درخواستی برای انتقال مالکیت LEADORA به حساب شما ثبت شده است.\n"
+                f"شناسه درخواست: {transfer_id}\nکد تأیید: {target_code}\n"
+                "برای پذیرش، با حساب مقصد وارد LEADORA شوید و کد را در صفحه مالکیت وارد کنید. "
+                "این کد فقط ۱۰ دقیقه اعتبار دارد."
+            ),
+            html_content=f"<div dir=\"rtl\"><h2>LEADORA</h2><p>درخواستی برای انتقال مالکیت به حساب شما ثبت شده است.</p><p>شناسه درخواست: <b>{transfer_id}</b></p><p>کد تأیید: <b>{target_code}</b></p><p>اعتبار: ۱۰ دقیقه</p></div>",
+            tags=["owner-transfer-target"],
+        )
+    except EmailDeliveryError:
+        with db() as conn:
+            conn.execute(
+                "UPDATE platform_owner_transfer_requests SET status='cancelled',current_code_hash='',target_code_hash='' "
+                "WHERE id=? AND status='pending'",
+                (transfer_id,),
+            )
+            _owner_transfer_audit(conn, transfer_id, user["id"], "transfer.delivery_failed")
+        raise HTTPException(503, "ارسال یکی از ایمیل‌های تأیید انجام نشد؛ درخواست لغو شد و مالکیت تغییری نکرد.") from None
+    return {"requested": True, "transfer_id": transfer_id, "expires_in_seconds": 600, "codes_returned": False}
+
+
+@app.post("/api/platform/owner/transfer/confirm-current")
+def confirm_current_owner_transfer(body: OwnerTransferCodeIn, user=Depends(user_from_header)):
+    _platform_owner(user)
+    error = None
+    completed = False
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        transfer = conn.execute(
+            "SELECT * FROM platform_owner_transfer_requests WHERE id=?",
+            (body.transfer_id,),
+        ).fetchone()
+        if not transfer:
+            error = (404, "درخواست انتقال مالکیت پیدا نشد.")
+        elif transfer["status"] != "pending":
+            error = (409, "این درخواست دیگر در وضعیت قابل تأیید نیست.")
+        elif int(transfer["expires_at"]) <= int(time.time()):
+            conn.execute("UPDATE platform_owner_transfer_requests SET status='expired' WHERE id=?", (body.transfer_id,))
+            _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.expired")
+            error = (410, "مهلت کد تأیید پایان یافته است.")
+        elif str(transfer["current_owner_user_id"]) != str(user["id"]):
+            error = (403, "این درخواست متعلق به حساب مالک فعلی نیست.")
+        elif int(transfer["current_attempts"]) >= 5:
+            error = (429, "حداکثر تلاش برای کد تأیید مالک فعلی انجام شده است.")
+        else:
+            attempts = int(transfer["current_attempts"]) + 1
+            conn.execute(
+                "UPDATE platform_owner_transfer_requests SET current_attempts=? WHERE id=?",
+                (attempts, body.transfer_id),
+            )
+            expected = _owner_transfer_code_hash(body.transfer_id, "current", body.code)
+            if not hmac.compare_digest(expected, transfer["current_code_hash"]):
+                _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.current_code_rejected", {"attempt": attempts})
+                error = (403, "کد تأیید مالک فعلی صحیح نیست.")
+            else:
+                conn.execute(
+                    "UPDATE platform_owner_transfer_requests SET current_verified_at=? WHERE id=?",
+                    (int(time.time()), body.transfer_id),
+                )
+                _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.current_verified")
+                transfer = conn.execute("SELECT * FROM platform_owner_transfer_requests WHERE id=?", (body.transfer_id,)).fetchone()
+                completion = _finish_owner_transfer(conn, transfer)
+                if completion == "stale":
+                    error = (409, "مالک فعلی پیش از تکمیل درخواست تغییر کرده است؛ درخواست لغو شد.")
+                else:
+                    completed = completion
+    if error:
+        raise HTTPException(error[0], error[1])
+    return {"verified": True, "completed": completed, "message": "تأیید ایمیل مالک فعلی ثبت شد."}
+
+
+@app.post("/api/platform/owner/transfer/accept")
+def accept_owner_transfer(body: OwnerTransferCodeIn, user=Depends(user_from_header)):
+    error = None
+    completed = False
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        transfer = conn.execute(
+            "SELECT * FROM platform_owner_transfer_requests WHERE id=?",
+            (body.transfer_id,),
+        ).fetchone()
+        if not transfer:
+            error = (404, "درخواست انتقال مالکیت پیدا نشد.")
+        elif transfer["status"] != "pending":
+            error = (409, "این درخواست دیگر در وضعیت قابل پذیرش نیست.")
+        elif int(transfer["expires_at"]) <= int(time.time()):
+            conn.execute("UPDATE platform_owner_transfer_requests SET status='expired' WHERE id=?", (body.transfer_id,))
+            _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.expired")
+            error = (410, "مهلت کد تأیید پایان یافته است.")
+        elif str(transfer["target_user_id"]) != str(user["id"]) or str(transfer["target_email"]).casefold() != str(user.get("email", "")).casefold():
+            error = (403, "این درخواست برای حساب مقصد واردشده صادر نشده است.")
+        elif int(transfer["target_attempts"]) >= 5:
+            error = (429, "حداکثر تلاش برای کد تأیید مالک جدید انجام شده است.")
+        else:
+            attempts = int(transfer["target_attempts"]) + 1
+            conn.execute(
+                "UPDATE platform_owner_transfer_requests SET target_attempts=? WHERE id=?",
+                (attempts, body.transfer_id),
+            )
+            expected = _owner_transfer_code_hash(body.transfer_id, "target", body.code)
+            if not hmac.compare_digest(expected, transfer["target_code_hash"]):
+                _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.target_code_rejected", {"attempt": attempts})
+                error = (403, "کد تأیید مالک جدید صحیح نیست.")
+            else:
+                conn.execute(
+                    "UPDATE platform_owner_transfer_requests SET target_verified_at=? WHERE id=?",
+                    (int(time.time()), body.transfer_id),
+                )
+                _owner_transfer_audit(conn, body.transfer_id, user["id"], "transfer.target_verified")
+                transfer = conn.execute("SELECT * FROM platform_owner_transfer_requests WHERE id=?", (body.transfer_id,)).fetchone()
+                completion = _finish_owner_transfer(conn, transfer)
+                if completion == "stale":
+                    error = (409, "مالک فعلی پیش از تکمیل درخواست تغییر کرده است؛ درخواست لغو شد.")
+                else:
+                    completed = completion
+    if error:
+        raise HTTPException(error[0], error[1])
+    return {"verified": True, "completed": completed, "message": "تأیید ایمیل مالک جدید ثبت شد."}

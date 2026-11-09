@@ -4,6 +4,12 @@ from fastapi.testclient import TestClient
 from app.main import app, db
 
 
+def clear_platform_owner_state():
+    with db() as conn:
+        conn.execute("DELETE FROM finance_platform_owner")
+        conn.execute("DELETE FROM finance_platform_owner_recovery_uses")
+
+
 def register(client, company):
     suffix = uuid.uuid4().hex[:10]
     response = client.post("/api/register", json={
@@ -21,12 +27,13 @@ def test_bank_accounts_are_tenant_scoped_and_never_claim_transfers():
     created = client.post("/api/bank-accounts", headers=a_headers, json={
         "label": "حساب اصلی", "institution": "Test Bank",
         "account_holder": "Company A", "iban_masked": "DE••••1234",
-        "currency": "EUR", "is_default": True,
+        "currency": "IRR", "is_default": True,
     })
     assert created.status_code == 200, created.text
     rows_a = client.get("/api/bank-accounts", headers=a_headers)
     rows_b = client.get("/api/bank-accounts", headers=b_headers)
     assert len(rows_a.json()) == 1
+    assert rows_a.json()[0]["currency"] == "IRR"
     assert rows_b.json() == []
     status = client.get("/api/bank-accounts/status", headers=a_headers).json()
     assert status["real_transfers_enabled"] is False
@@ -35,6 +42,7 @@ def test_bank_accounts_are_tenant_scoped_and_never_claim_transfers():
 
 
 def test_activation_key_is_one_time_and_tenant_bound(monkeypatch):
+    clear_platform_owner_state()
     client = TestClient(app)
     owner_headers, owner = register(client, "Platform Owner")
     company_headers, company = register(client, "Licensed Company")
@@ -73,3 +81,29 @@ def test_only_platform_owner_can_issue_keys(monkeypatch):
     monkeypatch.setenv("LEADORA_OWNER_USER_IDS", "")
     response = client.post("/api/platform/licenses", headers=headers, json={"tenant_id": 1})
     assert response.status_code == 403
+
+
+
+def test_platform_license_sales_accept_only_whole_irr_amounts(monkeypatch):
+    clear_platform_owner_state()
+    client = TestClient(app)
+    owner_headers, owner = register(client, "License Sale Owner")
+    company_headers, company = register(client, "License Sale Customer")
+    monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
+
+    payload = {
+        "tenant_id": company["tenant"]["id"],
+        "edition": "business",
+        "term_months": 12,
+        "currency": "IRR",
+        "invoice_ref": "TEST-IRR-1",
+    }
+    fractional = client.post("/api/platform/license-sales", headers=owner_headers,
+                             json={**payload, "amount": 1250.5})
+    assert fractional.status_code == 422, fractional.text
+
+    whole = client.post("/api/platform/license-sales", headers=owner_headers,
+                        json={**payload, "amount": 1250})
+    assert whole.status_code == 200, whole.text
+    assert whole.json()["amount"] == 1250
+    assert whole.json()["currency"] == "IRR"
