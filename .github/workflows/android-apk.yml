@@ -2,6 +2,12 @@ name: Build LEADORA Android test APK
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_test_artifact:
+        description: "Publish a debug-signed test APK only after the production smoke gate passes."
+        required: true
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -248,10 +254,11 @@ jobs:
           path: release/*
           retention-days: 30
       - name: Enforce production smoke release gate
-        # PR builds are diagnostic and must not be blocked by the currently
-        # deployed production homepage. Enforce the live smoke only on main,
-        # where a release artifact may be published.
-        if: github.ref == 'refs/heads/main' && always()
+        id: production_release_gate
+        # Normal CI and PR builds remain diagnostic. A debug test artifact can
+        # be published only by an explicit manual dispatch on main, and only
+        # after the live production smoke check passes.
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_test_artifact == true && github.ref == 'refs/heads/main' && always()
         shell: bash
         env:
           PRODUCTION_SMOKE_OUTCOME: ${{ steps.production_smoke.outcome }}
@@ -262,7 +269,7 @@ jobs:
             exit 1
           fi
       - name: Publish APK release
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_test_artifact == true && github.ref == 'refs/heads/main' && steps.production_release_gate.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-test-v1.0.${{ github.run_number }}
