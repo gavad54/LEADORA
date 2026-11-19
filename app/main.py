@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 import csv, io, json
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, AliasChoices
+from app.marketing_growth_registry import MARKETING_GROWTH_MODULES, MARKETING_GROWTH_SHARED_DEPENDENCIES, MARKETING_GROWTH_EXECUTION_POLICY
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = os.getenv("LEADORA_DB", str(ROOT.parent / "data" / "leadora.db"))
@@ -214,6 +215,22 @@ def favicon():
 def health():
     with db() as c: c.execute("SELECT 1")
     return {"status":"ok","database":"ok","product":"LEADORA","version":"0.5.0","mode":"mvp"}
+
+@app.get("/marketing-growth")
+def marketing_growth_page():
+    return FileResponse(ROOT / "static" / "marketing-growth.html")
+
+@app.get("/api/marketing-growth/modules")
+def marketing_growth_modules(user=Depends(user_from_header)):
+    return {
+        "product": "LEADORA",
+        "domain": "marketing_growth",
+        "modules": [dict(item) for item in MARKETING_GROWTH_MODULES],
+        "total": len(MARKETING_GROWTH_MODULES),
+        "shared_dependencies": [dict(item) for item in MARKETING_GROWTH_SHARED_DEPENDENCIES],
+        "execution_policy": dict(MARKETING_GROWTH_EXECUTION_POLICY),
+        "catalog_state": "OWNERSHIP_REGISTERED_IMPLEMENTATION_PARTIAL",
+    }
 
 @app.post("/api/register")
 def register(body: RegisterIn):
