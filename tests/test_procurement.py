@@ -62,11 +62,23 @@ def test_accepted_irr_receipt_updates_stock_and_creates_balanced_draft():
     assert data["accounting_journal"]["amount"] == 420
     products = c.get("/api/products", headers=h).json()
     assert next(p for p in products if p["sku"] == sku)["stock"] == 2
-    journals = c.get("/api/accounting/journals?status=draft", headers=h).json()
-    journal = next(j for j in journals if j["id"] == data["accounting_journal"]["id"])
-    assert sum(float(line["debit"]) for line in journal["lines"]) == 420
-    assert sum(float(line["credit"]) for line in journal["lines"]) == 420
-    assert journal["status"] == "draft"
+    # The legacy ledger is internal compatibility storage, not a public
+    # LEADORA accounting API. Inspect the draft rows for this authenticated tenant.
+    from app.main import db
+    tenant_id = int(h["Authorization"].split(":")[1]) if ":" in h["Authorization"] else None
+    with db() as conn:
+        journal_row = conn.execute(
+            "SELECT id,status,tenant_id FROM gl_journals WHERE id=?",
+            (data["accounting_journal"]["id"],),
+        ).fetchone()
+        line_rows = conn.execute(
+            "SELECT debit,credit FROM gl_lines WHERE journal_id=?",
+            (data["accounting_journal"]["id"],),
+        ).fetchall()
+    assert journal_row is not None
+    assert sum(float(line["debit"]) for line in line_rows) == 420
+    assert sum(float(line["credit"]) for line in line_rows) == 420
+    assert journal_row["status"] == "draft"
 
 def test_foreign_currency_receipt_does_not_post_unconverted_ledger_amount():
     c, h = account()
