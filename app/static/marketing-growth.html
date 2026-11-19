@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>بازاریابی و رشد | LEADORA</title>
+<style>
+:root{font-family:Tahoma,Arial,sans-serif;color:#17334a;background:#f2f7fa}*{box-sizing:border-box}body{margin:0;padding:20px}.wrap{max-width:1040px;margin:auto}.top{background:linear-gradient(120deg,#06263a,#07556a);color:white;padding:24px;border-radius:22px}.top h1{margin:0 0 8px;font-size:25px}.muted{color:#607789;font-size:12px;line-height:1.9}.top .muted{color:#d3e4ec}.notice{background:#fff4df;border:1px solid #e8d7b4;color:#76551d;padding:12px 14px;border-radius:14px;margin:14px 0;font-size:12px;line-height:1.9}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:14px}.card{background:white;border:1px solid #e1eaf0;border-radius:17px;padding:16px}.card h2{font-size:15px;margin:7px 0}.id{color:#087e80;font-size:10px;direction:ltr;text-align:left;overflow-wrap:anywhere}.status{display:inline-block;border-radius:30px;padding:5px 9px;background:#eef4f7;color:#456173;font-size:10px;margin:7px 0}.status.partial{background:#e8f5ee;color:#286543}.status.pending{background:#fff4df;color:#76551d}.next{font-size:11px;color:#607789;line-height:1.8}.btn{display:inline-block;margin-top:10px;border:0;border-radius:10px;background:#087e80;color:white;padding:9px 13px;text-decoration:none;font-size:11px}.back{display:inline-block;margin-top:18px;color:#087e80;font-size:12px;text-decoration:none}.empty{padding:20px;background:white;border-radius:15px}
+</style></head>
+<body><main class="wrap">
+<header class="top"><h1>بازاریابی و رشد LEADORA</h1><div class="muted">مدیریت سرنخ، کمپین، سلامت مشتری، نگهداشت و تحلیل عملکرد در یک فضای کاری.</div></header>
+<div class="notice">مرزبندی مالکیت ثبت شده است. بعضی ابزارها از قابلیت‌های موجود LEADORA استفاده می‌کنند؛ بخش‌های دیگر هنوز طراحی‌شده‌اند. ارسال پیام بیرونی، انتشار شبکه اجتماعی و اتصال سرویس ثالث در این نسخه فعال نیست.</div>
+<div id="status" class="muted">در حال دریافت کاتالوگ…</div>
+<section id="modules" class="grid"></section>
+<a class="back" href="/">← بازگشت به محیط اصلی LEADORA</a>
+</main>
+<script>
+const token=localStorage.getItem("leadora_token")||"";
+const statusEl=document.getElementById("status"),root=document.getElementById("modules");
+function el(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
+async function load(){
+ if(!token){statusEl.textContent="برای مشاهده کاتالوگ، ابتدا از صفحه اصلی LEADORA وارد شوید.";root.append(el("a","btn","ورود به LEADORA"));root.firstChild.href="/";return;}
+ try{
+  const r=await fetch("/api/marketing-growth/modules",{headers:{Authorization:"Bearer "+token}});
+  const data=await r.json();if(!r.ok)throw new Error(data.detail||"دریافت کاتالوگ ناموفق بود.");
+  statusEl.textContent=data.total+" ماژول ثبت‌شده · مالک: LEADORA · اقدامات بیرونی غیرفعال";
+  for(const m of data.modules){
+   const card=el("article","card"),id=el("div","id",m.id),title=el("h2","",m.name),purpose=el("p","muted",m.purpose);
+   const partial=m.implementation_status==="EXISTING_FOUNDATION_PARTIAL";
+   card.append(id,title,el("span","status "+(partial?"partial":"pending"),partial?"زیرساخت موجود؛ تکمیل ناقص":"طراحی‌شده؛ پیاده‌سازی باقی است"),purpose,el("p","next","گام بعدی: "+m.next_gate));
+   if(m.connected_routes.length){const a=el("a","btn","بازکردن محیط عملیاتی موجود");a.href=m.id.includes("035")?"/lead-discovery":"/agents";card.append(a);}
+   root.append(card);
+  }
+ }catch(e){statusEl.textContent=e.message;}
+}
+load();
+</script></body></html>
