@@ -20,11 +20,28 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 with TestClient(app) as client:
+    registered = client.post("/api/register", json={
+        "company_name": "Legacy Surface Test",
+        "industry": "services",
+        "email": "legacy-surface@example.test",
+        "password": "test-password-2026",
+    })
+    assert registered.status_code == 200, registered.text
+    auth = {"Authorization": "Bearer " + registered.json()["token"]}
+
     for path in (
         "/api/finance/entries",
         "/api/finance/contracts",
         "/api/accounting/accounts",
         "/api/accounting/journals",
+    ):
+        response = client.get(path, headers=auth)
+        assert response.status_code == 404, (
+            f"{path} must not expose retired finance/accounting API; "
+            f"received HTTP {response.status_code}"
+        )
+
+    for path in (
         "/finance",
         "/accounting",
         "/static/finance.html",
