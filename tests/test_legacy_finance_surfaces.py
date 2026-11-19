@@ -25,6 +25,10 @@ with TestClient(app) as client:
         "/accounting",
         "/static/finance.html",
         "/static/accounting.html",
+        "/api/finance/entries",
+        "/api/finance/contracts",
+        "/api/accounting/accounts",
+        "/api/accounting/journals",
     ):
         response = client.get(path)
         assert response.status_code == 404, (
