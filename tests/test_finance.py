@@ -1,13 +1,13 @@
 import os
 import uuid
 from fastapi.testclient import TestClient
-from app.main import app
+from legacy_apps import main_app, create_legacy_finance_app
 
 
 def register(client, company, email=None):
     suffix = uuid.uuid4().hex[:10]
     email = email or f"{company.lower().replace(' ', '-')}-{suffix}@example.com"
-    response = client.post("/api/register", json={
+    response = TestClient(main_app).post("/api/register", json={
         "company_name": f"{company} {suffix}",
         "industry": "distribution",
         "email": email,
@@ -18,7 +18,7 @@ def register(client, company, email=None):
 
 
 def test_finance_settings_and_manual_entry_calculation():
-    client = TestClient(app)
+    client = TestClient(create_legacy_finance_app())
     headers, _ = register(client, "Finance Test")
     settings = client.put("/api/finance/settings", headers=headers, json={"methods": ["manual", "csv"]})
     assert settings.status_code == 200, settings.text
@@ -45,7 +45,7 @@ def test_finance_settings_and_manual_entry_calculation():
 
 
 def test_finance_tenant_isolation():
-    client = TestClient(app)
+    client = TestClient(create_legacy_finance_app())
     headers_a, _ = register(client, "Finance A")
     headers_b, _ = register(client, "Finance B")
     response = client.post("/api/finance/entries", headers=headers_a, json={
@@ -61,7 +61,7 @@ def test_finance_tenant_isolation():
 
 
 def test_csv_import_reports_duplicate_rows():
-    client = TestClient(app)
+    client = TestClient(create_legacy_finance_app())
     headers, _ = register(client, "Finance CSV")
     csv_content = (
         "period,document_ref,sales,discounts,returns,cogs,direct_costs,currency\n"
@@ -75,7 +75,7 @@ def test_csv_import_reports_duplicate_rows():
 
 
 def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
-    client = TestClient(app)
+    client = TestClient(create_legacy_finance_app())
     owner_email = f"leadora-owner-{uuid.uuid4().hex[:8]}@example.com"
     owner_headers, owner = register(client, "LEADORA Owner", owner_email)
     company_headers, company = register(client, "Profit Share Company")
@@ -114,7 +114,7 @@ def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
 
 
 def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatch):
-    client = TestClient(app)
+    client = TestClient(create_legacy_finance_app())
     headers, _ = register(client, "Finance Access")
     missing_provider = client.put("/api/finance/settings", headers=headers, json={"methods": ["manual", "integration"]})
     assert missing_provider.status_code == 422
@@ -123,7 +123,7 @@ def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatc
 
 
 def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(monkeypatch):
-    client = TestClient(app)
+    client = TestClient(create_legacy_finance_app())
     owner_email = f"adjustment-owner-{uuid.uuid4().hex[:8]}@example.com"
     owner_headers, owner = register(client, "Adjustment Owner", owner_email)
     company_headers, _ = register(client, "Adjustment Company")
@@ -161,7 +161,7 @@ def test_post_close_adjustment_requires_owner_approval_and_applies_next_period(m
 
 
 def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
-    client = TestClient(app)
+    client = TestClient(create_legacy_finance_app())
     monkeypatch.delenv("LEADORA_OWNER_USER_IDS", raising=False)
     bootstrap = "test-owner-bootstrap-token-0123456789-abcdef"
     monkeypatch.setenv("LEADORA_OWNER_BOOTSTRAP_TOKEN", bootstrap)
@@ -246,7 +246,7 @@ def test_owner_bootstrap_is_one_time_and_rejects_other_accounts(monkeypatch):
 
 
 def test_integration_webhook_key_rotation_ingest_and_tenant_isolation():
-    client = TestClient(app)
+    client = TestClient(create_legacy_finance_app())
     headers_a, _ = register(client, "Webhook A")
     headers_b, _ = register(client, "Webhook B")
     configured = client.put("/api/finance/settings", headers=headers_a, json={

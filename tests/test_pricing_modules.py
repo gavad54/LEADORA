@@ -13,7 +13,7 @@ def _account(client):
     assert r.status_code == 200, r.text
     return {"Authorization": "Bearer " + r.json()["token"]}
 
-def test_plans_are_modular_and_accounting_is_optional():
+def test_plans_are_modular_and_accounting_belongs_to_aryana():
     client = TestClient(app)
     plans = client.get("/api/plans")
     assert plans.status_code == 200
@@ -21,22 +21,21 @@ def test_plans_are_modular_and_accounting_is_optional():
     assert data["product"] == "LEADORA"
     assert data["separate_from_ARIANA"] is True
     keys = {m["module_key"] for m in data["modules"]}
-    assert "accounting" in keys
+    assert "accounting" not in keys
+    assert "distribution" in keys
     assert data["billing_enabled"] is False
 
-def test_customer_can_request_accounting_without_automatic_activation():
+def test_customer_cannot_request_accounting_as_a_leadora_module():
     client = TestClient(app)
     headers = _account(client)
     before = client.get("/api/modules", headers=headers)
     assert before.status_code == 200
-    accounting = next(m for m in before.json()["modules"] if m["module_key"] == "accounting")
-    assert accounting["status"] == "off"
-    requested = client.put("/api/modules/accounting/request", headers=headers)
+    assert all(m["module_key"] != "accounting" for m in before.json()["modules"])
+    retired = client.put("/api/modules/accounting/request", headers=headers)
+    assert retired.status_code == 404
+    requested = client.put("/api/modules/distribution/request", headers=headers)
     assert requested.status_code == 200
     assert requested.json()["status"] == "requested"
-    after = client.get("/api/modules", headers=headers)
-    accounting_after = next(m for m in after.json()["modules"] if m["module_key"] == "accounting")
-    assert accounting_after["status"] == "requested"
 
 def _owner_headers(client, monkeypatch):
     monkeypatch.delenv("LEADORA_OWNER_KEY", raising=False)
@@ -82,11 +81,11 @@ def test_owner_pricing_rejects_boolean_prices(monkeypatch):
         "base_monthly_price": current.json()["settings"]["base_monthly_price"],
         "pricing_note": current.json()["settings"]["pricing_note"]
     }
-    body["modules"]["accounting"] = True
+    body["modules"]["distribution"] = True
     rejected_module_boolean = client.put("/api/owner/pricing", headers=headers, json=body)
     assert rejected_module_boolean.status_code == 422
 
-    body["modules"]["accounting"] = 0
+    body["modules"]["distribution"] = 0
     body["base_monthly_price"] = True
     rejected_base_boolean = client.put("/api/owner/pricing", headers=headers, json=body)
     assert rejected_base_boolean.status_code == 422

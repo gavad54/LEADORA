@@ -59,7 +59,7 @@ class QuickVoucher(BaseModel):
 class CSVImportIn(BaseModel):
     content:str=Field(min_length=1,max_length=2_000_000)
 
-def install_accounting(app, db, user_from_header, root:Path):
+def install_accounting(app, db, user_from_header, root:Path, expose_routes:bool=True):
     def seed(c,tid):
         c.execute("INSERT OR IGNORE INTO gl_automation_settings(tenant_id) VALUES(?)",(tid,))
         for row in SEED:c.execute("INSERT OR IGNORE INTO gl_accounts(tenant_id,code,name,account_type,normal_side) VALUES(?,?,?,?,?)",(tid,*row))
@@ -74,6 +74,14 @@ def install_accounting(app, db, user_from_header, root:Path):
         """)
         for t in c.execute("SELECT id FROM tenants").fetchall():
             seed(c,t["id"])
+
+    # The schema and seeded chart remain available to legacy operational
+    # integrations while the public accounting API/UI is retired from LEADORA.
+    # ARIANA will own the accounting product surface after a separately tested
+    # data/domain migration. Keep expose_routes=True for isolated legacy tests.
+    if not expose_routes:
+        return
+
     def amount(n):return format(Decimal(str(n)).quantize(Decimal("0.01")),".2f")
     def make_journal(c,u,p):
         tid=u["tenant_id"];seed(c,tid)

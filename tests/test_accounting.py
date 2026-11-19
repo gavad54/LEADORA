@@ -1,10 +1,10 @@
 import uuid
 from fastapi.testclient import TestClient
-from app.main import app
+from legacy_apps import main_app, create_legacy_accounting_app
 
 def account():
-    c=TestClient(app); s=uuid.uuid4().hex[:10]
-    r=c.post("/api/register",json={"company_name":"GL "+s,"industry":"distribution","email":"gl-"+s+"@example.com","password":"test-password-2026"})
+    c=TestClient(create_legacy_accounting_app()); s=uuid.uuid4().hex[:10]
+    r=TestClient(main_app).post("/api/register",json={"company_name":"GL "+s,"industry":"distribution","email":"gl-"+s+"@example.com","password":"test-password-2026"})
     assert r.status_code==200,r.text
     return c,{"Authorization":"Bearer "+r.json()["token"]}
 

@@ -30,14 +30,14 @@ jobs:
           for source, output in [
               ('app/static/index.html', '/tmp/leadora-main.js'),
               ('app/static/agents.html', '/tmp/leadora-agents.js'),
-              ('app/static/finance.html', '/tmp/leadora-finance.js'),
+              ('archive/legacy-finance-ui/finance.html', '/tmp/leadora-finance.js'),
               ('app/static/ai-command-center.html', '/tmp/leadora-ai-command-center.js'),
               ('app/static/owner-pricing.html', '/tmp/leadora-owner-pricing.js'),
               ('app/static/plans.html', '/tmp/leadora-plans.js'),
               ('app/static/dispatch-settlement.html', '/tmp/leadora-dispatch-settlement.js'),
               ('app/static/returns.html', '/tmp/leadora-returns.js'),
               ('app/static/payroll.html', '/tmp/leadora-payroll.js'),
-              ('app/static/accounting.html', '/tmp/leadora-accounting.js'),
+              ('archive/legacy-finance-ui/accounting.html', '/tmp/leadora-accounting.js'),
               ('app/static/lead-discovery.html', '/tmp/leadora-lead-discovery.js'),
               ('app/static/procurement.html', '/tmp/leadora-procurement.js'),
           ]:
