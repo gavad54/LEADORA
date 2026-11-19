@@ -59,4 +59,4 @@ LEADORA مالک تجربه عملیاتی کسب‌وکار، مشتری‌یا
 8. CI، آزمون end-to-end، backup/restore و بررسی امنیت قبل از فعال‌سازی تجاری.
 
 ## وضعیت
-DESIGN_DOCUMENTED / IMPLEMENTATION_NOT_STARTED_IN_THIS_CHANGE. این سند قابلیت‌های مقصد را تعریف می‌کند؛ به معنی فعال‌شدن ارسال پیام، شبکه اجتماعی، اتصال بیرونی یا درآمد واقعی نیست.
+AUTHENTICATED_MODULE_CATALOG_AND_UI_ADDED / EXISTING_FOUNDATIONS_PARTIAL. API احراز‌شده `GET /api/marketing-growth/modules` و صفحه `/marketing-growth` با 11 ماژول اضافه شده‌اند. شش ماژول به‌صورت جزئی از قابلیت‌های فعلی کمپین، مشتریابی، فرصت‌ها و گزارش استفاده می‌کنند؛ پنج ماژول هنوز طراحی‌شده و نیازمند پیاده‌سازی‌اند. CI و regression/security tests سبز شده‌اند. ارسال پیام بیرونی، انتشار شبکه اجتماعی و اتصال providerها همچنان غیرفعال‌اند.
