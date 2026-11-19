@@ -1539,9 +1539,13 @@ def export_business_leads(user=Depends(user_from_header)):
         headers={"Content-Disposition":"attachment; filename=leadora-business-leads.csv"})
 
 
-# Financial participation API and responsive browser/PWA page.
-from app.participation import create_router
-app.include_router(create_router(db, user_from_header))
+# Preserve legacy finance tables and historical records, but do not mount
+# the retired participation API. Owner identity/claim/recovery has its own
+# narrow router so licensing and platform administration remain available.
+from app.participation import create_router as create_legacy_finance_schema
+create_legacy_finance_schema(db, user_from_header)
+from app.platform_owner import create_router as create_platform_owner_router
+app.include_router(create_platform_owner_router(db, user_from_header))
 from app.distribution_erp import create_router as create_distribution_router
 from app.payroll import create_router as create_payroll_router
 app.include_router(create_distribution_router(db, user_from_header))
@@ -1566,10 +1570,6 @@ def returns_page():
 @app.get("/payroll")
 def payroll_page():
     return FileResponse(ROOT / "static" / "payroll.html")
-
-@app.get("/finance")
-def finance_page():
-    return FileResponse(ROOT / "static" / "finance.html")
 
 @app.get("/owner/pricing")
 def owner_pricing_page():
@@ -1737,7 +1737,10 @@ def bank_accounts_status(user=Depends(user_from_header)):
 
 # Additive accounting routes: preserve the existing LEADORA app and database.
 from app.accounting import install_accounting
-install_accounting(app, db, user_from_header, ROOT)
+# Retain the historical ledger schema for dependent legacy workflows, but do
+# not expose the dedicated accounting UI/API from LEADORA. ARIANA will own it
+# after a separately backed-up and rehearsed domain/data migration.
+install_accounting(app, db, user_from_header, ROOT, expose_routes=False)
 
 
 # Additive lead-discovery module: tenant-scoped public business research.
