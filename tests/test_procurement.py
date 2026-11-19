@@ -68,12 +68,12 @@ def test_accepted_irr_receipt_updates_stock_and_creates_balanced_draft():
     tenant_id = int(h["Authorization"].split(":")[1]) if ":" in h["Authorization"] else None
     with db() as conn:
         journal_row = conn.execute(
-            "SELECT id,status,tenant_id FROM gl_journals WHERE id=?",
-            (data["accounting_journal"]["id"],),
+            "SELECT id,status,tenant_id FROM gl_journals WHERE id=? AND tenant_id=?",
+            (data["accounting_journal"]["id"], tenant_id),
         ).fetchone()
         line_rows = conn.execute(
-            "SELECT debit,credit FROM gl_lines WHERE journal_id=?",
-            (data["accounting_journal"]["id"],),
+            "SELECT debit,credit FROM gl_lines WHERE journal_id=? AND tenant_id=?",
+            (data["accounting_journal"]["id"], tenant_id),
         ).fetchall()
     assert journal_row is not None
     assert sum(float(line["debit"]) for line in line_rows) == 420
