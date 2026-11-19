@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field, StrictInt
 MODULES = {
     "crm_sales": "مشتری‌یابی و فروش",
     "distribution": "انبار و پخش",
-    "accounting": "حسابداری و خزانه‌داری",
     "ai_agents": "دستیارهای هوشمند",
 }
 CURRENCY_DEFAULT = "IRR"
@@ -87,14 +86,14 @@ def create_router(db, user_from_header):
             settings = dict(c.execute("SELECT currency,currency_label,base_monthly_price,pricing_note FROM leadora_pricing_settings WHERE id=1").fetchone())
             prices = c.execute("SELECT module_key,module_name,monthly_price,active FROM leadora_module_prices ORDER BY module_key").fetchall()
         return {"product":"LEADORA","separate_from_ARIANA":True,"settings":settings,
-                "modules":[dict(r) for r in prices if r["active"]], "billing_enabled":False,
+                "modules":[dict(r) for r in prices if r["active"] and r["module_key"] != "accounting"], "billing_enabled":False,
                 "notice":"قیمت‌ها توسط مالک تعیین می‌شوند؛ دریافت وجه آنلاین تا اتصال درگاه پرداخت فعال نیست."}
 
     @router.get("/api/owner/pricing")
     def get_owner_pricing(_=Depends(require_owner)):
         with db() as c:
             settings = dict(c.execute("SELECT currency,currency_label,base_monthly_price,pricing_note FROM leadora_pricing_settings WHERE id=1").fetchone())
-            modules = [dict(r) for r in c.execute("SELECT module_key,module_name,monthly_price,active FROM leadora_module_prices ORDER BY module_key")]
+            modules = [dict(r) for r in c.execute("SELECT module_key,module_name,monthly_price,active FROM leadora_module_prices WHERE module_key <> 'accounting' ORDER BY module_key")]
         return {"settings":settings,"modules":modules}
 
     @router.put("/api/owner/pricing")
@@ -119,7 +118,7 @@ def create_router(db, user_from_header):
             rows = c.execute("""SELECT p.module_key,p.module_name,p.monthly_price,p.active,
                 COALESCE(r.status,'off') AS status FROM leadora_module_prices p
                 LEFT JOIN tenant_module_requests r ON r.module_key=p.module_key AND r.tenant_id=?
-                ORDER BY p.module_key""",(user["tenant_id"],)).fetchall()
+                WHERE p.module_key <> 'accounting' ORDER BY p.module_key""",(user["tenant_id"],)).fetchall()
             settings = dict(c.execute("SELECT currency,currency_label,base_monthly_price FROM leadora_pricing_settings WHERE id=1").fetchone())
         return {"settings":settings,"modules":[dict(r) for r in rows]}
 
