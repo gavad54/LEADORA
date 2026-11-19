@@ -61,6 +61,8 @@ with TestClient(app) as client:
 
     home = client.get("/")
     assert home.status_code == 200
+    assert (repo_root / "archive" / "legacy-finance-ui" / "finance.html").is_file()
+    assert (repo_root / "archive" / "legacy-finance-ui" / "accounting.html").is_file()
     assert "location.href='/finance'" not in home.text
     assert "location.href='/accounting'" not in home.text
 """
