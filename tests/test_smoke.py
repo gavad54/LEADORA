@@ -207,9 +207,13 @@ def test_tenant_backup_includes_business_records_but_excludes_credentials():
     assert "finance_platform_owner" not in data["tables"]
 
 
-def test_finance_page_and_owner_recovery_form_are_served():
+def test_retired_finance_ui_is_not_served_and_owner_recovery_api_requires_auth():
     client = TestClient(app)
-    response = client.get("/finance")
-    assert response.status_code == 200
-    assert 'id="ownerRecoveryForm"' in response.text
-    assert 'id="ownerRecoveryToken"' in response.text
+    for path in ("/finance", "/accounting", "/static/finance.html", "/static/accounting.html"):
+        assert client.get(path).status_code == 404
+    assert client.get("/api/finance/identity").status_code == 401
+    recovery = client.post(
+        "/api/finance/owner/recover",
+        json={"token": "a-valid-looking-recovery-token-0123456789"},
+    )
+    assert recovery.status_code == 401
