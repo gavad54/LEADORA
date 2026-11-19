@@ -138,10 +138,21 @@ def test_business_module_read_routes_require_authentication():
         "/api/ai/health", "/api/ai/observability",
     ]
 
+    retired_finance_paths = {
+        "/api/finance/settings", "/api/finance/contracts",
+        "/api/finance/integration/status", "/api/finance/entries",
+        "/api/finance/reports", "/api/finance/adjustments",
+        "/api/finance/owner/overview", "/api/finance/owner/audit",
+    }
     failures = []
     for path in protected_gets:
         response = client.get(path)
-        if response.status_code not in {401, 403}:
-            failures.append((path, response.status_code, response.text[:120]))
+        expected = {404} if path in retired_finance_paths else {401, 403}
+        if response.status_code not in expected:
+            failures.append((path, response.status_code, sorted(expected), response.text[:120]))
 
-    assert failures == [], f"Protected GET routes did not reject anonymous requests: {failures}"
+    assert failures == [], f"Protected/retired routes violated their access contract: {failures}"
+
+    for path in ("/api/accounting/accounts", "/api/accounting/journals"):
+        response = client.get(path)
+        assert response.status_code == 404, (path, response.status_code, response.text[:120])
