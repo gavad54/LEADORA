@@ -21,14 +21,14 @@ from app.main import app
 
 with TestClient(app) as client:
     for path in (
-        "/finance",
-        "/accounting",
-        "/static/finance.html",
-        "/static/accounting.html",
         "/api/finance/entries",
         "/api/finance/contracts",
         "/api/accounting/accounts",
         "/api/accounting/journals",
+        "/finance",
+        "/accounting",
+        "/static/finance.html",
+        "/static/accounting.html",
     ):
         response = client.get(path)
         assert response.status_code == 404, (
