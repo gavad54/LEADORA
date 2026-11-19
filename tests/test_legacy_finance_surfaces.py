@@ -29,6 +29,12 @@ with TestClient(app) as client:
     assert registered.status_code == 200, registered.text
     auth = {"Authorization": "Bearer " + registered.json()["token"]}
 
+    # The legacy participation API is retired, but platform-owner identity
+    # remains available for licensing and owner-controlled administration.
+    identity = client.get("/api/finance/identity", headers=auth)
+    assert identity.status_code == 200, identity.text
+    assert identity.json()["is_platform_owner"] is False
+
     for path in (
         "/api/finance/entries",
         "/api/finance/contracts",
