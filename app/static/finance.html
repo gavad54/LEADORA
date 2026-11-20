@@ -53,7 +53,7 @@
 <section id="view-reports" class="view">
 <div class="panel"><h2>محاسبه گزارش ماهانه</h2><p class="muted">گزارش فروش خالص و سود عملیاتی بر اساس اسناد ثبت‌شده همان دوره محاسبه می‌شود. این صفحه ابزار ثبت داده و گزارش مدیریتی است و جایگزین دفتر کل حسابداری نیست.</p>
 <div class="fields"><div class="field"><label>دوره گزارش (YYYY-MM)</label><input id="reportPeriod" required pattern="\d{4}-(0[1-9]|1[0-2])"></div><div class="field"><label>عملیات</label><button class="btn primary" id="calculateReport">محاسبه و ارسال برای تأیید</button></div></div><div id="reportStatus" class="status hidden"></div></div>
-<div class="panel"><div class="bar"><div><h2>گزارش‌های عملیاتی</h2><p class="muted">مقادیر گزارش‌شده برای تحلیل داخلی شرکت هستند؛ انتقال وجه یا محاسبه سهم مالک انجام نمی‌شود.</p></div><button class="btn ghost" id="loadReports">بارگیری گزارش‌ها</button></div><div id="reportsTable" class="tablewrap"></div></div>
+<div class="panel"><div class="bar"><div><h2>گزارش‌های عملیاتی</h2><p class="muted">مقادیر گزارش‌شده برای تحلیل داخلی شرکت هستند؛ این صفحه هیچ پرداخت یا انتقال وجهی انجام نمی‌دهد.</p></div><button class="btn ghost" id="loadReports">بارگیری گزارش‌ها</button></div><div id="reportsTable" class="tablewrap"></div></div>
 <div class="panel"><h2>درخواست اصلاحیه برای گزارش بسته‌شده</h2><p class="muted">اصلاحیه در دوره بعد ثبت می‌شود و پس از تأیید مالک، در محاسبه همان دوره اعمال خواهد شد.</p>
 <form id="adjustmentForm" class="fields">
 <div class="field"><label>گزارش اصلی</label><select id="adjustmentReport" required></select></div>
