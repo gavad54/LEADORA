@@ -1,7 +1,9 @@
-"""Financial participation module for LEADORA.
+"""Tenant-scoped operational finance reporting for LEADORA.
 
-Amounts are stored as decimal strings and calculated with Decimal. The router
-uses the host application's tenant-scoped database and authenticated user.
+Legacy participation-contract tables and source records are retained for
+backward compatibility, but their create/read/activate/settlement workflows
+are retired. New reports are operational summaries with zero owner share.
+Amounts are stored as decimal strings and calculated with Decimal.
 """
 import csv
 import hashlib
@@ -47,7 +49,7 @@ def owner_user_ids():
 
 
 def create_router(db_factory, user_dependency):
-    router = APIRouter(prefix="/api/finance", tags=["financial-participation"])
+    router = APIRouter(prefix="/api/finance", tags=["operational-finance"])
 
     with db_factory() as c:
         c.executescript("""
