@@ -374,58 +374,20 @@ def create_router(db_factory, user_dependency):
         return {"ok": True, "methods": body.methods, "integration_status": status, "message": "تنظیمات ذخیره شد؛ اتصال خودکار تا زمان پیکربندی API مجاز فعال نیست."}
 
     @router.get("/contracts")
-    def get_contracts(user=Depends(user_dependency)):
-        with db_factory() as c:
-            if is_owner(user):
-                rows = c.execute("""SELECT fc.*,t.name AS company_name FROM finance_contracts fc
-                  JOIN tenants t ON t.id=fc.tenant_id ORDER BY fc.id DESC LIMIT 500""").fetchall()
-            else:
-                rows = c.execute("SELECT * FROM finance_contracts WHERE tenant_id=? ORDER BY id DESC LIMIT 50", (user["tenant_id"],)).fetchall()
-        return [dict(x) for x in rows]
+    def get_contracts_disabled(user=Depends(user_dependency)):
+        raise HTTPException(410, "مدیریت قرارداد مشارکت در LEADORA غیرفعال و به‌صورت آرشیوی نگهداری می‌شود.")
 
     @router.post("/contracts")
-    def create_contract(body: ContractIn, user=Depends(user_dependency)):
-        require_owner(user)
-        if body.trial_end < body.trial_start or body.contract_start < body.trial_start:
-            raise HTTPException(422, "بازه دوره رایگان یا تاریخ شروع قرارداد معتبر نیست.")
-        if body.contract_end and body.contract_end < body.contract_start:
-            raise HTTPException(422, "تاریخ پایان قرارداد باید بعد از شروع آن باشد.")
-        if body.target < body.baseline:
-            raise HTTPException(422, "هدف قرارداد نباید کمتر از خط مبنا باشد.")
-        with db_factory() as c:
-            if not c.execute("SELECT id FROM tenants WHERE id=?", (body.tenant_id,)).fetchone():
-                raise HTTPException(404, "شرکت انتخاب‌شده پیدا نشد.")
-            cur = c.execute("""INSERT INTO finance_contracts
-              (tenant_id,trial_start,trial_end,contract_start,contract_end,goal_name,baseline,target,share_percent,direct_costs_json,notes,status)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending')""",
-              (body.tenant_id, body.trial_start.isoformat(), body.trial_end.isoformat(), body.contract_start.isoformat(),
-               body.contract_end.isoformat() if body.contract_end else "", body.goal_name.strip(), decimal_text(body.baseline),
-               decimal_text(body.target), decimal_text(body.share_percent), json.dumps(body.direct_costs), body.notes.strip()))
-            audit(c, user, "finance.contract.created", {"contract_id": cur.lastrowid, "tenant_id": body.tenant_id})
-            return dict(c.execute("SELECT * FROM finance_contracts WHERE id=?", (cur.lastrowid,)).fetchone())
+    def create_contract_disabled(user=Depends(user_dependency)):
+        raise HTTPException(410, "ایجاد قرارداد مشارکت در LEADORA غیرفعال است.")
 
     @router.post("/contracts/{contract_id}/goal")
-    def decide_goal(contract_id: int, body: GoalDecisionIn, user=Depends(user_dependency)):
-        require_owner(user)
-        with db_factory() as c:
-            row = c.execute("SELECT * FROM finance_contracts WHERE id=?", (contract_id,)).fetchone()
-            if not row:
-                raise HTTPException(404, "قرارداد پیدا نشد.")
-            c.execute("UPDATE finance_contracts SET goal_achieved=?,achieved_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                      (int(body.achieved), datetime.utcnow().isoformat(timespec="seconds") if body.achieved else "", contract_id))
-            audit(c, user, "finance.contract.goal_decided", {"contract_id": contract_id, "achieved": body.achieved, "evidence": body.evidence})
-        return {"ok": True, "goal_achieved": body.achieved, "message": "نتیجه هدف با ثبت مستندات ذخیره شد."}
+    def decide_goal_disabled(contract_id: int, user=Depends(user_dependency)):
+        raise HTTPException(410, "گردش هدف قرارداد مشارکت غیرفعال است.")
 
     @router.post("/contracts/{contract_id}/activate")
-    def activate_contract(contract_id: int, user=Depends(user_dependency)):
-        require_owner(user)
-        with db_factory() as c:
-            row = c.execute("SELECT * FROM finance_contracts WHERE id=?", (contract_id,)).fetchone()
-            if not row:
-                raise HTTPException(404, "قرارداد پیدا نشد.")
-            c.execute("UPDATE finance_contracts SET status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?", (contract_id,))
-            audit(c, user, "finance.contract.activated", {"contract_id": contract_id, "tenant_id": row["tenant_id"]})
-        return {"ok": True, "status": "active"}
+    def activate_contract_disabled(contract_id: int, user=Depends(user_dependency)):
+        raise HTTPException(410, "فعال‌سازی قرارداد مشارکت غیرفعال است.")
 
     def insert_entry(c, user, body, source):
         tid = user["tenant_id"]
@@ -568,20 +530,11 @@ def create_router(db_factory, user_dependency):
                     totals[key] += money(adjustment[key + "_adjustment"])
             net_sales = totals["sales"] - totals["discounts"] - totals["returns"]
             eligible = net_sales - totals["cogs"] - totals["direct_costs"]
-            contract = tenant_contract(c, user["tenant_id"])
+            # Contract participation has been retired. Keep legacy columns for old
+            # database compatibility, but never calculate or accrue an owner share.
             share_percent = Decimal("0")
             contract_id = None
             owner_share = Decimal("0")
-            month_start = period_start(period)
-            month_end = date(month_start.year + (month_start.month == 12), 1 if month_start.month == 12 else month_start.month + 1, 1)
-            if contract and contract["status"] == "active" and contract["goal_achieved"]:
-                in_contract = month_start.isoformat() >= contract["contract_start"] and (not contract["contract_end"] or month_start.isoformat() <= contract["contract_end"])
-                after_trial = month_start.isoformat() > contract["trial_end"]
-                if in_contract and after_trial:
-                    share_percent = money(contract["share_percent"])
-                    owner_share = max(Decimal("0"), eligible) * share_percent / Decimal("100")
-                    owner_share = owner_share.quantize(CENT, rounding=ROUND_HALF_UP)
-                    contract_id = contract["id"]
             values = [format(x.quantize(CENT, rounding=ROUND_HALF_UP), "f") for x in (totals["sales"], totals["discounts"], totals["returns"], net_sales, totals["cogs"], totals["direct_costs"], eligible, share_percent, owner_share)]
             try:
                 c.execute("""INSERT INTO finance_reports(tenant_id,period,currency,gross_sales,discounts,returns,net_sales,cogs,direct_costs,eligible_profit,share_percent,owner_share,contract_id,status)
@@ -641,25 +594,8 @@ def create_router(db_factory, user_dependency):
         return {"ok": True, "status": "disputed", "message": "اعتراض ثبت شد؛ گزارش برای بررسی مالک علامت‌گذاری شد."}
 
     @router.post("/reports/{report_id}/settlement")
-    def settle_report(report_id: int, body: SettlementIn, user=Depends(user_dependency)):
-        require_owner(user)
-        amount = money(body.amount)
-        with db_factory() as c:
-            row = c.execute("SELECT * FROM finance_reports WHERE id=?", (report_id,)).fetchone()
-            if not row:
-                raise HTTPException(404, "گزارش پیدا نشد.")
-            if row["status"] not in ("approved", "closed"):
-                raise HTTPException(409, "تسویه فقط پس از تأیید گزارش مجاز است.")
-            total = money(row["settled_amount"]) + amount
-            due = money(row["owner_share"])
-            if total > due:
-                raise HTTPException(422, "مبلغ پرداختی از سهم مصوب بیشتر است.")
-            status = "paid" if total == due else "partial"
-            c.execute("UPDATE finance_reports SET settled_amount=?,settlement_status=? WHERE id=?", (format(total, "f"), status, report_id))
-            if status == "paid":
-                c.execute("UPDATE finance_reports SET status='closed' WHERE id=?", (report_id,))
-            audit(c, user, "finance.settlement.recorded", {"report_id": report_id, "amount": str(amount), "note": body.note})
-        return {"ok": True, "settled_amount": format(total, "f"), "settlement_status": status}
+    def settle_report_disabled(report_id: int, user=Depends(user_dependency)):
+        raise HTTPException(410, "تسویه سهم مشارکت در LEADORA غیرفعال است.")
 
     @router.post("/reports/{report_id}/adjustments")
     def request_adjustment(report_id: int, body: AdjustmentIn, user=Depends(user_dependency)):
@@ -716,22 +652,18 @@ def create_router(db_factory, user_dependency):
         require_owner(user)
         with db_factory() as c:
             counts = c.execute("""SELECT
-              (SELECT COUNT(*) FROM finance_contracts) AS contracts,
-              (SELECT COUNT(*) FROM finance_contracts WHERE status='pending') AS pending_contracts,
               (SELECT COUNT(*) FROM finance_reports WHERE status IN ('pending','disputed')) AS pending_reports,
-              (SELECT COUNT(*) FROM finance_reports WHERE settlement_status IN ('unsettled','partial')) AS unsettled_reports,
-              (SELECT COALESCE(SUM(CAST(owner_share AS REAL)),0) FROM finance_reports WHERE status IN ('approved','closed')) AS approved_share,
-              (SELECT COALESCE(SUM(CAST(owner_share AS REAL)-CAST(settled_amount AS REAL)),0) FROM finance_reports WHERE status IN ('approved','closed')) AS unpaid_share""").fetchone()
+              (SELECT COUNT(*) FROM finance_reports) AS total_reports,
+              (SELECT COUNT(*) FROM finance_entries) AS total_entries""").fetchone()
             by_month = c.execute("""SELECT period,COUNT(*) AS reports,
               SUM(CAST(net_sales AS REAL)) AS net_sales,
-              SUM(CAST(eligible_profit AS REAL)) AS eligible_profit,
-              SUM(CAST(owner_share AS REAL)) AS owner_share
+              SUM(CAST(eligible_profit AS REAL)) AS operating_profit
               FROM finance_reports GROUP BY period ORDER BY period DESC LIMIT 12""").fetchall()
-            companies = c.execute("""SELECT t.id AS tenant_id,t.name AS company_name,fc.status AS contract_status,
-              fc.share_percent,fc.goal_name,fc.goal_achieved,fs.integration_status,fs.updated_at AS source_updated_at
-              FROM tenants t LEFT JOIN finance_contracts fc ON fc.id=(SELECT MAX(id) FROM finance_contracts WHERE tenant_id=t.id)
-              LEFT JOIN finance_settings fs ON fs.tenant_id=t.id ORDER BY t.name LIMIT 500""").fetchall()
-        return {"counts": dict(counts), "by_month": [dict(x) for x in by_month], "companies": [dict(x) for x in companies]}
+            companies = c.execute("""SELECT t.id AS tenant_id,t.name AS company_name,
+              fs.integration_status,fs.updated_at AS source_updated_at
+              FROM tenants t LEFT JOIN finance_settings fs ON fs.tenant_id=t.id
+              ORDER BY t.name LIMIT 500""").fetchall()
+        return {"counts":dict(counts),"by_month":[dict(x) for x in by_month],"companies":[dict(x) for x in companies]}
 
     @router.get("/owner/audit")
     def owner_audit(limit: int = 100, user=Depends(user_dependency)):
