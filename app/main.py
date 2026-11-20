@@ -1539,7 +1539,7 @@ def export_business_leads(user=Depends(user_from_header)):
         headers={"Content-Disposition":"attachment; filename=leadora-business-leads.csv"})
 
 
-# Financial participation API and responsive browser/PWA page.
+# Operational financial records, reporting and owner audit API; legacy participation contracts are retired.
 from app.participation import create_router
 app.include_router(create_router(db, user_from_header))
 from app.distribution_erp import create_router as create_distribution_router
