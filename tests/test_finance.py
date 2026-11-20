@@ -74,30 +74,29 @@ def test_csv_import_reports_duplicate_rows():
     assert len(response.json()["rejected"]) == 1
 
 
-def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
+def test_participation_contract_api_is_disabled_and_finance_report_is_operational_only(monkeypatch):
     client = TestClient(app)
     owner_email = f"leadora-owner-{uuid.uuid4().hex[:8]}@example.com"
     owner_headers, owner = register(client, "LEADORA Owner", owner_email)
-    company_headers, company = register(client, "Profit Share Company")
+    company_headers, company = register(client, "Operational Finance Company")
     monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
 
+    assert client.get("/api/finance/contracts", headers=owner_headers).status_code == 410
     contract = client.post("/api/finance/contracts", headers=owner_headers, json={
         "tenant_id": company["tenant"]["id"],
         "trial_start": "2026-01-01", "trial_end": "2026-03-31",
         "contract_start": "2026-01-01", "contract_end": "2026-12-31",
         "goal_name": "Increase net sales", "baseline": "100", "target": "120",
-        "share_percent": "10", "direct_costs": ["direct_costs"], "notes": "test agreement",
+        "share_percent": "10", "direct_costs": ["direct_costs"], "notes": "legacy test",
     })
-    assert contract.status_code == 200, contract.text
-    contract_id = contract.json()["id"]
-    assert client.post(f"/api/finance/contracts/{contract_id}/activate", headers=owner_headers, json={}).status_code == 200
-    goal = client.post(f"/api/finance/contracts/{contract_id}/goal", headers=owner_headers, json={
-        "achieved": True, "evidence": "Reviewed and verified monthly sales records",
-    })
-    assert goal.status_code == 200, goal.text
+    assert contract.status_code == 410
+    assert client.post("/api/finance/contracts/1/activate", headers=owner_headers, json={}).status_code == 410
+    assert client.post("/api/finance/contracts/1/goal", headers=owner_headers, json={
+        "achieved": True, "evidence": "Legacy route must remain disabled",
+    }).status_code == 410
 
     entry = client.post("/api/finance/entries", headers=company_headers, json={
-        "period": "2026-05", "document_ref": "SHARE-1", "sales": "1000",
+        "period": "2026-05", "document_ref": "OPS-1", "sales": "1000",
         "discounts": "100", "returns": "0", "cogs": "600",
         "direct_costs": "50", "currency": "IRT",
     })
@@ -105,13 +104,17 @@ def test_owner_contract_goal_share_and_closed_report_is_immutable(monkeypatch):
     report = client.post("/api/finance/reports/calculate?period=2026-05", headers=company_headers, json={})
     assert report.status_code == 200, report.text
     assert report.json()["eligible_profit"] == "250.00"
-    assert report.json()["owner_share"] == "25.00"
+    assert report.json()["share_percent"] == "0.00"
+    assert report.json()["owner_share"] == "0.00"
+    assert report.json()["contract_id"] is None
+    assert client.post(f"/api/finance/reports/{report.json()['id']}/settlement", headers=owner_headers, json={
+        "amount": "1", "note": "Must not settle profit share",
+    }).status_code == 410
 
-    approved = client.post(f"/api/finance/reports/{report.json()['id']}/approve", headers=owner_headers, json={})
-    assert approved.status_code == 200, approved.text
-    rerun = client.post("/api/finance/reports/calculate?period=2026-05", headers=company_headers, json={})
-    assert rerun.status_code == 409
-
+    page = client.get("/finance")
+    assert page.status_code == 200
+    assert "مشارکت" not in page.text
+    assert "سهم مالک" not in page.text
 
 def test_integration_requires_provider_and_owner_access_is_restricted(monkeypatch):
     client = TestClient(app)
