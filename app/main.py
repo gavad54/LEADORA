@@ -6,12 +6,12 @@ import csv, io, json
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, AliasChoices
 
+from app.security_config import load_leadora_secret
+
 ROOT = Path(__file__).resolve().parent
 DB_PATH = os.getenv("LEADORA_DB", str(ROOT.parent / "data" / "leadora.db"))
-SECRET = os.getenv("LEADORA_SECRET", "development-only-change-me")
 ENV = os.getenv("LEADORA_ENV", "development")
-if ENV == "production" and (len(SECRET) < 32 or SECRET == "development-only-change-me"):
-    raise RuntimeError("Set a random LEADORA_SECRET of at least 32 characters")
+SECRET = load_leadora_secret(ENV, os.getenv("LEADORA_SECRET"))
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="LEADORA MVP", version="0.5.0", description="Persian-first business operations MVP")
 
