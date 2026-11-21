@@ -82,6 +82,7 @@ def test_participation_contract_api_is_disabled_and_finance_report_is_operationa
     monkeypatch.setenv("LEADORA_OWNER_USER_IDS", str(owner["user"]["id"]))
 
     assert client.get("/api/finance/contracts", headers=owner_headers).status_code == 410
+    assert client.get("/api/finance/contracts", headers=company_headers).status_code == 410
     contract = client.post("/api/finance/contracts", headers=owner_headers, json={
         "tenant_id": company["tenant"]["id"],
         "trial_start": "2026-01-01", "trial_end": "2026-03-31",
