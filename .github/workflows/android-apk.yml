@@ -10,7 +10,7 @@ on:
       - "Dockerfile"
       - ".github/workflows/android-apk.yml"
   push:
-    branches: [main]
+    branches: [main, fix/disable-participation-contracts-2026-11-20]
     paths:
       - "android/**"
       - "app/**"
