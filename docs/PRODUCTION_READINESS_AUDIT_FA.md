@@ -104,3 +104,39 @@
 - تأیید مستقل امنیتی/حقوقی.
 - نصب و تست APK روی دستگاه فیزیکی و پذیرش فروشگاه.
 - ظرفیت واقعی در بار بالا؛ آمار درخواست فعلی برای این نتیجه کافی نیست.
+
+---
+
+## الحاقیه ممیزی مستقل — 2026-11-25
+
+این الحاقیه شواهد اجرای تازه روی commit شاخه توسعه را ثبت می‌کند و گزارش تاریخی بالا را حذف یا بازنویسی نمی‌کند.
+
+### شواهد CI و امنیت روی commit فعلی
+
+- شاخه: `fix/disable-participation-contracts-2026-11-20`
+- commit: `e73e55605214a4f08a3e1585f3d20a1d0f06645a`
+- LEADORA CI: PASS؛ اجرای `python -m pytest -q` برابر **102 passed, 1 warning** در 13.91 ثانیه.
+- Regression/Security workflow: PASS؛ نصب Chromium، compile Python، dependency audit و regression/security tests همگی موفق.
+- CodeQL: PASS برای تحلیل Python و JavaScript/TypeScript.
+- CI علاوه بر آزمون‌ها، بررسی نحو 12 فایل JavaScript، اعتبارسنجی PWA manifest، اعتبارسنجی Docker Compose و build تصویر Docker را اجرا کرده و همه موفق بوده‌اند.
+- هشدارهای باقی‌مانده: deprecation در ترکیب Starlette TestClient/httpx و Node punycode؛ Docker Compose دو فایل پیکربندی معتبر `compose.yaml` و `docker-compose.yml` یافته و اولی را انتخاب کرده است. این هشدارها شکست CI نیستند اما باید پاک‌سازی شوند.
+
+### بررسی artifact اندروید
+
+- Workflow اجرا: `45476439985`، نتیجه build: SUCCESS.
+- Artifact: `LEADORA-Android-APK`، شناسه `14958929170`، حجم ZIP برابر 9,876 بایت.
+- SHA-256 فایل ZIP: `53b068f98b60ae87d07eef1512a522e4cf31bb9379857d1b6ec765e9d04dbf70`.
+- ZIP شامل APK و فایل checksum است؛ SHA-256 خود APK: `0db8079c4f0f99a27f27afb2cc2840cedfbef54b94a05c8466ad6894083778cc`.
+- APK از نظر ساختار، یک Android package معتبر با Signing Block است؛ اندازه خود APK فقط 13,515 بایت است. این شواهد فقط صحت بسته‌بندی و امضای artifact را پشتیبانی می‌کنند، نه اجرای موفق روی دستگاه یا امضای release با کلید رسمی.
+- بازبینی کد نشان می‌دهد `MainActivity` در اصل یک WebView wrapper است که به `https://leadora-web-production.up.railway.app/` متصل می‌شود؛ منطق اصلی محصول به‌صورت native داخل APK قرار نگرفته است. WebView JavaScript و DOM storage را فعال می‌کند، HTTPS را اجباری می‌کند و فقط host اصلی را داخل WebView نگه می‌دارد.
+- بنابراین این APK یک پوسته اندرویدی متصل به وب است، نه مدرک وجود اپلیکیشن اندرویدی مستقل/آفلاین.
+- نصب، launch، login، گردش فاکتور/انبار و آزمون قطع اتصال روی دستگاه فیزیکی یا emulator در این ممیزی انجام نشده است: **UNVERIFIED**.
+- در فایل Gradle، تنظیم signing release فقط در صورت وجود چهار متغیر keystore فعال می‌شود؛ artifact حاضر به‌تنهایی اثبات نمی‌کند کلید رسمی انتشار در دسترس و استفاده شده است.
+
+### مانع عملیاتی فعلی
+
+- Railway برای سرویس LEADORA در آخرین snapshot پیشین offline گزارش شده بود؛ تا زمان دریافت healthcheck عمومی 200 و تطبیق deployment با commit تأییدشده، عملکرد زنده همچنان **BLOCKED/UNVERIFIED** است.
+- موفقیت CI و ساخت APK این مانع را رفع نمی‌کند.
+- پیش از انتشار: سرویس باید با تنظیمات امن و volume پایدار راه‌اندازی و healthcheck شود؛ سپس APK روی دستگاه واقعی نصب و مسیرهای اصلی از طریق WebView آزمایش شوند؛ در نهایت backup خارج از میزبان و restore ایزوله باید PASS شوند.
+
+**تصمیم:** کد و تست‌های خودکار این commit شواهد مثبت قوی دارند (102 تست و CodeQL PASS)، اما LEADORA هنوز برای انتشار عمومی/تجاری تأیید نشده است؛ runtime تولید، backup/restore، امضای رسمی release و UAT دستگاه واقعی موانع باز هستند.
