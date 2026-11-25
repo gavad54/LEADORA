@@ -62,9 +62,11 @@ jobs:
       - run: node --check app/static/service-worker.js
       - name: Validate PWA manifest
         run: python -c "import json; json.load(open('app/static/manifest.webmanifest', encoding='utf-8'))"
-      - name: Validate Docker Compose configuration
+      - name: Validate both Docker Compose configurations
         env:
           LEADORA_SECRET: ci-only-not-a-production-secret-ci-only
-        run: docker compose config -q
+        run: |
+          docker compose -f compose.yaml config -q
+          docker compose -f docker-compose.yml config -q
       - name: Build production Docker image
         run: docker build --tag leadora-ci .
