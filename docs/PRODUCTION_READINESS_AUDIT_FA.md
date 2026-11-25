@@ -140,3 +140,11 @@
 - پیش از انتشار: سرویس باید با تنظیمات امن و volume پایدار راه‌اندازی و healthcheck شود؛ سپس APK روی دستگاه واقعی نصب و مسیرهای اصلی از طریق WebView آزمایش شوند؛ در نهایت backup خارج از میزبان و restore ایزوله باید PASS شوند.
 
 **تصمیم:** کد و تست‌های خودکار این commit شواهد مثبت قوی دارند (102 تست و CodeQL PASS)، اما LEADORA هنوز برای انتشار عمومی/تجاری تأیید نشده است؛ runtime تولید، backup/restore، امضای رسمی release و UAT دستگاه واقعی موانع باز هستند.
+
+### الحاقیه وضعیت Railway — بررسی read-only در 2026-11-25
+
+- سرویس `leadora-web` در پروژه LEADORA به شاخه `main` و commit `7d92398a8e8e9b457fdfbf5f4dd1b75250506df7` متصل است؛ این SHA با commit شاخه PR #54 یعنی `e73e55605214a4f08a3e1585f3d20a1d0f06645a` یکسان نیست.
+- Volume با ظرفیت 500 MB در مسیر `/data` متصل و وضعیت آن live گزارش شده است.
+- نام متغیرهای محیطی قابل مشاهده شامل `LEADORA_ENV`، متغیرهای bootstrap/recovery مالک و `LEADORA_SECRET` است؛ مقادیر محرمانه مشاهده یا استخراج نشده‌اند.
+- در snapshot فعلی Railway، برای سرویس `leadora-web` مقدار latestDeployment تهی گزارش شد؛ بنابراین اجرای commit شاخه PR #54 در Production **اثبات نشده** است.
+- نتیجه: CI/CodeQL و APK workflow شاخه PR #54 به معنی انتشار همان کد در Railway نیستند. انتشار نسخه جدید همچنان نیازمند تأیید مالک، بررسی backup/restore، و برنامه استقرار کنترل‌شده است. هیچ deploy یا تنظیم Railway تغییر نکرد.
